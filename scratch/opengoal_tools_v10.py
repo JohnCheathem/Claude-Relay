@@ -1698,7 +1698,7 @@ def _bg_play(name):
             if r and "ready" in r:
                 time.sleep(1.0)  # brief extra wait for level to be 'active
                 state["status"] = "Spawning player..."
-                goalc_send("(start 'play (get-or-create-continue! *game-info*))")
+                goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
                 spawned = True
                 break
         if not spawned:
@@ -1966,7 +1966,7 @@ def _bg_build_and_play(name, scene):
             if r and "ready" in r:
                 time.sleep(1.0)
                 state["status"] = "Spawning player..."
-                goalc_send("(start 'play (get-or-create-continue! *game-info*))")
+                goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
                 spawned = True
                 break
         if not spawned:
