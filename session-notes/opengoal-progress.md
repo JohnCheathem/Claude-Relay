@@ -19,6 +19,7 @@ https://github.com/open-goal/jak-project (clone to VM as jak-project)
 
 ## Documented so far
 - [x] babak.md — full enemy documentation
+- [x] jak1-entity-spawning.md — entity spawning skill doc (v3)
 
 ## Next candidates
 - [ ] nav-enemy system (parent of all enemies)
