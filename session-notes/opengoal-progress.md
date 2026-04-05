@@ -1,68 +1,52 @@
-# OpenGOAL Knowledge Base — Session Notes
+# OpenGOAL Blender Addon — Session Progress
 
-## Repo
-https://github.com/open-goal/jak-project (clone to VM as jak-project)
+## Status: WORKING ✅
+Play button successfully launches game and spawns player in custom level.
 
-## Approach
-- Use git grep and git ls-tree for cheap triage — never read full files unless needed
-- Sparse checkout folders instead of full repo when needed
-- Push outputs to GitHub, share direct link — never render large files in chat
+## Official Addon
+`addons/opengoal_tools.py` — install this in Blender.
+**Important:** After installing, close and reopen Blender to clear module cache.
 
-## What we know
-- Repo: 555MB total, 4871 .gc files
-- Useful dirs: goal_src/jak1/ (game logic), docs/ (sparse, 3MB)
-- Ignore: third-party/ (200MB), test/ (93MB)
-- Key tool: git grep -l to find files, git grep -n to extract lines
-- raw.githubusercontent.com BLOCKED on Claude VM — use git clone only
-- api.github.com BLOCKED
+## Key Bugs Fixed (v9 → v10 → release)
 
-## Addon — opengoal_tools_v10.py (current scratch)
-### v9 fix: enemy code injection (o_only flag)
-### v10 fix: player spawn + nREPL reliability
+### 1. nREPL binary framing (critical)
+- GOALC nREPL uses binary-framed messages: `[u32 length LE][u32 type=10 LE][utf-8 string]`
+- Old code sent raw text → "Bad message, aborting the read"
+- Fix: `struct.pack("<II", len(encoded), 10)` prepended to every message
 
-## nREPL (port 8181) — KEY FACTS
-- GOALC opens port 8181 on startup as a TCP socket server
-- "nREPL: DISABLED" = bind() failed = another GOALC is holding the port
-- goalc_send() returns None silently on ConnectionRefusedError — no visible error
-- FIX: always kill_goalc() before launch_goalc()
+### 2. Port conflict with 3Dconnexion SpaceMouse
+- `3dxnlserver.exe` permanently holds port 8181 on `127.51.68.120`
+- Fix: Port finder scans 8182+ for free port, passes `--port N` to GOALC
 
-## startup.gc sequencing
-- Lines ABOVE ";; og:run-below-on-listen" → run immediately at GOALC startup (run_before_listen)
-- Lines BELOW the sentinel → run automatically after (lt) connects to GK (run_after_listen)
-- (lt) belongs ABOVE the sentinel; (bg) and (start) belong BELOW it
-- DO NOT use (suspend-for) in startup.gc — it's a GOAL runtime function, errors in REPL context
-- run_after_listen is triggered by GK being ready, not by sleep timers
+### 3. `defined?` not a GOAL function
+- Used `(if (defined? '*game-info*) ...)` — GOAL has no `defined?`
+- Fix: `(if (nonzero? *game-info*) 'ready 'wait)` — correct GOAL idiom
 
-## Player spawn fix
-- (bg) loads level geometry + calls set-continue! to first continue-point
-- (bg) does NOT kill/respawn the player — boot player falls in void and dies
-- Fix: call (start 'play (get-or-create-continue! *game-info*)) after (bg)
-- (start) kills old player process, spawns fresh at the continue-point (bg) set
+### 4. Wrong spawn continue-point
+- `(get-or-create-continue! *game-info*)` uses current checkpoint (village1)
+- Fix: `(get-continue-by-name *game-info* "{name}-start")` with fallback
 
-## Confirmed working enemies (tested in-game)
-- ✅ babak — always worked (GAME.CGO)
-- ✅ junglesnake — confirmed April 2026, v9 fix. Stationary, safest enemy to use.
-- ✅ hopper — confirmed April 2026, v9 fix. Nav-enemy, needs navmesh workaround.
+### 5. Module cache issue
+- Renaming the addon file without restarting Blender loads cached old version
+- Fix: Always close/reopen Blender after installing a new version
 
-## Documented
-- [x] babak.md
-- [x] junglesnake.md
-- [x] entity-spawning.md
-- [x] modding-addon.md
-- [x] player-loading-and-continues.md
-- [x] nrepl-and-startup.md  ← NEW April 2026
+## Architecture: Play Button Flow
+1. Kill GK + GOALC
+2. Write startup.gc: `(lt)` / sentinel / `(bg '{name}-vis)`
+3. Launch GOALC (wait for nREPL on free port 8182+)
+4. Launch GK
+5. Poll `(if (nonzero? *game-info*) 'ready 'wait)` every 0.5s (120s timeout)
+6. When ready: `(start 'play (get-continue-by-name *game-info* "{name}-start"))`
 
-## Scratch files
-- scratch/opengoal_tools_v10.py — current working version
+## Continue-Point System
+- `SPAWN_` empties in Blender → continue-points in level-info.gc
+- First spawn becomes `{levelname}-start`
+- `(bg)` calls `set-continue!` to level's first continue-point
+- `(start)` kills boot player and spawns fresh at that point
 
-## Open questions
-- [ ] bonelurker crash — still unsolved
-- [ ] navmesh — no engine support yet
-- [ ] Enemy attack/walk-through collision confirmed in-game?
-- [ ] Continue testing other enemies with v9 fix
-- [ ] Test v10 spawn fix in practice
-
-## Next session
-- Confirm v10 spawn fix works (player spawns at SPAWN_ location on Play)
-- Test more enemies
-- Investigate bonelurker crash
+## Confirmed Working
+- ✅ Build compiles level
+- ✅ Play launches game and spawns in custom level
+- ✅ babak, junglesnake, hopper enemies
+- ❌ bonelurker — known crash, unsolved
+- ❌ navmesh — no engine support yet
