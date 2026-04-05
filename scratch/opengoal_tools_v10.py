@@ -1581,67 +1581,66 @@ class OG_OT_ExportBuild(Operator):
 _PLAY_STATE = {"done":False, "error":None, "status":""}
 
 def _bg_play(name):
-    """Kill existing GK, launch fresh, load the compiled level, spawn player.
+    """Kill GK+GOALC, relaunch GOALC with nREPL, launch GK, load level, spawn player.
 
-    No compilation — Export & Build handles that.  Play just restarts the game,
-    loads the level, then explicitly spawns the player at the level's first
-    continue-point via (start).
+    ARCHITECTURE NOTES (read before modifying):
 
-    Why (start) is needed:
-      (bg) loads geometry and calls set-continue! on the level's first continue-
-      point, but it does NOT kill the existing player process or spawn a new one.
-      The player remains alive from wherever they were (the void after boot),
-      falls, dies, and respawns — but only after the death sequencer runs, which
-      is a race against when the level finishes loading.  Calling
-      (start 'play (get-or-create-continue! *game-info*)) kills the old player
-      and spawns fresh at the continue-point (bg) already set, cleanly.
+    nREPL (port 8181) is a TCP socket that GOALC opens on startup.  The addon
+    sends all commands ((lt), (bg), (start)) through this socket via goalc_send().
+    If another GOALC instance is already holding port 8181, bind() fails and
+    GOALC prints "nREPL: DISABLED" — every goalc_send() then silently returns
+    None and nothing happens.
+
+    FIX: Always kill GOALC before relaunching it.  The goalc_ok() fast-path
+    (reuse existing GOALC) is ONLY safe when nREPL is confirmed working.
+
+    startup.gc SEQUENCING:
+    Lines above ";; og:run-below-on-listen" → run_before_listen (run immediately
+    at GOALC startup, before GK exists).
+    Lines below the sentinel             → run_after_listen (run automatically
+    when (lt) successfully connects to GK).
+    (lt) itself is in run_before_listen so it fires first; everything after the
+    sentinel fires after GK connects.  No need for (suspend-for) here — the
+    run_after_listen lines don't execute until GK is alive and (lt) connected.
+
+    WHY (start) IS NEEDED:
+    (bg) loads geometry and calls set-continue! to our level's first continue-
+    point, but does NOT kill/respawn the player.  The boot-sequence player is
+    still alive, falls in the void, dies, and respawns in a race with level load.
+    (start 'play ...) kills that player and spawns fresh at the continue-point.
     """
     state = _PLAY_STATE
     try:
-        state["status"] = "Killing existing GK..."
+        # Always kill both GK and GOALC before relaunching.
+        # GOALC must be killed so port 8181 is free for the new instance.
+        # If an old GOALC holds 8181, the new one shows "nREPL: DISABLED" and
+        # all goalc_send() calls silently fail.
+        state["status"] = "Killing GK and GOALC..."
         kill_gk()
+        kill_goalc()
 
-        if goalc_ok():
-            # GOALC already running with nREPL — just relaunch GK and load level
-            state["status"] = "Launching game..."
-            ok, msg = launch_gk()
-            if not ok: state["error"] = msg; return
-            state["status"] = "Waiting for game to boot..."
-            time.sleep(6.0)
-            state["status"] = f"Loading {name}..."
-            goalc_send("(lt)")
-            time.sleep(1.5)
-            # (bg) loads the DGO and sets current-continue to our first continue-point
-            goalc_send(f"(bg '{name}-vis)")
-            # Wait for level to reach 'active status before spawning player
-            time.sleep(3.0)
-            # (start) kills the existing player process and spawns fresh at the
-            # continue-point (bg) just set.  Without this, the player is still
-            # alive from the boot sequence, falls in the void, and dies.
-            state["status"] = "Spawning player..."
-            goalc_send("(start 'play (get-or-create-continue! *game-info*))")
-            state["status"] = "Done!"
-            return
-
-        # GOALC not running — launch it with startup.gc that loads level + spawns
+        # Write startup.gc:
+        #   run_before_listen: (lt) — tries to connect to GK
+        #   run_after_listen:  (bg) then (start) — fires after (lt) connects
+        # (bg) loads the DGO and calls set-continue! to our first continue-point.
+        # (start) then kills the void-fallen player and spawns fresh there.
         state["status"] = "Writing startup.gc..."
         write_startup_gc([
             "(lt)",
             ";; og:run-below-on-listen",
             f"(bg '{name}-vis)",
-            # Brief pause then spawn — startup.gc runs sequentially so we use
-            # (suspend-for) to yield a few frames before calling start
-            "(suspend-for (seconds 3))",
             "(start 'play (get-or-create-continue! *game-info*))",
         ])
-        state["status"] = "Launching GOALC..."
-        ok, msg = launch_goalc()
-        if not ok: state["error"] = msg; return
-        time.sleep(3.0)
+
+        state["status"] = "Launching GOALC (waiting for nREPL)..."
+        ok, msg = launch_goalc(wait_for_nrepl=True)
+        if not ok:
+            state["error"] = f"GOALC failed to start: {msg}"; return
+
         state["status"] = "Launching game..."
         ok, msg = launch_gk()
         if not ok: state["error"] = msg; return
-        state["status"] = f"Game launching — loading {name}"
+        state["status"] = f"Game launching — loading {name} (watch GOALC console)"
     except Exception as e:
         state["error"] = str(e)
     finally:
@@ -1808,7 +1807,26 @@ _BUILD_PLAY_STATE = {"done": False, "status": "", "error": None, "ok": False}
 
 
 def _bg_build_and_play(name, scene):
-    """Export files, compile with GOALC, then immediately launch and load the level."""
+    """Export files, compile with GOALC, then launch GK and load the level.
+
+    FLOW:
+      Phase 1 — collect scene, write all level files.
+      Phase 2 — compile: ensure GOALC+nREPL are live, send (mi).
+      Phase 3 — launch: write startup.gc with (lt)/(bg)/(start), restart GOALC
+                 so it auto-runs those commands when GK connects.
+
+    WHY WE RESTART GOALC AFTER COMPILE:
+      After (mi) finishes we need GOALC to re-read startup.gc so it can auto-run
+      (lt)/(bg)/(start) when GK boots.  Restarting is simpler and more reliable
+      than trying to sequence manual goalc_send() calls with arbitrary sleeps —
+      the startup.gc run_after_listen mechanism handles the GK-ready timing for us.
+
+    WHY startup.gc INSTEAD OF goalc_send() FOR LAUNCH:
+      goalc_send() is fire-and-forget with fixed sleeps.  If GK takes longer to
+      boot than expected the (lt) call fails and nothing loads.  startup.gc
+      run_after_listen fires only after (lt) actually connects — it is driven by
+      GK being ready, not by a sleep timer.  See _bg_play() docstring for more.
+    """
     state = _BUILD_PLAY_STATE
     try:
         # ── Phase 1: Build ────────────────────────────────────────────────────
@@ -1831,14 +1849,15 @@ def _bg_build_and_play(name, scene):
         patch_game_gp(name, code_deps)
 
         # ── Phase 2: Compile ──────────────────────────────────────────────────
-        # Kill GK first so the game isn't running during compile.
-        # Keep GOALC if it's already up with nREPL — saves startup time.
+        # Kill GK first — game must not be running during compile.
+        # Keep GOALC alive if nREPL is working — saves startup time for (mi).
         state["status"] = "Killing existing GK..."
         kill_gk()
         time.sleep(0.3)
 
         if not goalc_ok():
-            # GOALC not running — launch it and wait for nREPL to be ready
+            # nREPL not reachable — kill any stale GOALC holding port 8181
+            # and launch fresh so (mi) can connect.
             state["status"] = "Launching GOALC (waiting for nREPL)..."
             kill_goalc()
             ok, msg = launch_goalc(wait_for_nrepl=True)
@@ -1851,16 +1870,25 @@ def _bg_build_and_play(name, scene):
             state["error"] = "Compile timed out — check GOALC console"; return
 
         # ── Phase 3: Launch game and load level ───────────────────────────────
-        time.sleep(1.0)
+        # Write startup.gc BEFORE restarting GOALC so the new instance reads it.
+        # run_before_listen: (lt) — connects to GK when it boots.
+        # run_after_listen:  (bg) + (start) — fires automatically after (lt) connects.
+        state["status"] = "Writing startup.gc..."
+        write_startup_gc([
+            "(lt)",
+            ";; og:run-below-on-listen",
+            f"(bg '{name}-vis)",
+            "(start 'play (get-or-create-continue! *game-info*))",
+        ])
 
-        state["status"] = "Killing old GK..."
-        kill_gk()
-        time.sleep(1.0)
-
-        gk_exe = _gk()
-        log(f"[launch] gk path: {gk_exe}  exists={gk_exe.exists()}")
-        log(f"[launch] exe_root: {_exe_root()}  exists={_exe_root().exists()}")
-        log(f"[launch] goalc_ok after compile: {goalc_ok()}")
+        # Restart GOALC so it reads the new startup.gc.
+        # Must kill it first so port 8181 is free — otherwise new instance shows
+        # "nREPL: DISABLED" and never sends commands to GK.
+        state["status"] = "Restarting GOALC with launch startup..."
+        kill_goalc()
+        ok, msg = launch_goalc(wait_for_nrepl=True)
+        if not ok:
+            state["error"] = f"GOALC relaunch failed: {msg}"; return
 
         state["status"] = "Launching game..."
         ok, msg = launch_gk()
@@ -1868,43 +1896,7 @@ def _bg_build_and_play(name, scene):
         if not ok:
             state["error"] = f"GK launch failed: {msg}"; return
 
-        # Poll for GK process
-        gk_found = False
-        for i in range(20):
-            time.sleep(0.5)
-            running = _process_running("gk.exe")
-            log(f"[launch] poll {i}: gk.exe running={running}")
-            if running:
-                gk_found = True
-                break
-
-        if not gk_found:
-            state["error"] = "GK process never appeared — check gk.exe path in preferences"; return
-
-        state["status"] = "Waiting for game to boot..."
-        time.sleep(8.0)
-
-        log(f"[launch] goalc_ok before lt: {goalc_ok()}")
-        state["status"] = "Connecting to game..."
-        r = goalc_send("(lt)")
-        log(f"[launch] (lt) response: {repr(r)}")
-        time.sleep(2.0)
-
-        state["status"] = f"Loading {name}..."
-        r2 = goalc_send(f"(bg '{name}-vis)")
-        log(f"[launch] (bg) response: {repr(r2)}")
-
-        # Wait for level to be 'active, then spawn player at the continue-point
-        # that (bg) already set via set-continue!.  Without this the player
-        # process from boot is still alive, falls in the void, and dies before
-        # the level is ready — causing the black-space / wrong-spawn bug.
-        state["status"] = "Waiting for level to activate..."
-        time.sleep(3.0)
-        state["status"] = "Spawning player..."
-        r3 = goalc_send("(start 'play (get-or-create-continue! *game-info*))")
-        log(f"[launch] (start) response: {repr(r3)}")
-
-        state["status"] = "Done!"
+        state["status"] = f"Done — loading {name} (watch GOALC console)"
         state["ok"] = True
 
     except Exception as e:
