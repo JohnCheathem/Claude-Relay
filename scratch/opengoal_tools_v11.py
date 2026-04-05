@@ -1703,7 +1703,9 @@ def _bg_play(name):
         for _ in range(480):
             time.sleep(0.25)
             r = goalc_send(combined, timeout=3)
-            if r and "ready" in r:
+            # Treat compilation errors (symbol not yet defined) as "not ready"
+            # rather than breaking out of the poll loop.
+            if r and "ready" in r and "Compilation Error" not in r and "Error" not in r:
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
                 spawned = True
@@ -1978,7 +1980,9 @@ def _bg_build_and_play(name, scene):
         for _ in range(480):
             time.sleep(0.25)
             r = goalc_send(combined, timeout=3)
-            if r and "ready" in r:
+            # Treat compilation errors (symbol not yet defined) as "not ready"
+            # rather than breaking out of the poll loop.
+            if r and "ready" in r and "Compilation Error" not in r and "Error" not in r:
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
                 spawned = True
