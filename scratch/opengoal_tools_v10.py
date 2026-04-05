@@ -1694,7 +1694,7 @@ def _bg_play(name):
         spawned = False
         for _ in range(240):
             time.sleep(0.5)
-            r = goalc_send("(if (defined? '*game-info*) 'ready 'wait)", timeout=3)
+            r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
             if r and "ready" in r:
                 time.sleep(1.0)  # brief extra wait for level to be 'active
                 state["status"] = "Spawning player..."
@@ -1962,7 +1962,7 @@ def _bg_build_and_play(name, scene):
         spawned = False
         for _ in range(240):
             time.sleep(0.5)
-            r = goalc_send("(if (defined? '*game-info*) 'ready 'wait)", timeout=3)
+            r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
             if r and "ready" in r:
                 time.sleep(1.0)
                 state["status"] = "Spawning player..."
