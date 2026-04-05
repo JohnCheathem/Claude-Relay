@@ -736,7 +736,16 @@ def kill_gk():
 def kill_goalc():
     _kill_process("goalc.exe")
     time.sleep(0.5)
-
+    # On Windows, SO_EXCLUSIVEADDRUSE holds port 8181 until the process fully
+    # exits. Poll until the port is free so the next launch_goalc() doesn't
+    # hit "nREPL: DISABLED" from a bind() on a not-yet-released port.
+    for _ in range(20):
+        try:
+            with socket.create_connection(("localhost", GOALC_PORT), timeout=0.3):
+                pass
+            time.sleep(0.3)  # port still held, keep waiting
+        except (ConnectionRefusedError, OSError):
+            break  # port is free
 # ---------------------------------------------------------------------------
 # GOALC / nREPL
 # ---------------------------------------------------------------------------
@@ -788,10 +797,8 @@ def launch_goalc(wait_for_nrepl=False):
     exe = _goalc()
     if not exe.exists():
         return False, f"goalc.exe not found at {exe}"
-    # Kill existing instance — no console stacking
-    if _process_running("goalc.exe"):
-        log("launch_goalc: killing existing GOALC")
-        kill_goalc()
+    # Caller is responsible for kill_goalc() + port-free wait before calling here.
+    # Do NOT kill internally — it would reset the port-free polling the caller did.
     try:
         data_dir = str(_data())
         cmd = [str(exe), "--user-auto", "--game", "jak1", "--proj-path", data_dir]
