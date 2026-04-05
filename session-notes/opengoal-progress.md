@@ -33,6 +33,7 @@ duplicate goal-src lines (which would cause fatal duplicate defstep errors).
 - [x] entity-spawning.md
 - [x] modding-addon.md
 - [x] opengoal_tools_v9.py
+- [x] player-loading-and-continues.md  ← NEW April 2026
 
 ## Open questions
 - [ ] bonelurker crash — still unsolved
