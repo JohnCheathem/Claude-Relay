@@ -761,17 +761,7 @@ def kill_gk():
 
 def kill_goalc():
     _kill_process("goalc.exe")
-    time.sleep(0.5)
-    # On Windows, SO_EXCLUSIVEADDRUSE holds port 8181 until the process fully
-    # exits. Poll until the port is free so the next launch_goalc() doesn't
-    # hit "nREPL: DISABLED" from a bind() on a not-yet-released port.
-    for _ in range(20):
-        try:
-            with socket.create_connection(("localhost", GOALC_PORT), timeout=0.3):
-                pass
-            time.sleep(0.3)  # port still held, keep waiting
-        except (ConnectionRefusedError, OSError):
-            break  # port is free
+    time.sleep(2.0)  # Windows needs time to fully release the port after process exit
 # ---------------------------------------------------------------------------
 # GOALC / nREPL
 # ---------------------------------------------------------------------------
@@ -1688,10 +1678,10 @@ def _bg_play(name):
         ok, msg = launch_gk()
         if not ok: state["error"] = msg; return
 
-        # Poll until *game-info* exists (GAME.CGO finished linking) then spawn.
-        # Timeout after 120s to handle slow machines or firewall popups.
-        # Poll every 0.25s until both *game-info* exists AND level is 'display.
-        # Combined check avoids missing the window if level loads fast.
+        # Wait 10s for GAME.CGO to begin linking. *game-info* doesn't exist
+        # as a symbol until game-info-h links; polling before then causes errors.
+        state["status"] = "Waiting for game to initialize..."
+        time.sleep(10.0)
         state["status"] = "Waiting for level to load..."
         spawned = False
         combined = (
@@ -1966,8 +1956,10 @@ def _bg_build_and_play(name, scene):
         if not ok:
             state["error"] = f"GK launch failed: {msg}"; return
 
+        # Wait 10s for GAME.CGO to begin linking before polling.
+        state["status"] = "Waiting for game to initialize..."
+        time.sleep(10.0)
         # Poll until both *game-info* exists AND level has reached 'display status.
-        # We combine both checks into one expression to avoid missing a narrow window.
         # Polls every 0.25s for up to 120s.
         state["status"] = "Waiting for level to load..."
         spawned = False
