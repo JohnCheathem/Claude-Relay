@@ -1690,24 +1690,19 @@ def _bg_play(name):
 
         # Poll until *game-info* exists (GAME.CGO finished linking) then spawn.
         # Timeout after 120s to handle slow machines or firewall popups.
-        state["status"] = "Waiting for game to finish loading..."
+        # Poll every 0.25s until both *game-info* exists AND level is 'display.
+        # Combined check avoids missing the window if level loads fast.
+        state["status"] = "Waiting for level to load..."
         spawned = False
-        # Phase 1: wait for *game-info* (GAME.CGO finished linking)
-        game_info_ready = False
-        for _ in range(240):
-            time.sleep(0.5)
-            r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
-            if r and "ready" in r:
-                game_info_ready = True
-                break
-        if not game_info_ready:
-            state["status"] = "Done (game-info timed out — load level manually)"
-            return
-        # Phase 2: wait for our level to reach 'display status (geometry live)
-        state["status"] = "Waiting for level geometry..."
-        for _ in range(120):
-            time.sleep(0.5)
-            r = goalc_send(f"(let ((lev (level-get *level* '{name}))) (if (and lev (= (-> lev status) 'display)) 'ready 'wait))", timeout=3)
+        combined = (
+            f"(if (and (nonzero? *game-info*)"
+            f" (let ((lev (level-get *level* '{name})))"
+            f"   (and lev (= (-> lev status) 'display))))"
+            f" 'ready 'wait)"
+        )
+        for _ in range(480):
+            time.sleep(0.25)
+            r = goalc_send(combined, timeout=3)
             if r and "ready" in r:
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
@@ -1969,24 +1964,20 @@ def _bg_build_and_play(name, scene):
         if not ok:
             state["error"] = f"GK launch failed: {msg}"; return
 
-        # Phase 1: wait for *game-info* (GAME.CGO finished linking)
-        state["status"] = "Waiting for game to finish loading..."
-        game_info_ready = False
-        for _ in range(240):
-            time.sleep(0.5)
-            r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
-            if r and "ready" in r:
-                game_info_ready = True
-                break
-        if not game_info_ready:
-            state["status"] = "Done (game-info timed out — load level manually)"
-            return
-        # Phase 2: wait for level to reach 'display status (geometry live)
-        state["status"] = "Waiting for level geometry..."
+        # Poll until both *game-info* exists AND level has reached 'display status.
+        # We combine both checks into one expression to avoid missing a narrow window.
+        # Polls every 0.25s for up to 120s.
+        state["status"] = "Waiting for level to load..."
         spawned = False
-        for _ in range(120):
-            time.sleep(0.5)
-            r = goalc_send(f"(let ((lev (level-get *level* '{name}))) (if (and lev (= (-> lev status) 'display)) 'ready 'wait))", timeout=3)
+        combined = (
+            f"(if (and (nonzero? *game-info*)"
+            f" (let ((lev (level-get *level* '{name})))"
+            f"   (and lev (= (-> lev status) 'display))))"
+            f" 'ready 'wait)"
+        )
+        for _ in range(480):
+            time.sleep(0.25)
+            r = goalc_send(combined, timeout=3)
             if r and "ready" in r:
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
