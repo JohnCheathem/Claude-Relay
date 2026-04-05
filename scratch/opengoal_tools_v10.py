@@ -660,10 +660,10 @@ class OGPreferences(AddonPreferences):
 # PATH HELPERS
 # ---------------------------------------------------------------------------
 
-GOALC_PORT    = 8182   # 8181 is permanently held by 3dxnlserver.exe (3Dconnexion SpaceMouse)
+GOALC_PORT    = 8182   # 8181 permanently held by 3dxnlserver.exe (3Dconnexion SpaceMouse driver)
 GOALC_TIMEOUT = 120
 
-def _find_free_nrepl_port(start=8181, attempts=10):
+def _find_free_nrepl_port(start=8182, attempts=10):
     """Find a free TCP port for GOALC's nREPL server.
 
     Strategy: try to CONNECT to each port. If connection is refused, nothing
@@ -827,7 +827,7 @@ def launch_goalc(wait_for_nrepl=False):
     # Caller is responsible for kill_goalc() + port-free wait before calling here.
     # Do NOT kill internally — it would reset the port-free polling the caller did.
     # Find a free port before launching so goalc doesn't show "nREPL: DISABLED".
-    GOALC_PORT = _find_free_nrepl_port()
+    GOALC_PORT = _find_free_nrepl_port(start=8182)  # skip 8181 (3Dconnexion SpaceMouse)
     log(f"[nREPL] launching GOALC on port {GOALC_PORT}")
     try:
         data_dir = str(_data())
