@@ -1493,24 +1493,30 @@ def write_navmesh_gc(name, navmesh_actors):
         ";; Sets *og-tools-navmesh-fn* (defined in entity.gc) at load time.",
         "",
         f"(defun {fn_name} ((this entity-actor))",
-        "  (case (-> this aid)",
     ]
 
-    for aid, mesh in navmesh_actors:
-        lines.append(_navmesh_to_goal(mesh, aid))
+    if navmesh_actors:
+        lines.append("  (case (-> this aid)")
+        for aid, mesh in navmesh_actors:
+            lines.append(_navmesh_to_goal(mesh, aid))
+        lines += [
+            "  )",
+            "  ;; Initialize user-list without calling entity-nav-login.",
+            "  ;; entity-nav-login calls update-route-table which writes to our",
+            "  ;; 'static nav-mesh struct (read-only memory) -> segfault.",
+            "  ;; Allocate engine directly so nav-mesh-connect skips update-route-table.",
+            "  (when (nonzero? (-> this nav-mesh))",
+            "    (when (zero? (-> (-> this nav-mesh) user-list))",
+            "      (set! (-> (-> this nav-mesh) user-list)",
+            "            (new 'loading-level 'engine 'nav-engine 32))",
+            "    )",
+            "  )",
+        ]
+    else:
+        # No navmesh linked — function is a no-op, pointer stays as nothing.
+        lines.append("  ;; No navmesh actors linked in Blender — no-op.")
 
     lines += [
-        "  )",
-        "  ;; Initialize user-list without calling entity-nav-login.",
-        "  ;; entity-nav-login calls update-route-table which writes to our",
-        "  ;; 'static nav-mesh struct (read-only memory) -> segfault.",
-        "  ;; Allocate engine directly so nav-mesh-connect skips update-route-table.",
-        "  (when (nonzero? (-> this nav-mesh))",
-        "    (when (zero? (-> (-> this nav-mesh) user-list))",
-        "      (set! (-> (-> this nav-mesh) user-list)",
-        "            (new 'loading-level 'engine 'nav-engine 32))",
-        "    )",
-        "  )",
         "  (none)",
         ")",
         "",
@@ -1631,11 +1637,10 @@ def _bg_build(name, scene):
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
         write_gc(name)
-        if navmesh_actors:
-            write_navmesh_gc(name, navmesh_actors)
-        patch_entity_gc(name, bool(navmesh_actors))
+        write_navmesh_gc(name, navmesh_actors)  # always write — sets fn ptr even if empty
+        patch_entity_gc(name, has_navmesh=True)   # always inject hook in entity.gc
         patch_level_info(name, spawns)
-        patch_game_gp(name, code_deps, bool(navmesh_actors))
+        patch_game_gp(name, code_deps, has_navmesh=True)  # always add goal-src for navmesh gc
 
         if goalc_ok():
             state["status"] = "Running (mi) via nREPL..."
@@ -2005,11 +2010,10 @@ def _bg_build_and_play(name, scene):
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
         write_gc(name)
-        if navmesh_actors:
-            write_navmesh_gc(name, navmesh_actors)
-        patch_entity_gc(name, bool(navmesh_actors))
+        write_navmesh_gc(name, navmesh_actors)  # always write — sets fn ptr even if empty
+        patch_entity_gc(name, has_navmesh=True)   # always inject hook in entity.gc
         patch_level_info(name, spawns)
-        patch_game_gp(name, code_deps, bool(navmesh_actors))
+        patch_game_gp(name, code_deps, has_navmesh=True)  # always add goal-src for navmesh gc
 
         # ── Phase 2: Compile ──────────────────────────────────────────────────
         # Kill GK first — game must not be running during compile.
