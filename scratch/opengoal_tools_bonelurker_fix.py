@@ -1723,7 +1723,11 @@ def _bg_play(name):
                     # Fallback: level didn't report display in time, try anyway
                     time.sleep(1.0)
                 state["status"] = "Spawning player..."
-                goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
+                # (start 'play ...) triggers hub-boot (village1 reload) which crashes
+                # when the custom level is already loaded and village1 is discarded.
+                # (bg) already called set-continue! to the level's first continue-point.
+                # Teleport the existing player to that continue-point instead.
+                goalc_send(f"(send-event *target* 'teleport)")
                 spawned = True
                 break
         if not spawned:
@@ -2005,7 +2009,9 @@ def _bg_build_and_play(name, scene):
                 if not level_ready:
                     time.sleep(1.0)  # fallback
                 state["status"] = "Spawning player..."
-                goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
+                # (start 'play ...) triggers hub-boot which crashes when village1
+                # is discarded. Use send-event teleport instead.
+                goalc_send(f"(send-event *target* 'teleport)")
                 spawned = True
                 break
         if not spawned:
