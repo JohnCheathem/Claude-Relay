@@ -493,3 +493,52 @@ link finish: my-level
 - [ ] Nav-mesh includes `:nodes` inline-array (crash if missing)
 - [ ] evilplant is a prop — no combat, no attack. Use `junglesnake` for stationary ambush instead.
 - [ ] bully will idle until Jak is within 80m — this is correct behavior, not a bug
+
+---
+
+## 17. Enemy Compatibility Status (live testing results)
+
+Results from testing in `april-2026` custom level. Updated as tests are run.
+
+### ✅ Confirmed Working
+| Enemy | Type | Notes |
+|---|---|---|
+| `babak` | nav-enemy | Reference case. Chases + attacks with navmesh. |
+| `hopper` | nav-enemy | Chases + attacks with navmesh. |
+| `junglesnake` | process-drawable | Stationary ambush, no path needed. |
+| `lurkerworm` | process-drawable | Stationary ambush, no path needed. |
+| `flying-lurker` | process-drawable | Needs path. Patrols correctly. |
+
+### ⚠️ Partial / Known Issues
+| Enemy | Type | Status | Notes |
+|---|---|---|---|
+| `baby-spider` | nav-enemy | Spawns but idles, no interaction or collision with player | Nav-enemy without navmesh assigned — needs entity.gc navmesh patch to activate. Spawning itself works. |
+
+### 🔲 Untested
+All other enemies in ENTITY_DEFS.
+
+### ❌ Known Broken
+*(none yet)*
+
+---
+
+## 18. Tpage Group Budget — Safe Combinations
+
+The level kheap has ~4MB free during load. Each tpage set is ~200–250KB.
+Village1 sky tpages (398, 400, 399, 401, 1470) are always loaded and count toward the budget.
+**Safe rule: max 2 enemy source-level tpage sets per scene.**
+
+| Group | Enemies |
+|---|---|
+| Beach | babak, lurkercrab, lurkerpuppy, lurkerworm |
+| Jungle | hopper, junglesnake |
+| Swamp | kermit, swamp-bat, swamp-rat |
+| Snow | yeti, snow-bunny |
+| Sunken A | bully, double-lurker, puffer |
+| Ogre | flying-lurker, plunger-lurker |
+| Maincave | baby-spider, mother-spider, gnawer, driller-lurker, dark-crystal |
+| Robocave | cavecrusher |
+| Misty | quicksandlurker, muse, bonelurker, balloonlurker |
+| Village1 | evilplant (always loaded — free) |
+
+Mixing 3+ groups in one scene causes `kmalloc: !alloc mem data-segment` crash mid-DGO-load.
