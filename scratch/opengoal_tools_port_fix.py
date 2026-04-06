@@ -1732,7 +1732,7 @@ def _bg_play(name):
         for _ in range(240):
             time.sleep(0.5)
             r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3, port=port)
-            if r and "'ready" in r:
+            if r and ("\nready" in r or "\r\nready" in r):
                 state["status"] = "Loading level..."
                 goalc_send(f"(bg '{name}-vis)", timeout=30, port=port)
                 time.sleep(1.0)  # brief extra wait for level geometry to become active
@@ -2001,7 +2001,7 @@ def _bg_build_and_play(name, scene):
         for _ in range(240):
             time.sleep(0.5)
             r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3, port=port)
-            if r and "'ready" in r:
+            if r and ("\nready" in r or "\r\nready" in r):
                 state["status"] = "Loading level..."
                 goalc_send(f"(bg '{name}-vis)", timeout=30, port=port)
                 time.sleep(1.0)
