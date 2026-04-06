@@ -168,6 +168,29 @@ Credentials: [see Glaude config]
 
 ## Storage Rules
 
+### ⚠️ SCRATCHPAD-FIRST WORKFLOW — READ THIS EVERY SESSION
+
+**All work goes to `scratch/` first. Nothing gets promoted without explicit user permission.**
+
+- `scratch/` — free to read, write, overwrite anytime. This is the working area.
+- `addons/` — NEVER edit without explicit "update the main addon" instruction from user.
+- `knowledge-base/` — NEVER edit without explicit approval. Propose changes in chat first.
+- `session-notes/` — free to update (progress tracking only, no code).
+
+**The rule in plain terms:**
+> Do NOT touch `addons/opengoal_tools.py` or any `knowledge-base/` file unless the user explicitly says to update them. If you did update them without permission, revert immediately and say so. Work only in `scratch/` until the user is satisfied, then they will tell you which files to promote.
+
+**What "explicit permission" looks like:**
+- ✅ "Update the main addon with this fix"
+- ✅ "Promote the scratch file to addons/"
+- ✅ "Update the knowledge base with what we learned"
+- ❌ "Fix the bonelurker bug" (go to scratch/ only)
+- ❌ "Make it work" (go to scratch/ only)
+
+### Current scratch file
+- `scratch/opengoal_tools_bonelurker_fix.py` — working version of the Blender addon
+- `addons/opengoal_tools.py` — last user-approved release (do NOT touch)
+
 ### Knowledge base write protection
 - `knowledge-base/` files are NEVER overwritten without explicit user approval
 - If an improvement is identified, propose the change in chat first and wait for approval
