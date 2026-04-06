@@ -1117,20 +1117,22 @@ def write_jsonc(name, actors, ambients, base_id=10000):
         json.dump(data, f, indent=2)
     log(f"Wrote {p}")
 
-def write_gd(name, ags, code_deps, tpages=None):
+def write_gd(name, ags, code_deps, tpages=None, has_navmesh=False):
     """Write .gd file.
 
     code_deps is a list of (o_file, gc_path, dep) from needed_code().
     Each enemy .o is inserted before the art groups so it links first.
+    has_navmesh: if True, includes <n>-navmesh.o before art groups so the
+    top-level (set! *og-tools-navmesh-fn* ...) runs before birth! fires.
 
     FIX v0.5.0 (Bug 1): The opening paren for the inner file list is now its
-    own line so that the first file entry keeps correct indentation.  The old
-    code concatenated ' (' + files[0].lstrip() which produced a malformed
-    S-expression when enemy .o entries were present and caused GOALC to crash.
+    own line so that the first file entry keeps correct indentation.
     """
     d = _ldir(name); d.mkdir(parents=True, exist_ok=True)
     dgo_name = f"{_nick(name).upper()}.DGO"
     code_o   = [f'  "{o}"' for o, _, _ in code_deps]
+    # Navmesh .o must link before level .go so top-level set! runs before birth!
+    navmesh_o = [f'  "{name}-navmesh.o"'] if has_navmesh else []
     # Village1 sky tpages always present; add entity-specific tpages before art groups
     base_tpages = ['  "tpage-398.go"', '  "tpage-400.go"', '  "tpage-399.go"',
                    '  "tpage-401.go"', '  "tpage-1470.go"']
@@ -1139,6 +1141,7 @@ def write_gd(name, ags, code_deps, tpages=None):
     files = (
         [f'  "{name}-obs.o"']
         + code_o
+        + navmesh_o
         + base_tpages
         + extra_tpages
         + [f'  "{g}"' for g in ags]
@@ -1634,7 +1637,7 @@ def _bg_build(name, scene):
         state["status"] = "Writing files..."
         base_id = scene.og_props.base_id
         write_jsonc(name, actors, ambients, base_id)
-        write_gd(name, ags, code_deps, tpages)
+        write_gd(name, ags, code_deps, tpages, has_navmesh=True)
         navmesh_actors = _collect_navmesh_actors(scene)
         write_gc(name)
         write_navmesh_gc(name, navmesh_actors)  # always write — sets fn ptr even if empty
@@ -2007,7 +2010,7 @@ def _bg_build_and_play(name, scene):
         state["status"] = "Writing level files..."
         base_id = scene.og_props.base_id
         write_jsonc(name, actors, ambients, base_id)
-        write_gd(name, ags, code_deps, tpages)
+        write_gd(name, ags, code_deps, tpages, has_navmesh=True)
         navmesh_actors = _collect_navmesh_actors(scene)
         write_gc(name)
         write_navmesh_gc(name, navmesh_actors)  # always write — sets fn ptr even if empty
