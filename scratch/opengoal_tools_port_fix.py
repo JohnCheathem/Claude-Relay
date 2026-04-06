@@ -808,7 +808,17 @@ def goalc_send(cmd, timeout=GOALC_TIMEOUT, port=None):
     except Exception as e: return f"ERROR:{e}"
 
 def goalc_ok():
-    return goalc_send("(+ 1 1)", timeout=3) is not None
+    """Return True if a GOALC nREPL is reachable, and update GOALC_PORT to match.
+
+    Scans ports 8182-8191 so it finds GOALC regardless of which port it picked
+    at launch. Updates the global so subsequent goalc_send() default-port calls work.
+    """
+    global GOALC_PORT
+    for port in range(8182, 8192):
+        if goalc_send("(+ 1 1)", timeout=1, port=port) is not None:
+            GOALC_PORT = port
+            return True
+    return False
 
 USER_NAME = "blender"
 
@@ -1581,20 +1591,20 @@ def _bg_build(name, scene):
             if r is not None:
                 state["ok"] = True; state["status"] = "Build complete!"; return
 
-        # No running GOALC — launch fresh with (mi) in startup.gc so it compiles on boot.
-        # Write a clean (lt)-only startup.gc afterward so a subsequent Play button
-        # launch doesn't re-run (mi) when it restarts GOALC.
-        state["status"] = "Writing startup.gc..."
-        write_startup_gc(["(mi)"])
-        state["status"] = "Launching GOALC (old instance killed)..."
-        ok, msg, _port = launch_goalc()
+        # No running GOALC — launch fresh, wait for nREPL, then send (mi).
+        # Reset startup.gc to (lt) immediately after launch so a subsequent
+        # Play button doesn't re-run (mi) when it restarts GOALC.
+        state["status"] = "Launching GOALC (waiting for nREPL)..."
+        ok, msg, port = launch_goalc(wait_for_nrepl=True)
         if not ok:
             state["error"] = msg; return
-        state["ok"] = True
-        state["status"] = "GOALC launched — watch console for compile progress."
-        # Overwrite startup.gc with clean (lt) so the next Play launch doesn't
-        # re-run (mi) when it restarts GOALC with a fresh startup.gc.
         write_startup_gc(["(lt)"])
+        state["status"] = "Running (mi) — please wait..."
+        r = goalc_send("(mi)", timeout=GOALC_TIMEOUT, port=port)
+        if r is None:
+            state["error"] = "Compile timed out — check GOALC console"; return
+        state["ok"] = True
+        state["status"] = "Build complete!"
     except Exception as e:
         state["error"] = str(e)
     finally:
