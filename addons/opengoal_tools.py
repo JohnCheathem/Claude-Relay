@@ -1672,12 +1672,15 @@ def _bg_play(name):
         # (lt) connects — before GAME.CGO finishes linking and *game-info* exists.
         # Calling (start) before *game-info* is defined causes a compile error.
         # Instead we poll via nREPL after GK boots until *game-info* is live.
+        # Write startup.gc with ONLY (lt) — no (bg) here.
+        # Putting (bg) in run_after_listen causes two problems:
+        #   1. It re-fires every time GK reconnects, triggering "generated code,
+        #      but wasn't supposed to" spam after play is done.
+        #   2. It fires before GAME.CGO finishes linking, so the level may load
+        #      into an unready engine state.
+        # Instead we send (bg) manually via nREPL once *game-info* is confirmed live.
         state["status"] = "Writing startup.gc..."
-        write_startup_gc([
-            "(lt)",
-            ";; og:run-below-on-listen",
-            f"(bg '{name}-vis)",
-        ])
+        write_startup_gc(["(lt)"])
 
         state["status"] = "Launching GOALC (waiting for nREPL)..."
         ok, msg = launch_goalc(wait_for_nrepl=True)
@@ -1688,15 +1691,18 @@ def _bg_play(name):
         ok, msg = launch_gk()
         if not ok: state["error"] = msg; return
 
-        # Poll until *game-info* exists (GAME.CGO finished linking) then spawn.
-        # Timeout after 120s to handle slow machines or firewall popups.
+        # Poll until *game-info* exists (GAME.CGO finished linking) then load level + spawn.
+        # Match "'ready" (with leading quote) to catch only the GOAL symbol return value,
+        # not console noise like "Listener: ready" which was causing false-positive triggers.
         state["status"] = "Waiting for game to finish loading..."
         spawned = False
         for _ in range(240):
             time.sleep(0.5)
             r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
-            if r and "ready" in r:
-                time.sleep(1.0)  # brief extra wait for level to be 'active
+            if r and "'ready" in r:
+                state["status"] = "Loading level..."
+                goalc_send(f"(bg '{name}-vis)", timeout=30)
+                time.sleep(1.0)  # brief extra wait for level geometry to become active
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
                 spawned = True
@@ -1934,15 +1940,12 @@ def _bg_build_and_play(name, scene):
             state["error"] = "Compile timed out — check GOALC console"; return
 
         # ── Phase 3: Launch game and load level ───────────────────────────────
-        # Write startup.gc with (lt) and (bg) only — NOT (start).
-        # (start) cannot be in run_after_listen because it fires before GAME.CGO
-        # finishes linking and *game-info* is defined — causes compile error.
+        # Write startup.gc with ONLY (lt) — no (bg) here.
+        # Putting (bg) in run_after_listen causes "generated code, but wasn't
+        # supposed to" spam every time GK reconnects after play is done.
+        # We send (bg) manually via nREPL once *game-info* is confirmed live.
         state["status"] = "Writing startup.gc..."
-        write_startup_gc([
-            "(lt)",
-            ";; og:run-below-on-listen",
-            f"(bg '{name}-vis)",
-        ])
+        write_startup_gc(["(lt)"])
 
         # Restart GOALC so it reads the new startup.gc.
         state["status"] = "Restarting GOALC with launch startup..."
@@ -1957,13 +1960,17 @@ def _bg_build_and_play(name, scene):
         if not ok:
             state["error"] = f"GK launch failed: {msg}"; return
 
-        # Poll until *game-info* exists (GAME.CGO done) then spawn player.
+        # Poll until *game-info* exists (GAME.CGO done) then load level + spawn.
+        # Match "'ready" (with leading quote) to catch only the GOAL symbol return,
+        # not console noise like "Listener: ready" which causes false-positive triggers.
         state["status"] = "Waiting for game to finish loading..."
         spawned = False
         for _ in range(240):
             time.sleep(0.5)
             r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
-            if r and "ready" in r:
+            if r and "'ready" in r:
+                state["status"] = "Loading level..."
+                goalc_send(f"(bg '{name}-vis)", timeout=30)
                 time.sleep(1.0)
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
