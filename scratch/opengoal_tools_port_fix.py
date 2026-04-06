@@ -762,16 +762,22 @@ def kill_gk():
 def kill_goalc():
     _kill_process("goalc.exe")
     time.sleep(0.5)
-    # On Windows, SO_EXCLUSIVEADDRUSE holds port 8181 until the process fully
-    # exits. Poll until the port is free so the next launch_goalc() doesn't
-    # hit "nREPL: DISABLED" from a bind() on a not-yet-released port.
-    for _ in range(20):
-        try:
-            with socket.create_connection(("localhost", GOALC_PORT), timeout=0.3):
+    # On Windows, SO_EXCLUSIVEADDRUSE holds the port until the process fully exits.
+    # Scan all ports GOALC could be on (8182-8191) and wait until ALL are free.
+    # We must check all ports because goalc_ok() may have updated GOALC_PORT to a
+    # different value than the one kill_goalc was originally called for.
+    for _ in range(40):
+        any_alive = False
+        for port in range(8182, 8192):
+            try:
+                with socket.create_connection(("localhost", port), timeout=0.2):
+                    any_alive = True
+                    break
+            except (ConnectionRefusedError, OSError):
                 pass
-            time.sleep(0.3)  # port still held, keep waiting
-        except (ConnectionRefusedError, OSError):
-            break  # port is free
+        if not any_alive:
+            break
+        time.sleep(0.3)
 # ---------------------------------------------------------------------------
 # GOALC / nREPL
 # ---------------------------------------------------------------------------
