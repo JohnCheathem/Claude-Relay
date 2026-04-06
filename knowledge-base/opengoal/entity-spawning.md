@@ -510,6 +510,8 @@ Results from testing in `april-2026` custom level. Updated as tests are run.
 | `swamp-rat` | nav-enemy | Swamp | Works. Needs navmesh for chase. |
 | `swamp-bat` | process-drawable | Swamp | Works. Needs both `path` and `pathb`. |
 | `kermit` | nav-enemy | Swamp | Works. Needs navmesh for chase. |
+| `snow-bunny` | nav-enemy | Snow | Works. Needs navmesh + path lump (errors without path). |
+| `yeti` | process-drawable | Snow | Works. Needs path (defines spawn points for yeti-slave children). |
 | `flying-lurker` | process-drawable | Ogre | Needs path. Patrols correctly. |
 
 ### ⚠️ Partial / Known Issues

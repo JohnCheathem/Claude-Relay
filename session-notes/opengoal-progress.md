@@ -58,10 +58,12 @@ Play button successfully launches game and spawns in custom level.
 - hopper
 - junglesnake
 
-### 🔲 To Test Next (priority order)
-- **spider** — process-drawable, uses path, good complexity middle-ground
-- **warp-gate** (or lurker-soldier) — misty enemies, tests MIS.DGO injection path
-- **bone-lurker** — was fixed in earlier session, needs confirm
+### 🔲 To Test Next (in tpage group order)
+- **Sunken group**: bully, puffer, double-lurker
+- **Misty group**: quicksandlurker, muse, bonelurker, balloonlurker
+- **Maincave group**: gnawer, driller-lurker, dark-crystal (baby-spider partial)
+- **Ogre group**: plunger-lurker (flying-lurker already works)
+- **Robocave group**: cavecrusher
 
 ### ❌ Known Issues
 - navmesh full pathfinding — no engine support yet
