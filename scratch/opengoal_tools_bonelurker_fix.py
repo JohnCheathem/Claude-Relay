@@ -1674,16 +1674,16 @@ def _bg_play(name):
         kill_gk()
         kill_goalc()
 
-        # Write startup.gc with only (lt) and (bg).
-        # (start) is NOT in startup.gc because run_after_listen fires the moment
-        # (lt) connects — before GAME.CGO finishes linking and *game-info* exists.
-        # Calling (start) before *game-info* is defined causes a compile error.
-        # Instead we poll via nREPL after GK boots until *game-info* is live.
+        # Write startup.gc with (lt) only — no (bg) here.
+        # run_after_listen fires the moment (lt) connects to GK, which is while
+        # village1 is still mid-boot and its sky textures aren't seated yet.
+        # Sending (bg) at that point causes "Failed to find texture at 0 (sky-direct)"
+        # → village1 discarded → custom level discarded.
+        # Instead, send (bg) via nREPL poll once *game-info* exists — at that
+        # point village1 is fully initialized and safe to unload/replace.
         state["status"] = "Writing startup.gc..."
         write_startup_gc([
             "(lt)",
-            ";; og:run-below-on-listen",
-            f"(bg '{name}-vis)",
         ])
 
         state["status"] = "Launching GOALC (waiting for nREPL)..."
@@ -1695,15 +1695,18 @@ def _bg_play(name):
         ok, msg = launch_gk()
         if not ok: state["error"] = msg; return
 
-        # Poll until *game-info* exists (GAME.CGO finished linking) then spawn.
-        # Timeout after 120s to handle slow machines or firewall popups.
+        # Poll until *game-info* exists (GAME.CGO finished linking).
+        # Then send (bg) to load the custom level, wait briefly, then (start).
+        # Timeout after 120s.
         state["status"] = "Waiting for game to finish loading..."
         spawned = False
         for _ in range(240):
             time.sleep(0.5)
             r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
             if r and "ready" in r:
-                time.sleep(1.0)  # brief extra wait for level to be 'active
+                state["status"] = "Loading level..."
+                goalc_send(f"(bg '{name}-vis)")
+                time.sleep(2.0)  # wait for level geometry to seat before spawning
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
                 spawned = True
@@ -1941,14 +1944,13 @@ def _bg_build_and_play(name, scene):
             state["error"] = "Compile timed out — check GOALC console"; return
 
         # ── Phase 3: Launch game and load level ───────────────────────────────
-        # Write startup.gc with (lt) and (bg) only — NOT (start).
-        # (start) cannot be in run_after_listen because it fires before GAME.CGO
-        # finishes linking and *game-info* is defined — causes compile error.
+        # Write startup.gc with (lt) only — no (bg) here.
+        # See Play-only launch comment: (bg) in run_after_listen fires while
+        # village1 is still mid-boot → sky texture 0 not seated → level discarded.
+        # Send (bg) via nREPL poll once *game-info* exists instead.
         state["status"] = "Writing startup.gc..."
         write_startup_gc([
             "(lt)",
-            ";; og:run-below-on-listen",
-            f"(bg '{name}-vis)",
         ])
 
         # Restart GOALC so it reads the new startup.gc.
@@ -1964,14 +1966,17 @@ def _bg_build_and_play(name, scene):
         if not ok:
             state["error"] = f"GK launch failed: {msg}"; return
 
-        # Poll until *game-info* exists (GAME.CGO done) then spawn player.
+        # Poll until *game-info* exists (GAME.CGO done).
+        # Then (bg) to load custom level, wait for geometry, then (start) to spawn.
         state["status"] = "Waiting for game to finish loading..."
         spawned = False
         for _ in range(240):
             time.sleep(0.5)
             r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
             if r and "ready" in r:
-                time.sleep(1.0)
+                state["status"] = "Loading level..."
+                goalc_send(f"(bg '{name}-vis)")
+                time.sleep(2.0)  # wait for level geometry to seat before spawning
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
                 spawned = True
