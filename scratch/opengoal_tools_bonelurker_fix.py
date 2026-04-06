@@ -523,7 +523,7 @@ def _navmesh_to_goal(mesh, actor_aid):
 
     L = []
     L.append(f"    (({actor_aid})")
-    L.append(f"      (set! (-> this nav-mesh)")
+    L.append(f"      (set! (-> (the nav-enemy this) nav-mesh)")
     L.append(f"        (new 'static 'nav-mesh")
     L.append(f"          :bounds (new 'static 'sphere :x (meters {ox:.4f}) :y (meters {oy:.4f}) :z (meters {oz:.4f}) :w (meters {br:.4f}))")
     L.append(f"          :origin (new 'static 'vector :x (meters {ox:.4f}) :y (meters {oy:.4f}) :z (meters {oz:.4f}) :w 1.0)")
@@ -1517,10 +1517,14 @@ def patch_entity_gc(navmesh_actors):
         "  ;; entity-nav-login calls update-route-table which writes back to the route",
         "  ;; array — but our mesh is 'static (read-only GAME.CGO memory), so that",
         "  ;; write would segfault. Instead we just set up the user-list engine.",
-        "  (when (nonzero? (-> this nav-mesh))",
-        "    (when (zero? (-> (-> this nav-mesh) user-list))",
-        "      (set! (-> (-> this nav-mesh) user-list)",
-        "            (new 'loading-level 'engine 'nav-engine 32))",
+        "  ;; Cast to nav-enemy so the nav-mesh field is accessible (it doesn't",
+        "  ;; exist on entity-actor — only on nav-enemy and its subclasses).",
+        "  (let ((ne (the nav-enemy this)))",
+        "    (when (nonzero? (-> ne nav-mesh))",
+        "      (when (zero? (-> (-> ne nav-mesh) user-list))",
+        "        (set! (-> (-> ne nav-mesh) user-list)",
+        "              (new 'loading-level 'engine 'nav-engine 32))",
+        "      )",
         "    )",
         "  )",
         "  (none)",
@@ -1702,12 +1706,16 @@ def _bg_play(name):
         # Poll until *game-info* exists (GAME.CGO finished linking).
         # Then send (bg) to load the custom level, wait briefly, then (start).
         # Timeout after 120s.
+        # NOTE: Early polls may get a Compilation Error because *game-info* isn't
+        # linked yet — this is harmless, the loop just retries. We add an initial
+        # 3s sleep to let GAME.CGO get most of the way through linking first.
         state["status"] = "Waiting for game to finish loading..."
+        time.sleep(3.0)
         spawned = False
         for _ in range(240):
             time.sleep(0.5)
             r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
-            if r and "ready" in r:
+            if r and "ready" in r and "Compilation Error" not in r:
                 state["status"] = "Loading level..."
                 goalc_send(f"(bg '{name}-vis)")
                 # Poll until the custom level reaches 'display status before spawning.
@@ -1991,12 +1999,14 @@ def _bg_build_and_play(name, scene):
 
         # Poll until *game-info* exists (GAME.CGO done).
         # Then (bg) to load custom level, wait for geometry, then (start) to spawn.
+        # Add 3s initial sleep — early polls get Compilation Error while GAME.CGO links.
         state["status"] = "Waiting for game to finish loading..."
+        time.sleep(3.0)
         spawned = False
         for _ in range(240):
             time.sleep(0.5)
             r = goalc_send("(if (nonzero? *game-info*) 'ready 'wait)", timeout=3)
-            if r and "ready" in r:
+            if r and "ready" in r and "Compilation Error" not in r:
                 state["status"] = "Loading level..."
                 goalc_send(f"(bg '{name}-vis)")
                 # Poll until custom level reaches 'display before spawning.
