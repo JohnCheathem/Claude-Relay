@@ -954,15 +954,11 @@ def collect_actors(scene):
         # Waypoints tagged _wp_00, _wp_01 ... drive this lump.
         # For needs_path enemies with no waypoints we log a warning — the level
         # will likely crash or error at runtime without at least 1 waypoint.
-        if einfo.get("needs_path"):
-            # Only process-drawable enemies with needs_path=True use a path lump.
-            # nav-enemies (babak, hopper etc.) do NOT get a path lump — the engine
-            # uses the navmesh for pathfinding, and a spurious path lump causes
-            # spline tracking corruption that immediately discards the level.
+        if einfo.get("needs_path") or (etype in NAV_UNSAFE_TYPES and path_pts):
             if path_pts:
                 lump["path"] = ["vector4m"] + path_pts
                 log(f"  [path] {o.name}  {len(path_pts)} points")
-            else:
+            elif einfo.get("needs_path"):
                 log(f"  [WARNING] {o.name} needs a path but has no waypoints — will crash/error at runtime!")
 
         # ── Second path lump (needs_pathb=True — swamp-bat only) ─────────────
