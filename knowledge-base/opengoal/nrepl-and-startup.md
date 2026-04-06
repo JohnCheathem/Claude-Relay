@@ -74,8 +74,10 @@ The sentinel comment splits execution into two sections:
 ```
 
 - **run_before_listen**: Runs immediately at GOALC startup. Put `(lt)` here.
-- **run_after_listen**: Runs once `(lt)` successfully connects to GK. Put `(bg)` here.
-- **Do NOT put `(start)` here** — fires before `*game-info*` exists → crash.
+- **run_after_listen**: Runs once `(lt)` successfully connects to GK.
+- **Do NOT put `(bg)` or `(start)` in run_after_listen** — this re-fires every time GK reconnects (which happens repeatedly during normal play), causing `[Warning] REPL Error: Compilation generated code, but wasn't supposed to` spam.
+
+**Correct approach (confirmed working):** startup.gc contains ONLY `(lt)`. Send `(bg)` and `(start)` manually via `goalc_send()` after polling confirms `*game-info*` is live.
 
 ---
 
@@ -89,8 +91,12 @@ Calling `(start)` too early causes: `The symbol *game-info* was looked up as a g
 # WRONG — defined? does not exist in GOAL
 "(if (defined? '*game-info*) 'ready 'wait)"
 
-# CORRECT — nonzero? is the GOAL idiom (confirmed working)
+# WRONG — matches console noise like "Listener: ready", "nREPL: Listening" → false positive
+if r and "ready" in r:
+
+# CORRECT — match the GOAL symbol return value specifically
 "(if (nonzero? *game-info*) 'ready 'wait)"
+if r and "'ready" in r:   # note leading quote — matches GOAL symbol 'ready only
 ```
 
 `*game-info*` is initialized with `(when (or (not *game-info*) (zero? *game-info*)) ...)` in `game-info-h.gc`, so `(nonzero? *game-info*)` returns truthy once GAME.CGO finishes.
@@ -119,14 +125,19 @@ Continue-point names are set by `(bg 'level-vis)` via `set-continue!` to the lev
 ```
 1. kill_gk() + kill_goalc()
 2. find free port (8182+)
-3. write_startup_gc(["(lt)", ";; og:run-below-on-listen", f"(bg '{name}-vis)"])
+3. write_startup_gc(["(lt)"])   ← ONLY (lt), nothing in run_after_listen
 4. launch_goalc(port=N, wait_for_nrepl=True)
 5. launch_gk()
 6. Poll every 0.5s: (if (nonzero? *game-info*) 'ready 'wait)
-7. When ready: (start 'play (or (get-continue-by-name ...) (get-or-create-continue! ...)))
+   → check: "'ready" in r  (leading quote required — avoids console noise false-positive)
+7. When ready: goalc_send("(bg '{name}-vis)")
+8. time.sleep(1.0)
+9. goalc_send("(start 'play (or (get-continue-by-name ...) (get-or-create-continue! ...)))")
 ```
 
-Wait up to 120s (240 × 0.5s) for readiness. Add 1.0s extra delay after ready before spawning to let level become fully active.
+Wait up to 120s (240 × 0.5s) for readiness.
+
+**Why (bg) is NOT in startup.gc:** `run_after_listen` fires every time GK reconnects — which happens repeatedly during normal play. Putting `(bg)` there causes repeated `[Warning] REPL Error: Compilation generated code, but wasn't supposed to` every few seconds after launch.
 
 ---
 
