@@ -2281,9 +2281,10 @@ def collect_ambients(scene):
             # Negative first value = looping (ambient-type-sound-loop)
             # Positive = one-shot on interval (ambient-type-sound)
             if mode == "loop":
-                cycle_speed = [-1.0, 0.0]
+                cycle_speed = ["float", -1.0, 0.0]
             else:
-                cycle_speed = [float(o.get("og_cycle_min", 5.0)),
+                cycle_speed = ["float",
+                               float(o.get("og_cycle_min", 5.0)),
                                float(o.get("og_cycle_rnd", 2.0))]
 
             out.append({
