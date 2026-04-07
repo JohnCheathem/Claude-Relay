@@ -232,28 +232,34 @@ ENTITY_WIKI = {
     'yeti':                  {'img': 'Yeti render.jpg',                                       'desc': "The yeti is the glacier variant of the babak lurker, encountered in The Precursor Legacy's colder regions. Larger and tougher than the standard babak."},
 }
 
-# Cache: etype -> bpy.types.Image (loaded on first access)
-_wiki_image_cache: dict = {}
+# Preview collection — loaded once at register(), cleared at unregister().
+# bpy.utils.previews is the correct Blender API for custom images in panels.
+# icon_id is just an integer texture lookup — zero overhead in draw().
+_preview_collections: dict = {}
 
-def _get_wiki_image(etype: str):
-    """Load and cache the wiki preview image for an entity type. Returns None if unavailable."""
-    import bpy, os
-    if etype in _wiki_image_cache:
-        return _wiki_image_cache[etype]
-    wiki = ENTITY_WIKI.get(etype)
-    if not wiki or not wiki.get('img'):
-        _wiki_image_cache[etype] = None
-        return None
-    addon_dir = os.path.dirname(os.path.abspath(__file__))
-    img_path = os.path.join(addon_dir, 'enemy-images', wiki['img'])
-    if not os.path.exists(img_path):
-        _wiki_image_cache[etype] = None
-        return None
-    # Use check_existing=True so Blender deduplicates by filepath automatically.
-    # Never write img.name — that crashes inside a draw() call.
-    img = bpy.data.images.load(img_path, check_existing=True)
-    _wiki_image_cache[etype] = img
-    return img
+
+def _load_previews():
+    """Load all enemy images into a PreviewCollection. Called from register()."""
+    import bpy.utils.previews, os
+    pcoll = bpy.utils.previews.new()
+    img_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'enemy-images')
+    if os.path.isdir(img_dir):
+        for etype, wiki in ENTITY_WIKI.items():
+            fname = wiki.get('img')
+            if not fname:
+                continue
+            fpath = os.path.join(img_dir, fname)
+            if os.path.exists(fpath) and etype not in pcoll:
+                pcoll.load(etype, fpath, 'IMAGE')
+    _preview_collections['wiki'] = pcoll
+
+
+def _unload_previews():
+    """Remove preview collection. Called from unregister()."""
+    import bpy.utils.previews
+    for pcoll in _preview_collections.values():
+        bpy.utils.previews.remove(pcoll)
+    _preview_collections.clear()
 
 
 def _draw_wiki_preview(layout, etype: str):
@@ -262,13 +268,19 @@ def _draw_wiki_preview(layout, etype: str):
     if not wiki:
         return
 
+    pcoll = _preview_collections.get('wiki')
     box = layout.box()
 
-    # ── Image preview ──────────────────────────────────────────────────────
-    img = _get_wiki_image(etype)
-    if img:
+    # ── Image ─────────────────────────────────────────────────────────────
+    # layout.label(icon_value=) is the standard Blender addon pattern for
+    # custom images. scale_y enlarges the row so the icon renders big.
+    if pcoll and etype in pcoll:
+        icon_id = pcoll[etype].icon_id
         row = box.row()
-        row.template_preview(img, show_buttons=False)
+        row.scale_y = 5.0
+        row.label(text="", icon_value=icon_id)
+    elif wiki.get('img'):
+        box.label(text="Image not found — check enemy-images/ folder", icon="ERROR")
     else:
         box.label(text="No image available", icon="IMAGE_DATA")
 
@@ -276,19 +288,19 @@ def _draw_wiki_preview(layout, etype: str):
     desc = wiki.get('desc', '').strip()
     if desc:
         col = box.column(align=True)
-        # Wrap at ~52 chars so it fits the N-panel width
         words = desc.split()
-        line, lines = [], []
+        line, out = [], []
         for w in words:
             if sum(len(x) + 1 for x in line) + len(w) > 52:
-                lines.append(' '.join(line))
+                out.append(' '.join(line))
                 line = [w]
             else:
                 line.append(w)
         if line:
-            lines.append(' '.join(line))
-        for l in lines:
-            col.label(text=l)
+            out.append(' '.join(line))
+        for ln in out:
+            col.label(text=ln)
+
 
 
 def _build_entity_enum():
@@ -2890,6 +2902,7 @@ classes = (
 )
 
 def register():
+    _load_previews()
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.og_props = PointerProperty(type=OGProperties)
@@ -2921,7 +2934,7 @@ def register():
     bpy.types.Object.collide_mode          = bpy.props.EnumProperty(items=pat_modes,    name="Mode")
 
 def unregister():
-    _wiki_image_cache.clear()
+    _unload_previews()
     bpy.types.MATERIAL_PT_custom_props.remove(_draw_mat)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
