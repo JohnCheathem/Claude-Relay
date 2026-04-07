@@ -173,3 +173,26 @@ Stores the symbol pointer directly in `user-float 2`, no `rand-vu-int-count` inv
 - Implement looping sound emitters in addon using `cycle-speed: ["float", -1.0, 0.0]`
 - For one-shots / random sounds: use obs.gc trigger pattern
 - Music via `type='music` ambient is unaffected (different code path, no exact lookup)
+
+---
+
+## Branch Strategy (set up April 7 2026)
+
+Audio work lives on: **`feature/audio`**
+
+### How to use
+- At session start: `git checkout feature/audio && git pull`
+- All audio/sound panel work goes on this branch
+- When user approves a build → merge to `main`
+- `main` stays always-installable
+
+### Current state of feature/audio
+Branched from `main` at commit `c7e0303`.
+`addons/opengoal_tools.py` on this branch = the mid-session promote version
+(has audio panel but: old JSONC format, SEQUENCE_COLOR_04 icon bug, autoload button).
+
+The fixed version is in `scratch/opengoal_tools_with_audio.py`.
+
+**Recommended first task on this branch:**
+Replace `addons/opengoal_tools.py` with the fixed scratch version,
+then implement looping sound emitters using confirmed-working `cycle-speed < 0` format.

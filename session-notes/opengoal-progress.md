@@ -249,3 +249,29 @@ TODO: check `double-lurker.gc` for any paired actor setup logic.
 
 ### Reference
 Full knowledge base: `scratch/opengoal-audio-knowledge.md`
+
+---
+
+## Branch Strategy (set up April 7 2026)
+
+```
+main            ← always installable, user-approved only
+feature/audio   ← audio panel, sound emitters, music zones
+feature/camera  ← camera trigger system
+```
+
+Camera work lives on: **`feature/camera`**
+
+### How to use
+- At session start: `git checkout feature/camera && git pull`
+- Camera trigger work goes on this branch
+- When user approves → merge to `main`
+
+### Current state of feature/camera
+Branched from `main` at commit `c7e0303`.
+Camera work in progress is in `scratch/opengoal_tools_camera_test.py`.
+
+**Recommended first task on this branch:**
+Take `scratch/opengoal_tools_camera_test.py` as the base,
+test it in-game (see camera debug session notes above for next steps),
+then promote to `addons/opengoal_tools.py` on this branch when working.
