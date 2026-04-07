@@ -1273,7 +1273,7 @@ def collect_cameras(scene):
 
         out.append({
             "trans":     [gx, gy, gz],
-            "etype":     "entity-camera",
+            "etype":     "process",   # entity-camera retries birth! every frame; process sets bit-0 once and stops
             "game_task": "(game-task none)",
             "quat":      [qx, qy, qz, qw],
             "vis_id":    0,
@@ -1917,10 +1917,14 @@ def _bg_play(name):
                 time.sleep(1.0)  # brief extra wait for level geometry to become active
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
-                # Call the level obs-init to spawn camera trigger processes
+                # Poll until *target* is alive, then call obs-init to spawn camera triggers
                 init_fn = name.replace("-", "_") + "_obs_init"
-                time.sleep(0.5)
-                goalc_send(f"({init_fn})", timeout=5)
+                for _ in range(60):
+                    time.sleep(0.25)
+                    r2 = goalc_send("(if *target* 'alive 'wait)", timeout=3)
+                    if r2 and "'alive" in r2:
+                        goalc_send(f"({init_fn})", timeout=5)
+                        break
                 spawned = True
                 break
         if not spawned:
@@ -2211,8 +2215,12 @@ def _bg_build_and_play(name, scene):
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
                 init_fn = name.replace("-", "_") + "_obs_init"
-                time.sleep(0.5)
-                goalc_send(f"({init_fn})", timeout=5)
+                for _ in range(60):
+                    time.sleep(0.25)
+                    r2 = goalc_send("(if *target* 'alive 'wait)", timeout=3)
+                    if r2 and "'alive" in r2:
+                        goalc_send(f"({init_fn})", timeout=5)
+                        break
                 spawned = True
                 break
         if not spawned:
