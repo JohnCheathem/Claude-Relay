@@ -1174,8 +1174,12 @@ def write_gd(name, ags, code_deps, tpages=None):
         + ['  )', ' )']
     )
     p = d / f"{_nick(name)}.gd"
-    p.write_text("\n".join(lines) + "\n")
-    log(f"Wrote {p}  (enemy .o files: {[o for o,_,_ in code_deps]})")
+    new_text = "\n".join(lines) + "\n"
+    if not p.exists() or p.read_text() != new_text:
+        p.write_text(new_text)
+        log(f"Wrote {p}  (enemy .o files: {[o for o,_,_ in code_deps]})")
+    else:
+        log(f"Skipped {p} (unchanged)")
 
 
 
@@ -1245,10 +1249,14 @@ def patch_level_info(name, spawns):
     txt = re.sub(rf"\n\(define {re.escape(name)}\b.*?\(cons!.*?'{re.escape(name)}\)\n",
                  "", txt, flags=re.DOTALL)
     marker = ";;;;; CUSTOM LEVELS"
-    txt = (txt.replace(marker, marker+block, 1) if marker in txt
-           else txt + "\n;;;;; CUSTOM LEVELS\n" + block)
-    p.write_text(txt, encoding="utf-8")
-    log("Patched level-info.gc")
+    new_txt = (txt.replace(marker, marker+block, 1) if marker in txt
+               else txt + "\n;;;;; CUSTOM LEVELS\n" + block)
+    original = p.read_text(encoding="utf-8")
+    if new_txt != original:
+        p.write_text(new_txt, encoding="utf-8")
+        log("Patched level-info.gc")
+    else:
+        log("Skipped level-info.gc (unchanged)")
 
 def patch_game_gp(name, code_deps=None):
     """Patch game.gp to build our custom level and compile enemy code files.
