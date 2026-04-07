@@ -791,32 +791,35 @@ def _camera_aabb_to_planes(b_min, b_max):
 
 
 def collect_cameras(scene):
-    """Build camera actor list from CAMERA_ empties.
+    """Build camera actor list from CAMERA_ camera objects.
 
-    Naming conventions:
-      CAMERA_<n>           — fixed camera (locked pos/rot, no trigger vol)
-      CAMERA_<n>_VOL_<m>   — trigger volume mesh linked to CAMERA_<n>
-
-    Trigger volumes are MESH objects whose name starts with CAMVOL_<n>.
-    Each camera can have at most one linked volume.
+    Cameras are Blender CAMERA type objects named CAMERA_<n>.
+    Trigger volumes are MESH objects named CAMVOL_<n> with an 'og_cam_link'
+    custom property pointing to the camera name (set via Link Trigger Volume).
 
     Returns (camera_actors, trigger_list) where:
       camera_actors — list of JSONC actor dicts ready for actors array
-      trigger_list  — list of dicts with AABB info for obs.gc generation
+      trigger_list  — list of dicts with AABB bounds (game units) for obs.gc
     """
-    import mathutils
-
     cam_objects = sorted(
         [o for o in scene.objects
-         if o.name.startswith("CAMERA_") and o.type == "EMPTY"],
+         if o.name.startswith("CAMERA_") and o.type == "CAMERA"],
         key=lambda o: o.name,
     )
+
+    # Build reverse map: cam_name -> volume mesh object
+    vol_by_cam = {}
+    for o in scene.objects:
+        if o.type == "MESH" and o.name.startswith("CAMVOL_"):
+            link = o.get("og_cam_link", "")
+            if link:
+                vol_by_cam[link] = o  # last one wins if multiple linked
 
     camera_actors = []
     trigger_list  = []
 
     for cam_obj in cam_objects:
-        cam_name = cam_obj.name  # e.g. "CAMERA_0"
+        cam_name = cam_obj.name
 
         # --- Position: Blender -> game coords ---
         loc = cam_obj.matrix_world.translation
@@ -824,40 +827,33 @@ def collect_cameras(scene):
         gy = round(loc.z, 4)
         gz = round(-loc.y, 4)
 
-        # --- Rotation: Blender -> game quaternion ---
-        # Blender ARROWS empty: local -Z is the "forward / look" axis.
-        # Game cam-fixed: camera -Z is the look direction.
-        # We apply a 90° X-rotation offset to convert from Blender convention
-        # to the game's camera convention (tested empirically).
+        # --- Rotation: Blender camera -> game quaternion ---
+        # Blender camera: -Z is the look direction, Y is up.
+        # Game cam-fixed: -Z is the look direction.
+        # We apply a -90° X rotation to align Blender camera convention
+        # with the game's coordinate frame (Y-up vs Z-up).
         import mathutils
         rot_bl  = cam_obj.matrix_world.to_quaternion()
-        # Swap axes: game X=bl X, game Y=bl Z, game Z=-bl Y
-        # Also apply the -90° X correction for camera forward direction
         offset  = mathutils.Quaternion((1, 0, 0), math.radians(-90))
-        rot_game = rot_bl @ offset
-        # Coordinate axis remap for the rotation
-        bx, by, bz, bw = rot_game.x, rot_game.y, rot_game.z, rot_game.w
+        rot_adj = rot_bl @ offset
+        # Remap axes: game X=bl X, game Y=bl Z, game Z=-bl Y
+        bx, by, bz, bw = rot_adj.x, rot_adj.y, rot_adj.z, rot_adj.w
         qx = round(bx, 6)
         qy = round(bz, 6)
         qz = round(-by, 6)
         qw = round(bw, 6)
 
-        # --- Camera mode and extra lump data ---
-        cam_mode  = cam_obj.get("og_cam_mode",  "fixed")   # fixed | standoff | orbit
+        # --- Camera mode and lump data ---
+        cam_mode  = cam_obj.get("og_cam_mode",  "fixed")
         interp_t  = float(cam_obj.get("og_cam_interp", 1.0))
-        fov_deg   = float(cam_obj.get("og_cam_fov",   0.0))   # 0 = use game default
+        fov_deg   = float(cam_obj.get("og_cam_fov",    0.0))
 
         lump = {"name": cam_name}
         lump["interpTime"] = ["float", round(interp_t, 3)]
-
         if fov_deg > 0.0:
             lump["fov"] = ["degrees", round(fov_deg, 2)]
 
         if cam_mode == "standoff":
-            # Side-scroller: camera stays at fixed offset from player.
-            # 'trans' = camera world pos, 'align' = player anchor pos.
-            # Both as vector3m (meters, game space).
-            # The user places a second empty named CAMERA_<n>_ALIGN for the anchor.
             align_name = cam_name + "_ALIGN"
             align_obj  = scene.objects.get(align_name)
             if align_obj:
@@ -867,25 +863,19 @@ def collect_cameras(scene):
                 lump["align"] = ["vector3m", [ax, ay, az]]
                 log(f"  [camera] {cam_name} standoff — align={align_name}")
             else:
-                log(f"  [camera] WARNING: {cam_name} mode=standoff but no {align_name} empty found — falling back to fixed")
+                log(f"  [camera] WARNING: {cam_name} mode=standoff but no {align_name} found — falling back to fixed")
 
         elif cam_mode == "orbit":
-            # Circular: camera orbits a pivot point.
-            # User places a second empty named CAMERA_<n>_PIVOT.
             pivot_name = cam_name + "_PIVOT"
             pivot_obj  = scene.objects.get(pivot_name)
             if pivot_obj:
                 pl = pivot_obj.matrix_world.translation
                 px = round(pl.x, 4); py = round(pl.z, 4); pz = round(-pl.y, 4)
-                lump["trans"]  = ["vector3m", [gx, gy, gz]]
-                lump["pivot"]  = ["vector3m", [px, py, pz]]
+                lump["trans"] = ["vector3m", [gx, gy, gz]]
+                lump["pivot"] = ["vector3m", [px, py, pz]]
                 log(f"  [camera] {cam_name} orbit — pivot={pivot_name}")
             else:
-                log(f"  [camera] WARNING: {cam_name} mode=orbit but no {pivot_name} empty found — falling back to fixed")
-
-        # --- Find linked trigger volume (CAMVOL_<n>) ---
-        vol_suffix = cam_name.replace("CAMERA_", "CAMVOL_")  # CAMVOL_0
-        vol_obj = scene.objects.get(vol_suffix)
+                log(f"  [camera] WARNING: {cam_name} mode=orbit but no {pivot_name} found — falling back to fixed")
 
         camera_actors.append({
             "trans":     [gx, gy, gz],
@@ -897,33 +887,22 @@ def collect_cameras(scene):
             "lump":      lump,
         })
 
-        # --- Build trigger AABB (game units, NOT meters) ---
-        if vol_obj and vol_obj.type == "MESH":
+        # --- Trigger volume (linked via og_cam_link) ---
+        vol_obj = vol_by_cam.get(cam_name)
+        if vol_obj:
             corners = [vol_obj.matrix_world @ v.co for v in vol_obj.data.vertices]
-            # Convert each corner Blender -> game space
-            gc_corners = [(c.x, c.z, -c.y) for c in corners]
-            xs = [c[0] for c in gc_corners]
-            ys = [c[1] for c in gc_corners]
-            zs = [c[2] for c in gc_corners]
-            # Bounds in meters
-            b_min_m = (min(xs), min(ys), min(zs))
-            b_max_m = (max(xs), max(ys), max(zs))
-            # Bounds in game units (1 meter = 4096 units)
+            gc = [(c.x, c.z, -c.y) for c in corners]
+            xs = [c[0] for c in gc]; ys = [c[1] for c in gc]; zs = [c[2] for c in gc]
             METER = 4096.0
             trigger_list.append({
                 "cam_name": cam_name,
-                "gx0": round(b_min_m[0] * METER, 1),
-                "gx1": round(b_max_m[0] * METER, 1),
-                "gy0": round(b_min_m[1] * METER, 1),
-                "gy1": round(b_max_m[1] * METER, 1),
-                "gz0": round(b_min_m[2] * METER, 1),
-                "gz1": round(b_max_m[2] * METER, 1),
+                "gx0": round(min(xs) * METER, 1), "gx1": round(max(xs) * METER, 1),
+                "gy0": round(min(ys) * METER, 1), "gy1": round(max(ys) * METER, 1),
+                "gz0": round(min(zs) * METER, 1), "gz1": round(max(zs) * METER, 1),
             })
-            log(f"  [camera] {cam_name} trigger vol: X[{b_min_m[0]:.1f},{b_max_m[0]:.1f}] Y[{b_min_m[1]:.1f},{b_max_m[1]:.1f}] Z[{b_min_m[2]:.1f},{b_max_m[2]:.1f}] m")
-        elif vol_obj is None:
-            log(f"  [camera] {cam_name} — no trigger volume (always-active via GOAL event)")
+            log(f"  [camera] {cam_name} + trigger vol {vol_obj.name}")
         else:
-            log(f"  [camera] WARNING: {vol_suffix} is not a MESH object — trigger volume ignored")
+            log(f"  [camera] {cam_name} — no trigger volume (always-active)")
 
     return camera_actors, trigger_list
 
@@ -4030,26 +4009,24 @@ class OG_OT_SpawnCamera(Operator):
     bl_idname = "og.spawn_camera"
     bl_label  = "Add Camera"
     bl_description = (
-        "Place a fixed camera empty at the 3D cursor.\n"
-        "Name: CAMERA_0, CAMERA_1 etc.\n"
-        "Rotate the empty so its -Z axis points where you want to look.\n"
-        "Link a CAMVOL_N mesh to give it a trigger volume."
+        "Place a Blender camera at the 3D cursor.\n"
+        "Named CAMERA_0, CAMERA_1 etc.\n"
+        "Look through it with Numpad-0 to preview the game view.\n"
+        "Link a trigger volume mesh with 'Link Trigger Volume'."
     )
     def execute(self, ctx):
         n = len([o for o in ctx.scene.objects
-                 if o.name.startswith("CAMERA_") and o.type == "EMPTY"
-                 and not o.name.endswith("_ALIGN") and not o.name.endswith("_PIVOT")])
-        bpy.ops.object.empty_add(type="ARROWS", location=ctx.scene.cursor.location)
+                 if o.name.startswith("CAMERA_") and o.type == "CAMERA"])
+        bpy.ops.object.camera_add(location=ctx.scene.cursor.location)
         o = ctx.active_object
         o.name = f"CAMERA_{n}"
         o.show_name = True
-        o.empty_display_size = 0.8
         o.color = (0.0, 0.8, 0.9, 1.0)
         # Default custom properties
         o["og_cam_mode"]   = "fixed"
         o["og_cam_interp"] = 1.0
         o["og_cam_fov"]    = 0.0
-        self.report({"INFO"}, f"Added {o.name}  |  mode=fixed  |  rotate -Z toward look target")
+        self.report({"INFO"}, f"Added {o.name}  |  Numpad-0 to look through it")
         return {"FINISHED"}
 
 
@@ -4057,36 +4034,76 @@ class OG_OT_SpawnCamVolume(Operator):
     bl_idname = "og.spawn_cam_volume"
     bl_label  = "Add Trigger Volume"
     bl_description = (
-        "Add a box mesh trigger volume linked to the selected CAMERA_N empty.\n"
-        "The camera activates when Jak walks inside the volume.\n"
-        "Without a volume the camera is always active."
+        "Add a box mesh trigger volume.\n"
+        "Resize and position it, then use 'Link Trigger Volume' to link it to a camera."
     )
     def execute(self, ctx):
-        sel = ctx.active_object
-        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "EMPTY":
-            self.report({"ERROR"}, "Select a CAMERA_N empty first")
-            return {"CANCELLED"}
-        # Extract camera index from name (CAMERA_0 -> CAMVOL_0)
-        parts = sel.name.split("_", 1)
-        if len(parts) < 2:
-            self.report({"ERROR"}, "Camera name must be CAMERA_<N>")
-            return {"CANCELLED"}
-        vol_name = "CAMVOL_" + parts[1]
-        if ctx.scene.objects.get(vol_name):
-            self.report({"WARNING"}, f"{vol_name} already exists — rename it first")
-            return {"CANCELLED"}
-        # Create a cube at camera location, scaled to a reasonable default
-        bpy.ops.mesh.primitive_cube_add(size=4.0, location=sel.location)
+        # Count existing CAMVOL meshes for unique naming
+        n = len([o for o in ctx.scene.objects
+                 if o.name.startswith("CAMVOL_") and o.type == "MESH"])
+        bpy.ops.mesh.primitive_cube_add(size=4.0, location=ctx.scene.cursor.location)
         vol = ctx.active_object
-        vol.name = vol_name
+        vol.name = f"CAMVOL_{n}"
         vol.show_name = True
         vol.display_type = "WIRE"
         vol.color = (0.0, 0.9, 0.3, 0.4)
-        # Mark invisible + no collision so it doesn't affect gameplay geometry
         vol["set_invisible"] = True
         vol["set_collision"]  = True
         vol["ignore"]         = True
-        self.report({"INFO"}, f"Added {vol_name}  —  resize/move to cover trigger area")
+        self.report({"INFO"}, f"Added {vol.name}  —  resize, then Link Trigger Volume to a camera")
+        return {"FINISHED"}
+
+
+class OG_OT_LinkCamVolume(Operator):
+    """Link a trigger volume mesh to a camera.
+    Select the CAMVOL mesh + the CAMERA object (any order), then click."""
+    bl_idname   = "og.link_cam_volume"
+    bl_label    = "Link Trigger Volume"
+    bl_description = (
+        "Select the trigger volume mesh + the camera (any order, shift-click both), then click.\n"
+        "When Jak enters the volume the camera will activate."
+    )
+
+    def execute(self, ctx):
+        selected = ctx.selected_objects
+        cams = [o for o in selected if o.type == "CAMERA"
+                and o.name.startswith("CAMERA_")]
+        vols = [o for o in selected if o.type == "MESH"
+                and o.name.startswith("CAMVOL_")]
+
+        if not vols:
+            self.report({"ERROR"}, "No CAMVOL_ mesh in selection — add a trigger volume first")
+            return {"CANCELLED"}
+        if len(vols) > 1:
+            self.report({"ERROR"}, "Multiple volumes selected — select exactly one")
+            return {"CANCELLED"}
+        if not cams:
+            self.report({"ERROR"}, "No CAMERA_ object in selection — select the camera too")
+            return {"CANCELLED"}
+        if len(cams) > 1:
+            self.report({"ERROR"}, "Multiple cameras selected — select exactly one")
+            return {"CANCELLED"}
+
+        vol = vols[0]
+        cam = cams[0]
+        vol["og_cam_link"] = cam.name
+        self.report({"INFO"}, f"Linked {vol.name} → {cam.name}")
+        return {"FINISHED"}
+
+
+class OG_OT_UnlinkCamVolume(Operator):
+    """Remove the camera link from the selected trigger volume."""
+    bl_idname   = "og.unlink_cam_volume"
+    bl_label    = "Unlink Trigger Volume"
+    bl_description = "Remove the camera link from the selected trigger volume mesh"
+
+    def execute(self, ctx):
+        count = 0
+        for o in ctx.selected_objects:
+            if "og_cam_link" in o:
+                del o["og_cam_link"]
+                count += 1
+        self.report({"INFO"}, f"Unlinked {count} volume(s)")
         return {"FINISHED"}
 
 
@@ -4096,12 +4113,12 @@ class OG_OT_SpawnCamAlign(Operator):
     bl_description = (
         "Add a CAMERA_N_ALIGN empty for standoff (side-scroller) mode.\n"
         "Place this at the player position the camera tracks.\n"
-        "The camera will maintain a fixed offset between its position and this anchor."
+        "The camera stays at a fixed offset from this anchor."
     )
     def execute(self, ctx):
         sel = ctx.active_object
-        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "EMPTY":
-            self.report({"ERROR"}, "Select a CAMERA_N empty first")
+        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "CAMERA":
+            self.report({"ERROR"}, "Select a CAMERA_N camera first")
             return {"CANCELLED"}
         align_name = sel.name + "_ALIGN"
         if ctx.scene.objects.get(align_name):
@@ -4122,12 +4139,12 @@ class OG_OT_SpawnCamPivot(Operator):
     bl_label  = "Add Orbit Pivot"
     bl_description = (
         "Add a CAMERA_N_PIVOT empty for orbit mode.\n"
-        "The camera will orbit around this world position while tracking the player angle."
+        "The camera orbits around this world position following the player angle."
     )
     def execute(self, ctx):
         sel = ctx.active_object
-        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "EMPTY":
-            self.report({"ERROR"}, "Select a CAMERA_N empty first")
+        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "CAMERA":
+            self.report({"ERROR"}, "Select a CAMERA_N camera first")
             return {"CANCELLED"}
         pivot_name = sel.name + "_PIVOT"
         if ctx.scene.objects.get(pivot_name):
@@ -4157,97 +4174,126 @@ class OG_PT_Camera(Panel):
     def draw(self, ctx):
         layout = self.layout
         scene  = ctx.scene
+        sel    = ctx.active_object
 
-        # ── Add Camera button ─────────────────────────────────────────────
-        layout.operator("og.spawn_camera", text="Add Camera", icon="CAMERA_DATA")
+        # ── Top-level add buttons ─────────────────────────────────────────
+        row = layout.row(align=True)
+        row.operator("og.spawn_camera",     text="Add Camera",  icon="CAMERA_DATA")
+        row.operator("og.spawn_cam_volume", text="Add Volume",  icon="CUBE")
 
-        # ── Camera list ───────────────────────────────────────────────────
+        layout.separator()
+
+        # ── Selected-object context section ──────────────────────────────
+        # Show context-sensitive controls when a relevant object is active
+        if sel and sel.type == "CAMERA" and sel.name.startswith("CAMERA_"):
+            self._draw_camera_props(layout, sel, scene)
+        elif sel and sel.type == "MESH" and sel.name.startswith("CAMVOL_"):
+            self._draw_volume_props(layout, sel, scene)
+
+        layout.separator()
+
+        # ── Full camera list ──────────────────────────────────────────────
         cam_objects = sorted(
             [o for o in scene.objects
-             if o.name.startswith("CAMERA_") and o.type == "EMPTY"
-             and not o.name.endswith("_ALIGN") and not o.name.endswith("_PIVOT")],
+             if o.name.startswith("CAMERA_") and o.type == "CAMERA"],
             key=lambda o: o.name,
         )
-
         if not cam_objects:
             box = layout.box()
             box.label(text="No cameras placed yet", icon="INFO")
             return
 
+        # Build reverse map: cam_name -> list of linked vol names
+        vol_map = {}
+        for o in scene.objects:
+            if o.type == "MESH" and o.name.startswith("CAMVOL_"):
+                link = o.get("og_cam_link", "")
+                if link:
+                    vol_map.setdefault(link, []).append(o.name)
+
         for cam_obj in cam_objects:
             box = layout.box()
             row = box.row()
-            row.label(text=cam_obj.name, icon="CAMERA_DATA")
+            icon = "CAMERA_DATA"
+            row.label(text=cam_obj.name, icon=icon)
 
-            mode    = cam_obj.get("og_cam_mode",   "fixed")
-            interp  = cam_obj.get("og_cam_interp",  1.0)
-            fov     = cam_obj.get("og_cam_fov",     0.0)
+            mode   = cam_obj.get("og_cam_mode",   "fixed")
+            interp = float(cam_obj.get("og_cam_interp", 1.0))
+            fov    = float(cam_obj.get("og_cam_fov",    0.0))
 
-            # Mode selector
-            mode_row = box.row(align=True)
-            mode_row.label(text="Mode:")
-            for m, label in (("fixed", "Fixed"), ("standoff", "Side-Scroll"), ("orbit", "Orbit")):
-                op = mode_row.operator("og.set_cam_prop", text=label,
-                                       depress=(mode == m))
-                op.cam_name  = cam_obj.name
-                op.prop_name = "og_cam_mode"
-                op.str_val   = m
+            # Mode
+            mrow = box.row(align=True)
+            mrow.label(text="Mode:")
+            for m, lbl in (("fixed","Fixed"),("standoff","Side-Scroll"),("orbit","Orbit")):
+                op = mrow.operator("og.set_cam_prop", text=lbl, depress=(mode == m))
+                op.cam_name = cam_obj.name; op.prop_name = "og_cam_mode"; op.str_val = m
 
-            # Blend time
-            blend_row = box.row(align=True)
-            blend_row.label(text="Blend (s):")
-            op_m = blend_row.operator("og.nudge_cam_float", text="-0.5")
-            op_m.cam_name = cam_obj.name; op_m.prop_name = "og_cam_interp"; op_m.delta = -0.5
-            blend_row.label(text=f"{float(interp):.1f}s")
-            op_p = blend_row.operator("og.nudge_cam_float", text="+0.5")
-            op_p.cam_name = cam_obj.name; op_p.prop_name = "og_cam_interp"; op_p.delta = 0.5
+            # Blend + FOV
+            brow = box.row(align=True)
+            brow.label(text=f"Blend: {interp:.1f}s")
+            op = brow.operator("og.nudge_cam_float", text="-"); op.cam_name=cam_obj.name; op.prop_name="og_cam_interp"; op.delta=-0.5
+            op = brow.operator("og.nudge_cam_float", text="+"); op.cam_name=cam_obj.name; op.prop_name="og_cam_interp"; op.delta=0.5
+            frow = box.row(align=True)
+            frow.label(text=f"FOV: {'default' if fov<=0 else f'{fov:.0f}°'}")
+            op = frow.operator("og.nudge_cam_float", text="-"); op.cam_name=cam_obj.name; op.prop_name="og_cam_fov"; op.delta=-5.0
+            op = frow.operator("og.nudge_cam_float", text="+"); op.cam_name=cam_obj.name; op.prop_name="og_cam_fov"; op.delta=5.0
 
-            # FOV
-            fov_row = box.row(align=True)
-            fov_row.label(text="FOV (°):")
-            op_fm = fov_row.operator("og.nudge_cam_float", text="-5")
-            op_fm.cam_name = cam_obj.name; op_fm.prop_name = "og_cam_fov"; op_fm.delta = -5.0
-            fov_label = f"{float(fov):.0f}°" if float(fov) > 0 else "default"
-            fov_row.label(text=fov_label)
-            op_fp = fov_row.operator("og.nudge_cam_float", text="+5")
-            op_fp.cam_name = cam_obj.name; op_fp.prop_name = "og_cam_fov"; op_fp.delta = 5.0
-
-            # Mode-specific helpers
+            # Mode helpers
             if mode == "standoff":
                 align_name = cam_obj.name + "_ALIGN"
-                has_align  = bool(scene.objects.get(align_name))
-                sub = box.row(align=True)
+                has_align = bool(scene.objects.get(align_name))
+                arow = box.row()
                 if has_align:
-                    sub.label(text=f"Anchor: {align_name}", icon="CHECKMARK")
+                    arow.label(text=f"Anchor: {align_name}", icon="CHECKMARK")
                 else:
-                    sub.label(text="No anchor yet", icon="ERROR")
-                    sub2 = box.row()
-                    sub2.operator("og.spawn_cam_align", text="Add Player Anchor")
-
+                    arow.label(text="No anchor", icon="ERROR")
+                    arow.operator("og.spawn_cam_align", text="Add Anchor")
             elif mode == "orbit":
                 pivot_name = cam_obj.name + "_PIVOT"
-                has_pivot  = bool(scene.objects.get(pivot_name))
-                sub = box.row(align=True)
+                has_pivot = bool(scene.objects.get(pivot_name))
+                prow = box.row()
                 if has_pivot:
-                    sub.label(text=f"Pivot: {pivot_name}", icon="CHECKMARK")
+                    prow.label(text=f"Pivot: {pivot_name}", icon="CHECKMARK")
                 else:
-                    sub.label(text="No pivot yet", icon="ERROR")
-                    sub2 = box.row()
-                    sub2.operator("og.spawn_cam_pivot", text="Add Orbit Pivot")
+                    prow.label(text="No pivot", icon="ERROR")
+                    prow.operator("og.spawn_cam_pivot", text="Add Pivot")
 
-            # Trigger volume status
-            vol_name = cam_obj.name.replace("CAMERA_", "CAMVOL_")
-            has_vol  = bool(scene.objects.get(vol_name))
-            vol_row  = box.row(align=True)
-            if has_vol:
-                vol_row.label(text=f"Vol: {vol_name}", icon="CHECKMARK")
+            # Linked volumes
+            linked_vols = vol_map.get(cam_obj.name, [])
+            vrow = box.row()
+            if linked_vols:
+                vrow.label(text=f"Trigger: {', '.join(linked_vols)}", icon="CHECKMARK")
             else:
-                vol_row.label(text="No volume — always active", icon="INFO")
-                vol_row.operator("og.spawn_cam_volume", text="Add Vol", icon="CUBE")
+                vrow.label(text="No trigger — always active", icon="INFO")
+
+    def _draw_camera_props(self, layout, cam, scene):
+        """Context panel when a CAMERA_ object is active."""
+        box = layout.box()
+        box.label(text=f"Selected: {cam.name}", icon="CAMERA_DATA")
+        box.label(text="Numpad-0 to look through camera", icon="INFO")
+        # Mode-specific helpers
+        mode = cam.get("og_cam_mode", "fixed")
+        if mode == "standoff" and not scene.objects.get(cam.name + "_ALIGN"):
+            box.operator("og.spawn_cam_align", text="Add Player Anchor")
+        if mode == "orbit" and not scene.objects.get(cam.name + "_PIVOT"):
+            box.operator("og.spawn_cam_pivot", text="Add Orbit Pivot")
+
+    def _draw_volume_props(self, layout, vol, scene):
+        """Context panel when a CAMVOL_ mesh is active."""
+        box = layout.box()
+        box.label(text=f"Selected: {vol.name}", icon="CUBE")
+        link = vol.get("og_cam_link", "")
+        if link:
+            box.label(text=f"Linked to: {link}", icon="CHECKMARK")
+            box.operator("og.unlink_cam_volume", text="Unlink", icon="X")
+        else:
+            box.label(text="Not linked to any camera", icon="ERROR")
+            box.label(text="Shift-select camera + this volume", icon="INFO")
+            box.operator("og.link_cam_volume", text="Link Trigger Volume", icon="LINKED")
 
 
 class OG_OT_SetCamProp(Operator):
-    """Set a string custom property on a CAMERA_ empty."""
+    """Set a string custom property on a CAMERA_ object."""
     bl_idname   = "og.set_cam_prop"
     bl_label    = "Set Camera Property"
     bl_options  = {"REGISTER", "UNDO"}
@@ -4262,7 +4308,7 @@ class OG_OT_SetCamProp(Operator):
 
 
 class OG_OT_NudgeCamFloat(Operator):
-    """Nudge a float custom property on a CAMERA_ empty."""
+    """Nudge a float custom property on a CAMERA_ object."""
     bl_idname   = "og.nudge_cam_float"
     bl_label    = "Nudge Camera Float"
     bl_options  = {"REGISTER", "UNDO"}
@@ -4733,6 +4779,7 @@ classes = (
     OGPreferences, OGProperties,
     OG_OT_SpawnPlayer, OG_OT_SpawnEntity,
     OG_OT_SpawnCamera, OG_OT_SpawnCamVolume, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
+    OG_OT_LinkCamVolume, OG_OT_UnlinkCamVolume,
     OG_OT_SetCamProp, OG_OT_NudgeCamFloat,
     OG_OT_AddWaypoint, OG_OT_DeleteWaypoint,
     OG_OT_MarkNavMesh, OG_OT_UnmarkNavMesh,
