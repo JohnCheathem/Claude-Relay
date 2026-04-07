@@ -2472,7 +2472,7 @@ def patch_level_info(name, spawns, scene=None):
         _bank = props.music_bank
         _music_val = f"'{_bank}" if _bank and _bank != "none" else "#f"
         _sb_list = [s for s in [props.sound_bank_1, props.sound_bank_2] if s and s != "none"]
-        _sbanks = " ".join(f"'{s}" for s in _sb_list)
+        _sbanks = " ".join(s for s in _sb_list)
         _sbanks_val = f"'({_sbanks})" if _sbanks else "'()"
     else:
         _music_val = "#f"
@@ -3998,8 +3998,7 @@ class OG_PT_BuildPlay(Panel):
         col.operator("og.geo_rebuild",   text="🔄  Quick Geo Rebuild",       icon="FILE_REFRESH")
         col.scale_y = 1.8
         col.operator("og.play",          text="▶  Launch Game (Debug)",      icon="PLAY")
-        col.scale_y = 1.4
-        col.operator("og.play_autoload", text="⚡  Launch & Auto-Load Level", icon="PLAY")
+
 
 
 # ── Developer Tools ───────────────────────────────────────────────────────────
