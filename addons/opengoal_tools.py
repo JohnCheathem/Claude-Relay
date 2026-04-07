@@ -824,7 +824,8 @@ def collect_cameras(scene):
         import mathutils
         rot_bl  = cam_obj.matrix_world.to_quaternion()
         offset  = mathutils.Quaternion((1, 0, 0), math.radians(-90))
-        rot_adj = rot_bl @ offset
+        flip_y  = mathutils.Quaternion((0, 1, 0), math.radians(180))
+        rot_adj = rot_bl @ offset @ flip_y
         bx, by, bz, bw = rot_adj.x, rot_adj.y, rot_adj.z, rot_adj.w
         qx = round(bx, 6)
         qy = round(bz, 6)
