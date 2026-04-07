@@ -205,3 +205,47 @@ Uses 5-proxy CORS fallback chain (allorigins → corsproxy.io → codetabs → t
 `double-lurker` causes a crash when spawned in a custom level. Needs further investigation.
 Possible causes: requires linked actor pair (two entities referencing each other), or specific tpage/DGO dependency not met.
 TODO: check `double-lurker.gc` for any paired actor setup logic.
+
+---
+
+## Audio Research Session
+
+### Status: Research complete ✅ — knowledge base written to scratch/
+
+### Key Findings
+
+**Sound System Architecture:**
+- Two swappable level SFX bank slots + always-loaded `common` bank
+- Music bank loaded separately from SFX banks
+- `level-load-info` has `:sound-banks` and `:music-bank` fields (already in level-info.gc)
+- `test-zone` has `:music-bank #f` and `:sound-banks '()` — so currently SILENT
+
+**Ambient System (jsonc-driven):**
+- Ambients are bsphere triggers in the `.jsonc` file under `"ambients": [...]`
+- `"type": "'music"` changes music/flava when player enters sphere
+- `"type": "'sound"` plays SFX at a world position with falloff
+- Music lumps: `"music"` (bank symbol), `"flava"` (float index), `"priority"` (float)
+- Sound lumps: `"effect-name"` (symbol), `"cycle-speed"` [base, random] (negative = loop)
+
+**Trigger Volume Music (obs.gc method):**
+- Exact same AABB polling pattern as camera triggers
+- `(set-setting! 'sound-flava #f 40.0 (music-flava darkcave))` — switches variant
+- `(remove-setting! 'sound-flava)` — reverts to level default
+- `(set-setting! 'music 'maincave 0.0 0)` — switches entire music bank
+- Used by: rolling gorge race, battle controller, boss fights
+
+**To add music to our level:**
+1. Set `:music-bank 'village1` in our level-info.gc entry
+2. Set `:sound-banks '(village1)` (or whatever bank has needed SFX)
+3. Add `"ambients"` array to our `.jsonc` with type `'music` spheres
+4. For rectangular trigger zones: use obs.gc process (same as camera trigger pattern)
+
+### 📌 NEXT STEPS for Audio
+1. Add `:music-bank` and `:sound-banks` to our level in level-info.gc
+2. Test: does basic music play just from those fields?
+3. Add a `'music` ambient sphere in jsonc to test zone switching
+4. Try a `'sound` ambient for a looping SFX emitter
+5. Eventually: hook obs.gc trigger volumes to `set-setting! 'sound-flava`
+
+### Reference
+Full knowledge base: `scratch/opengoal-audio-knowledge.md`
