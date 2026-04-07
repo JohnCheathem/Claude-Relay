@@ -1174,8 +1174,12 @@ def write_gd(name, ags, code_deps, tpages=None):
         + ['  )', ' )']
     )
     p = d / f"{_nick(name)}.gd"
-    p.write_text("\n".join(lines) + "\n")
-    log(f"Wrote {p}  (enemy .o files: {[o for o,_,_ in code_deps]})")
+    new_text = "\n".join(lines) + "\n"
+    if not p.exists() or p.read_text() != new_text:
+        p.write_text(new_text)
+        log(f"Wrote {p}  (enemy .o files: {[o for o,_,_ in code_deps]})")
+    else:
+        log(f"Skipped {p} (unchanged)")
 
 
 
@@ -1245,10 +1249,14 @@ def patch_level_info(name, spawns):
     txt = re.sub(rf"\n\(define {re.escape(name)}\b.*?\(cons!.*?'{re.escape(name)}\)\n",
                  "", txt, flags=re.DOTALL)
     marker = ";;;;; CUSTOM LEVELS"
-    txt = (txt.replace(marker, marker+block, 1) if marker in txt
-           else txt + "\n;;;;; CUSTOM LEVELS\n" + block)
-    p.write_text(txt, encoding="utf-8")
-    log("Patched level-info.gc")
+    new_txt = (txt.replace(marker, marker+block, 1) if marker in txt
+               else txt + "\n;;;;; CUSTOM LEVELS\n" + block)
+    original = p.read_text(encoding="utf-8")
+    if new_txt != original:
+        p.write_text(new_txt, encoding="utf-8")
+        log("Patched level-info.gc")
+    else:
+        log("Skipped level-info.gc (unchanged)")
 
 def patch_game_gp(name, code_deps=None):
     """Patch game.gp to build our custom level and compile enemy code files.
@@ -1928,6 +1936,115 @@ class OG_OT_OpenFile(Operator):
 # OPERATOR — Export, Build & Play (combined)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# OPERATOR — Quick Geo Rebuild
+# Re-exports GLB + actor placement, repacks DGO, relaunches GK.
+# Skips all GOAL (.gc) recompilation — fastest iteration for geo/placement changes.
+# ---------------------------------------------------------------------------
+
+_GEO_REBUILD_STATE = {"done": False, "status": "", "error": None, "ok": False}
+
+
+def _bg_geo_rebuild(name, scene):
+    """Export geo + actor placement, repack DGO, relaunch GK. No GOAL recompile.
+
+    (mi) is GOALC's incremental build command — it skips .gc files that haven't
+    changed, so it only re-extracts the GLB and repacks the DGO.
+
+    NOTE: if you've added a NEW enemy type since the last full Export & Compile,
+    use that instead — this path skips the game.gp patch those types need.
+    """
+    state = _GEO_REBUILD_STATE
+    try:
+        state["status"] = "Collecting scene..."
+        actors   = collect_actors(scene)
+        ambients = collect_ambients(scene)
+        spawns   = collect_spawns(scene)
+        ags      = needed_ags(actors)
+        tpages   = needed_tpages(actors)
+        code_deps = needed_code(actors)  # still needed for DGO .o injection
+
+        state["status"] = "Writing level files..."
+        base_id = scene.og_props.base_id
+        write_jsonc(name, actors, ambients, base_id)
+        write_gd(name, ags, code_deps, tpages)
+        patch_level_info(name, spawns)  # update spawn continue-points if moved
+
+        # Run (mi) — re-extracts GLB, repacks DGO, skips unchanged .gc files
+        if goalc_ok():
+            state["status"] = "Running (mi) — re-extracting geo..."
+            r = goalc_send("(mi)", timeout=GOALC_TIMEOUT)
+            if r is None:
+                state["error"] = "(mi) timed out or GOALC lost connection"; return
+        else:
+            state["status"] = "GOALC not running — launching for (mi)..."
+            write_startup_gc(["(mi)"])
+            ok, msg = launch_goalc(wait_for_nrepl=True)
+            if not ok:
+                state["error"] = f"GOALC failed to start: {msg}"; return
+            state["status"] = "Running (mi)..."
+            r = goalc_send("(mi)", timeout=GOALC_TIMEOUT)
+            if r is None:
+                state["error"] = "(mi) timed out"; return
+
+        state["status"] = "Relaunching game..."
+        kill_gk()
+        ok, msg = launch_gk()
+        if not ok:
+            state["error"] = msg; return
+
+        state["ok"] = True
+        state["status"] = "Done! Load your level via the debug menu."
+    except Exception as e:
+        state["error"] = str(e)
+    finally:
+        state["done"] = True
+
+
+class OG_OT_GeoRebuild(Operator):
+    """Re-export geometry and actor placement, repack DGO, relaunch game.
+    Skips GOAL compilation — fastest loop for geo and enemy placement changes."""
+    bl_idname      = "og.geo_rebuild"
+    bl_label       = "Quick Geo Rebuild"
+    bl_description = (
+        "Re-export geo + actor placement, repack DGO, relaunch game. "
+        "No GOAL recompile. Use when only geometry or placement changed."
+    )
+    _timer = None
+
+    def execute(self, ctx):
+        name = _lname(ctx)
+        if not name:
+            self.report({"ERROR"}, "Enter a level name first"); return {"CANCELLED"}
+        try:
+            export_glb(ctx, name)
+        except Exception as e:
+            self.report({"ERROR"}, f"GLB export failed: {e}"); return {"CANCELLED"}
+        _GEO_REBUILD_STATE.clear()
+        _GEO_REBUILD_STATE.update({"done": False, "status": "Starting...", "error": None, "ok": False})
+        threading.Thread(target=_bg_geo_rebuild, args=(name, ctx.scene), daemon=True).start()
+        wm = ctx.window_manager
+        self._timer = wm.event_timer_add(0.5, window=ctx.window)
+        wm.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, ctx, event):
+        if event.type == "TIMER":
+            ctx.workspace.status_text_set("OpenGOAL Geo: " + _GEO_REBUILD_STATE.get("status", "Working..."))
+            if _GEO_REBUILD_STATE.get("done"):
+                ctx.window_manager.event_timer_remove(self._timer)
+                ctx.workspace.status_text_set(None)
+                if _GEO_REBUILD_STATE.get("error"):
+                    self.report({"ERROR"}, _GEO_REBUILD_STATE["error"]); return {"CANCELLED"}
+                self.report({"INFO"}, "Geo rebuild done — load your level in-game")
+                return {"FINISHED"}
+        return {"PASS_THROUGH"}
+
+    def cancel(self, ctx):
+        ctx.window_manager.event_timer_remove(self._timer)
+        ctx.workspace.status_text_set(None)
+
+
 _BUILD_PLAY_STATE = {"done": False, "status": "", "error": None, "ok": False}
 
 
@@ -2466,6 +2583,8 @@ class OG_PT_BuildPlay(Panel):
         col = layout.column(align=True)
         col.scale_y = 1.8
         col.operator("og.export_build",  text="⚙  Export & Compile",        icon="EXPORT")
+        col.scale_y = 1.4
+        col.operator("og.geo_rebuild",   text="🔄  Quick Geo Rebuild",       icon="FILE_REFRESH")
         col.scale_y = 1.8
         col.operator("og.play",          text="▶  Launch Game (Debug)",      icon="PLAY")
         col.scale_y = 1.4
@@ -2657,7 +2776,7 @@ classes = (
     OG_OT_MarkNavMesh, OG_OT_UnmarkNavMesh,
     OG_OT_LinkNavMesh, OG_OT_UnlinkNavMesh,
     OG_OT_PickNavMesh,
-    OG_OT_ExportBuild, OG_OT_Play, OG_OT_PlayAutoLoad,
+    OG_OT_ExportBuild, OG_OT_GeoRebuild, OG_OT_Play, OG_OT_PlayAutoLoad,
     OG_OT_ExportBuildPlay,
     OG_OT_OpenFolder, OG_OT_OpenFile,
     OG_PT_LevelSettings,
