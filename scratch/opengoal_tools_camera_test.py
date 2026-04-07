@@ -1174,8 +1174,8 @@ def collect_cameras(scene):
             corners = []
             for corner in vol_obj.bound_box:
                 wp = vol_obj.matrix_world @ mathutils.Vector(corner)
-                corners += [round(wp.x, 4), round(wp.z, 4), round(-wp.y, 4), 1.0]
-            lump["vol"] = ["vector"] + corners
+                corners.append([round(wp.x, 4), round(wp.z, 4), round(-wp.y, 4), 1.0])
+            lump["vol"] = ["vector-vol"] + corners
 
         out.append({
             "trans":     [gx, gy, gz],
@@ -2275,10 +2275,6 @@ class OG_PT_PlaceObjects(Panel):
         layout.separator(factor=0.3)
         layout.operator("og.spawn_entity", text="Add Entity", icon="ADD")
 
-        layout.separator()
-        layout.label(text="Camera:", icon="CAMERA_DATA")
-        layout.operator("og.spawn_camera", text="Add Camera", icon="CAMERA_DATA")
-
 
 # ── Waypoints ─────────────────────────────────────────────────────────────────
 
@@ -2438,7 +2434,7 @@ class OG_OT_UnlinkCameraVolume(Operator):
 # ── Camera panel ──────────────────────────────────────────────────────────────
 
 class OG_PT_Camera(Panel):
-    bl_label       = "📷  Camera Settings"
+    bl_label       = "📷  Camera"
     bl_idname      = "OG_PT_camera"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
@@ -2447,27 +2443,34 @@ class OG_PT_Camera(Panel):
 
     @classmethod
     def poll(cls, ctx):
-        sel = ctx.active_object
-        if not sel:
-            return False
-        if sel.name.startswith("CAMERA_") and sel.type == "EMPTY":
-            return True
-        if sel.name.startswith("CAMVOL_") and sel.type == "MESH":
-            return True
-        return False
+        # Always show — panel contains the Add Camera button plus context info
+        return True
 
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
 
+        # ── Add button — always visible ───────────────────────────────────────
+        layout.operator("og.spawn_camera", text="Add Camera", icon="CAMERA_DATA")
+
+        # ── Nothing camera-related selected ───────────────────────────────────
+        is_cam = sel and sel.name.startswith("CAMERA_") and sel.type == "EMPTY"
+        is_vol = sel and sel.name.startswith("CAMVOL_") and sel.type == "MESH"
+        if not (is_cam or is_vol):
+            layout.separator()
+            layout.label(text="Select a camera or volume", icon="INFO")
+            layout.label(text="to see settings")
+            return
+
+        layout.separator()
+
         # ── Camera empty selected ─────────────────────────────────────────────
-        if sel.name.startswith("CAMERA_") and sel.type == "EMPTY":
+        if is_cam:
             layout.label(text=sel.name, icon="CAMERA_DATA")
 
             vol_name = sel.get("og_camvol_link", "")
             vol_obj  = bpy.data.objects.get(vol_name) if vol_name else None
 
-            # Status box
             box = layout.box()
             if vol_obj:
                 box.label(text="Trigger volume linked", icon="CHECKMARK")
@@ -2495,11 +2498,12 @@ class OG_PT_Camera(Panel):
 
             layout.separator()
             hint = layout.box()
-            hint.label(text="Aim: -Z axis = look direction", icon="QUESTION")
-            hint.label(text="Rotate the empty to point the camera")
+            hint.label(text="Aim tip:", icon="QUESTION")
+            hint.label(text="-Z axis = look direction")
+            hint.label(text="Rotate the empty to aim")
 
         # ── Volume mesh selected ──────────────────────────────────────────────
-        elif sel.name.startswith("CAMVOL_") and sel.type == "MESH":
+        elif is_vol:
             layout.label(text=sel.name, icon="MESH_CUBE")
             linked = [o for o in bpy.data.objects
                       if o.get("og_camvol_link") == sel.name
