@@ -271,3 +271,35 @@ Commit: `8e2eb13` on main
 - One-shot ambients still broken (engine bug) — obs.gc trigger is the workaround
 - Music ambient zones (`type='music`) not yet exposed in Blender UI — could add
 - Could add a mode toggle (loop/one-shot) to emitter UI once engine bug is patched
+
+---
+
+## Future Improvements (low priority — current system works well)
+
+### Volume control
+- `ambient-type-sound-loop` hardcodes volume to 1024 (100%)
+- Fix: expose `og_sound_volume` slider (0-100%) on emitter empty
+- Write as `(the int (* vol 10.24))` into sound spec in `collect_ambients`
+- Estimated effort: 1 iteration
+
+### Pitch / speed control  
+- Needs `effect-param` lump (binary `sound-play-parms` struct)
+- More involved to write from Python
+- Estimated effort: 2-3 iterations
+
+### Falloff distance
+- bsphere radius currently controls activation distance only
+- `fo-min` / `fo-max` in sound spec control volume fade with distance
+- Could expose as separate "inner radius" / "outer radius" on emitter
+- Estimated effort: 1-2 iterations
+
+### One-shot sounds (engine bug — needs upstream fix)
+- `cycle-speed >= 0` crashes due to `lookup-tag-idx 'exact 0.0` vs tags at `-1e9`
+- Fix requires PR to OpenGOAL: patch `ResLump.cpp` to write sound tags at `0.0`
+  OR patch `birth-ambient!` in `ambient.gc` to use `'interp` instead of `'exact`
+- Worth reporting upstream
+
+### Note on all 1048 sounds
+All sounds work as looping emitters regardless of whether they were "one-shot"
+in the original game. Short sounds (explosions, jumps etc.) just loop continuously.
+This is fine — use with appropriate radius so it doesn't sound ridiculous.
