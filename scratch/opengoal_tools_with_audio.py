@@ -4110,7 +4110,7 @@ class OG_PT_BuildPlay(Panel):
         col.scale_y = 1.8
         col.operator("og.play",          text="▶  Launch Game (Debug)",      icon="PLAY")
         col.scale_y = 1.4
-        col.operator("og.play_autoload", text="⚡  Launch & Auto-Load Level", icon="SEQUENCE_COLOR_04")
+        col.operator("og.play_autoload", text="⚡  Launch & Auto-Load Level", icon="PLAY_SOUND")
 
 
 # ── Developer Tools ───────────────────────────────────────────────────────────
