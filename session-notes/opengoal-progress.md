@@ -114,3 +114,54 @@ and `master-check-regions` finds nothing to switch to.
 2. If trigger defun crashes: check `(loop (suspend))` survives as process thread body
 3. If `change-to-entity-by-name` returns error: check lump name matches exactly
 4. Once working, merge camera changes into main `addons/opengoal_tools.py`
+
+## Camera Debug Session (latest)
+
+### What we confirmed from logs
+- `my-level-obs` links successfully every time ✓
+- `entity-camera` birth loop fixed (etype→camera-tracker) ✓
+- `art-group "process" not valid` error fixed (etype→camera-tracker) ✓
+- obs.gc is being generated correctly ✓
+- **`my_level_obs_init` was never called** — nREPL *target* poll was unreliable
+
+### Root cause of obs_init not running
+The `*target*` poll (`(if *target* 'alive 'wait)`) was checking every 0.25s but 
+the response matching `"'alive" in r2` may have been failing — the nREPL returns
+a prompt string alongside the value, and timing/encoding issues could cause misses.
+
+### Fix applied
+- Replaced fragile poll with `time.sleep(2.0)` then direct `goalc_send(f"({init_fn})")`
+- The trigger lambda's own `(when *target* ...)` handles the case where it starts 
+  before Jak spawns — it just waits in the loop until *target* exists
+- Restructured generated GOAL to put trigger body directly inside the 
+  `process-spawn-function` lambda (matches all real game examples)
+- Added `[obs-init] calling...` / `[obs-init] response:` logging to Blender console
+
+### Generated obs.gc structure (current)
+```lisp
+(defun my_level_obs_init ()
+  (process-spawn-function process
+    (lambda ()
+      (let ((inside #f))
+        (loop
+          (when *target*
+            (let* ((pos (-> *target* control trans))
+                   (in-vol (and <AABB checks>)))
+              (cond
+                ((and in-vol (not inside))
+                 (set! inside #t)
+                 (send-event *camera* 'change-to-entity-by-name "camera-0"))
+                ((and (not in-vol) inside)
+                 (set! inside #f)
+                 (send-event *camera* 'clear-entity)))))
+          (suspend))))
+    :to *entity-pool*)
+  (none))
+```
+
+### 📌 NEXT SESSION
+1. Test with new build — check Blender System Console for `[obs-init] calling...`
+2. If obs_init fires but camera doesn't switch: check entity-by-name finds "camera-0"
+3. If obs_init still doesn't fire: the 2s sleep after (start) isn't enough — try 4s
+   or add a second attempt: retry obs_init once more after another 2s
+4. Once working: merge to main addon
