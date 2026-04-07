@@ -2273,24 +2273,30 @@ def collect_ambients(scene):
         gx, gy, gz = round(l.x, 4), round(l.z, 4), round(-l.y, 4)
 
         if o.get("og_sound_name"):
-            # Sound emitter — placed via the Audio panel
             radius   = float(o.get("og_sound_radius", 15.0))
-            volume   = float(o.get("og_sound_volume",  1.0))
-            mode     = str(o.get("og_sound_mode",  "auto"))
+            mode     = str(o.get("og_sound_mode", "ambient"))
             snd_name = str(o["og_sound_name"]).lower().strip()
+
+            # cycle-speed: [min_interval_secs, random_range_secs]
+            # Negative first value = looping (ambient-type-sound-loop)
+            # Positive = one-shot on interval (ambient-type-sound)
+            if mode == "loop":
+                cycle_speed = [-1.0, 0.0]
+            else:
+                cycle_speed = [float(o.get("og_cycle_min", 5.0)),
+                               float(o.get("og_cycle_rnd", 2.0))]
+
             out.append({
                 "trans":   [gx, gy, gz, radius],
                 "bsphere": [gx, gy, gz, radius],
                 "lump": {
-                    "name":       o.name[8:].lower() or "ambient",
-                    "type":       "'ambient-sound",
-                    "sound-name": snd_name,
-                    "volume":     volume,
-                    "play-mode":  f"'{mode}",
+                    "name":        o.name[8:].lower() or "ambient",
+                    "type":        "'sound",
+                    "effect-name": ["symbol", snd_name],
+                    "cycle-speed": cycle_speed,
                 },
             })
         else:
-            # Legacy hint emitter — unchanged behaviour
             out.append({
                 "trans":   [gx, gy, gz, 10.0],
                 "bsphere": [gx, gy, gz, 15.0],
@@ -3993,8 +3999,7 @@ class OG_PT_BuildPlay(Panel):
         col.operator("og.geo_rebuild",   text="🔄  Quick Geo Rebuild",       icon="FILE_REFRESH")
         col.scale_y = 1.8
         col.operator("og.play",          text="▶  Launch Game (Debug)",      icon="PLAY")
-        col.scale_y = 1.4
-        col.operator("og.play_autoload", text="⚡  Launch & Auto-Load Level", icon="PLAY_SOUND")
+
 
 
 # ── Developer Tools ───────────────────────────────────────────────────────────
