@@ -2279,11 +2279,26 @@ class OG_PT_NavMesh(Panel):
 
     @classmethod
     def poll(cls, ctx):
-        """Show when a nav-enemy actor or a navmesh mesh is selected."""
+        """Only show when a nav-enemy actor or a linked navmesh mesh is selected."""
         sel = ctx.active_object
         if not sel:
-            return True  # always show so user can see instructions
-        return True
+            return False
+        # Actor selected — show only if it's a nav-enemy
+        if sel.name.startswith("ACTOR_") and "_wp_" not in sel.name:
+            parts = sel.name.split("_", 2)
+            if len(parts) >= 3:
+                return _actor_uses_navmesh(parts[1])
+            return False
+        # Mesh selected — show if it's tagged as a navmesh or linked to any actor
+        if sel.type == "MESH":
+            if sel.get("og_navmesh"):
+                return True
+            for o in bpy.data.objects:
+                if o.get("og_navmesh_link") in (sel.name,
+                        sel.name if sel.name.startswith("NAVMESH_")
+                        else "NAVMESH_" + sel.name):
+                    return True
+        return False
 
     def draw(self, ctx):
         layout = self.layout
@@ -2411,14 +2426,6 @@ class OG_PT_DevTools(Panel):
 
     def draw(self, ctx):
         layout = self.layout
-
-        # Build controls
-        layout.label(text="Build", icon="EXPORT")
-        col = layout.column(align=True)
-        col.operator("og.export_build", text="Export & Build Only", icon="EXPORT")
-        col.operator("og.play",         text="Play (no recompile)", icon="PLAY")
-
-        layout.separator()
 
         # Paths
         layout.label(text="Paths", icon="PREFERENCES")
