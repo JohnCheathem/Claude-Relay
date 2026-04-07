@@ -769,12 +769,228 @@ def _collect_navmesh_actors(scene):
     return result
 
 
-def write_gc(name):
-    """Write the minimal obs.gc stub for the level."""
+def _camera_aabb_to_planes(b_min, b_max):
+    """Convert an AABB in game-space meters to 6 half-space plane equations.
+
+    Each plane is [nx, ny, nz, d_meters] where a point P (meters) is INSIDE
+    the volume when dot(P, normal) <= d for ALL planes.
+
+    The C++ loader (vector_vol_from_json) multiplies the w component by 4096,
+    so we provide values in meters here.
+    """
+    mn = tuple(min(b_min[i], b_max[i]) for i in range(3))
+    mx = tuple(max(b_min[i], b_max[i]) for i in range(3))
+    return [
+        [ 1.0,  0.0,  0.0,  mx[0]],  # +X wall
+        [-1.0,  0.0,  0.0, -mn[0]],  # -X wall
+        [ 0.0,  1.0,  0.0,  mx[1]],  # +Y ceiling
+        [ 0.0, -1.0,  0.0, -mn[1]],  # -Y floor
+        [ 0.0,  0.0,  1.0,  mx[2]],  # +Z back
+        [ 0.0,  0.0, -1.0, -mn[2]],  # -Z front
+    ]
+
+
+def collect_cameras(scene):
+    """Build camera actor list from CAMERA_ empties.
+
+    Naming conventions:
+      CAMERA_<n>           — fixed camera (locked pos/rot, no trigger vol)
+      CAMERA_<n>_VOL_<m>   — trigger volume mesh linked to CAMERA_<n>
+
+    Trigger volumes are MESH objects whose name starts with CAMVOL_<n>.
+    Each camera can have at most one linked volume.
+
+    Returns (camera_actors, trigger_list) where:
+      camera_actors — list of JSONC actor dicts ready for actors array
+      trigger_list  — list of dicts with AABB info for obs.gc generation
+    """
+    import mathutils
+
+    cam_objects = sorted(
+        [o for o in scene.objects
+         if o.name.startswith("CAMERA_") and o.type == "EMPTY"],
+        key=lambda o: o.name,
+    )
+
+    camera_actors = []
+    trigger_list  = []
+
+    for cam_obj in cam_objects:
+        cam_name = cam_obj.name  # e.g. "CAMERA_0"
+
+        # --- Position: Blender -> game coords ---
+        loc = cam_obj.matrix_world.translation
+        gx = round(loc.x, 4)
+        gy = round(loc.z, 4)
+        gz = round(-loc.y, 4)
+
+        # --- Rotation: Blender -> game quaternion ---
+        # Blender ARROWS empty: local -Z is the "forward / look" axis.
+        # Game cam-fixed: camera -Z is the look direction.
+        # We apply a 90° X-rotation offset to convert from Blender convention
+        # to the game's camera convention (tested empirically).
+        import mathutils
+        rot_bl  = cam_obj.matrix_world.to_quaternion()
+        # Swap axes: game X=bl X, game Y=bl Z, game Z=-bl Y
+        # Also apply the -90° X correction for camera forward direction
+        offset  = mathutils.Quaternion((1, 0, 0), math.radians(-90))
+        rot_game = rot_bl @ offset
+        # Coordinate axis remap for the rotation
+        bx, by, bz, bw = rot_game.x, rot_game.y, rot_game.z, rot_game.w
+        qx = round(bx, 6)
+        qy = round(bz, 6)
+        qz = round(-by, 6)
+        qw = round(bw, 6)
+
+        # --- Camera mode and extra lump data ---
+        cam_mode  = cam_obj.get("og_cam_mode",  "fixed")   # fixed | standoff | orbit
+        interp_t  = float(cam_obj.get("og_cam_interp", 1.0))
+        fov_deg   = float(cam_obj.get("og_cam_fov",   0.0))   # 0 = use game default
+
+        lump = {"name": cam_name}
+        lump["interpTime"] = ["float", round(interp_t, 3)]
+
+        if fov_deg > 0.0:
+            lump["fov"] = ["degrees", round(fov_deg, 2)]
+
+        if cam_mode == "standoff":
+            # Side-scroller: camera stays at fixed offset from player.
+            # 'trans' = camera world pos, 'align' = player anchor pos.
+            # Both as vector3m (meters, game space).
+            # The user places a second empty named CAMERA_<n>_ALIGN for the anchor.
+            align_name = cam_name + "_ALIGN"
+            align_obj  = scene.objects.get(align_name)
+            if align_obj:
+                al = align_obj.matrix_world.translation
+                ax = round(al.x, 4); ay = round(al.z, 4); az = round(-al.y, 4)
+                lump["trans"] = ["vector3m", [gx, gy, gz]]
+                lump["align"] = ["vector3m", [ax, ay, az]]
+                log(f"  [camera] {cam_name} standoff — align={align_name}")
+            else:
+                log(f"  [camera] WARNING: {cam_name} mode=standoff but no {align_name} empty found — falling back to fixed")
+
+        elif cam_mode == "orbit":
+            # Circular: camera orbits a pivot point.
+            # User places a second empty named CAMERA_<n>_PIVOT.
+            pivot_name = cam_name + "_PIVOT"
+            pivot_obj  = scene.objects.get(pivot_name)
+            if pivot_obj:
+                pl = pivot_obj.matrix_world.translation
+                px = round(pl.x, 4); py = round(pl.z, 4); pz = round(-pl.y, 4)
+                lump["trans"]  = ["vector3m", [gx, gy, gz]]
+                lump["pivot"]  = ["vector3m", [px, py, pz]]
+                log(f"  [camera] {cam_name} orbit — pivot={pivot_name}")
+            else:
+                log(f"  [camera] WARNING: {cam_name} mode=orbit but no {pivot_name} empty found — falling back to fixed")
+
+        # --- Find linked trigger volume (CAMVOL_<n>) ---
+        vol_suffix = cam_name.replace("CAMERA_", "CAMVOL_")  # CAMVOL_0
+        vol_obj = scene.objects.get(vol_suffix)
+
+        camera_actors.append({
+            "trans":     [gx, gy, gz],
+            "etype":     "camera-tracker",
+            "game_task": 0,
+            "quat":      [qx, qy, qz, qw],
+            "vis_id":    0,
+            "bsphere":   [gx, gy, gz, 30.0],
+            "lump":      lump,
+        })
+
+        # --- Build trigger AABB (game units, NOT meters) ---
+        if vol_obj and vol_obj.type == "MESH":
+            corners = [vol_obj.matrix_world @ v.co for v in vol_obj.data.vertices]
+            # Convert each corner Blender -> game space
+            gc_corners = [(c.x, c.z, -c.y) for c in corners]
+            xs = [c[0] for c in gc_corners]
+            ys = [c[1] for c in gc_corners]
+            zs = [c[2] for c in gc_corners]
+            # Bounds in meters
+            b_min_m = (min(xs), min(ys), min(zs))
+            b_max_m = (max(xs), max(ys), max(zs))
+            # Bounds in game units (1 meter = 4096 units)
+            METER = 4096.0
+            trigger_list.append({
+                "cam_name": cam_name,
+                "gx0": round(b_min_m[0] * METER, 1),
+                "gx1": round(b_max_m[0] * METER, 1),
+                "gy0": round(b_min_m[1] * METER, 1),
+                "gy1": round(b_max_m[1] * METER, 1),
+                "gz0": round(b_min_m[2] * METER, 1),
+                "gz1": round(b_max_m[2] * METER, 1),
+            })
+            log(f"  [camera] {cam_name} trigger vol: X[{b_min_m[0]:.1f},{b_max_m[0]:.1f}] Y[{b_min_m[1]:.1f},{b_max_m[1]:.1f}] Z[{b_min_m[2]:.1f},{b_max_m[2]:.1f}] m")
+        elif vol_obj is None:
+            log(f"  [camera] {cam_name} — no trigger volume (always-active via GOAL event)")
+        else:
+            log(f"  [camera] WARNING: {vol_suffix} is not a MESH object — trigger volume ignored")
+
+    return camera_actors, trigger_list
+
+
+def _build_camera_trigger_goal(trigger):
+    """Return a single inline GOAL expression that spawns a persistent camera
+    trigger process for one camera.  Sent via goalc_send() after player spawn.
+
+    The process loops each frame:
+      - checks if *target* (Jak) exists
+      - tests AABB bounds in game units
+      - sends change-to-entity-by-name on entry, clear-entity on exit
+    """
+    t = trigger
+    cam = t["cam_name"]
+    ev_in  = f'(send-event *camera* (quote change-to-entity-by-name) "{cam}")'
+    ev_out =  '(send-event *camera* (quote clear-entity))'
+    return (
+        f'(process-spawn-function process'
+        f' (lambda ()'
+        f' (let ((inside #f))'
+        f' (loop'
+        f' (when *target*'
+        f' (let* ((pos (-> *target* control trans))'
+        f' (in-vol (and'
+        f' (< (the float {t["gx0"]}) (-> pos x)) (< (-> pos x) (the float {t["gx1"]}))'
+        f' (< (the float {t["gy0"]}) (-> pos y)) (< (-> pos y) (the float {t["gy1"]}))'
+        f' (< (the float {t["gz0"]}) (-> pos z)) (< (-> pos z) (the float {t["gz1"]})))))'
+        f' (cond'
+        f' ((and in-vol (not inside)) (set! inside #t) {ev_in})'
+        f' ((and (not in-vol) inside) (set! inside #f) {ev_out}))))'
+        f' (suspend))))'
+        f' :to *entity-pool*)'
+    )
+
+
+def write_gc(name, triggers=None):
+    """Write the obs.gc file for the level.
+
+    If triggers is provided (list of dicts from collect_cameras), embeds a
+    named init function that spawns GOAL camera trigger processes.
+    Otherwise writes a minimal stub.
+    """
     d = _goal_src() / "levels" / name
     d.mkdir(parents=True, exist_ok=True)
     p = d / f"{name}-obs.gc"
-    p.write_text(f";;-*-Lisp-*-\n(in-package goal)\n;; {name}-obs.gc\n")
+
+    lines = [
+        ";;-*-Lisp-*-",
+        "(in-package goal)",
+        f";; {name}-obs.gc -- auto-generated by OpenGOAL Level Tools",
+        "",
+    ]
+
+    if triggers:
+        fn = f"{name}_obs_init"
+        lines += [
+            f"(defun {fn} ()",
+            f"  ;; Camera trigger processes — spawned after player load",
+        ]
+        for t in triggers:
+            expr = _build_camera_trigger_goal(t)
+            lines.append(f"  {expr}")
+        lines += ["  (none)", ")", ""]
+        log(f"  [write_gc] {len(triggers)} camera trigger(s) embedded in {fn}()")
+
+    p.write_text("\n".join(lines))
     log(f"Wrote {p}")
 
 
@@ -2370,9 +2586,10 @@ def needed_code(actors):
 # FILE WRITERS
 # ---------------------------------------------------------------------------
 
-def write_jsonc(name, actors, ambients, base_id=10000):
+def write_jsonc(name, actors, ambients, camera_actors=None, base_id=10000):
     d = _ldir(name); d.mkdir(parents=True, exist_ok=True)
-    ags = needed_ags(actors)
+    all_actors = list(actors) + (camera_actors or [])
+    ags = needed_ags(actors)  # camera-tracker has no art group, so only scan regular actors
     data = {
         "long_name": name, "iso_name": _iso(name), "nickname": _nick(name),
         "gltf_file": f"custom_assets/jak1/levels/{name}/{name}.glb",
@@ -2381,13 +2598,13 @@ def write_jsonc(name, actors, ambients, base_id=10000):
         "art_groups": [g.replace(".go","") for g in ags],
         "custom_models": [], "textures": [["village1-vis-alpha"]],
         "tex_remap": "village1", "sky": "village1", "tpages": [],
-        "ambients": ambients, "actors": actors,
+        "ambients": ambients, "actors": all_actors,
     }
     p = d / f"{name}.jsonc"
     with open(p, "w") as f:
         f.write(f"// OpenGOAL custom level: {name}\n")
         json.dump(data, f, indent=2)
-    log(f"Wrote {p}")
+    log(f"Wrote {p}  ({len(actors)} actors + {len(camera_actors or [])} cameras)")
 
 def write_gd(name, ags, code_deps, tpages=None):
     """Write .gd file.
@@ -2855,6 +3072,7 @@ def _bg_build(name, scene):
         tpages    = needed_tpages(actors)
         code_deps = needed_code(actors)
         collect_nav_mesh_geometry(scene, name)
+        cam_actors, triggers = collect_cameras(scene)
 
         if code_deps:
             state["status"] = f"Injecting code for: {[o for o,_,_ in code_deps]}..."
@@ -2862,10 +3080,10 @@ def _bg_build(name, scene):
 
         state["status"] = "Writing files..."
         base_id = scene.og_props.base_id
-        write_jsonc(name, actors, ambients, base_id)
+        write_jsonc(name, actors, ambients, cam_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
-        write_gc(name)
+        write_gc(name, triggers)
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -3223,11 +3441,13 @@ def _bg_geo_rebuild(name, scene):
         ags      = needed_ags(actors)
         tpages   = needed_tpages(actors)
         code_deps = needed_code(actors)  # still needed for DGO .o injection
+        cam_actors, triggers = collect_cameras(scene)
 
         state["status"] = "Writing level files..."
         base_id = scene.og_props.base_id
-        write_jsonc(name, actors, ambients, base_id)
+        write_jsonc(name, actors, ambients, cam_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
+        write_gc(name, triggers)
         patch_level_info(name, spawns, scene)  # update spawn continue-points if moved
 
         # Run (mi) — re-extracts GLB, repacks DGO, skips unchanged .gc files
@@ -3333,13 +3553,14 @@ def _bg_build_and_play(name, scene):
         ags       = needed_ags(actors)
         tpages    = needed_tpages(actors)
         code_deps = needed_code(actors)
+        cam_actors, triggers = collect_cameras(scene)
 
         state["status"] = "Writing level files..."
         base_id = scene.og_props.base_id
-        write_jsonc(name, actors, ambients, base_id)
+        write_jsonc(name, actors, ambients, cam_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
-        write_gc(name)
+        write_gc(name, triggers)
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -3400,6 +3621,14 @@ def _bg_build_and_play(name, scene):
                 time.sleep(1.0)
                 state["status"] = "Spawning player..."
                 goalc_send(f"(start 'play (or (get-continue-by-name *game-info* \"{name}-start\") (get-or-create-continue! *game-info*)))")
+                # Call camera obs_init after a short delay so *target* exists
+                if triggers:
+                    time.sleep(2.0)
+                    state["status"] = "Starting camera triggers..."
+                    init_fn = f"{name}_obs_init"
+                    log(f"[obs-init] calling ({init_fn})...")
+                    r2 = goalc_send(f"({init_fn})", timeout=10)
+                    log(f"[obs-init] response: {r2}")
                 spawned = True
                 break
         if not spawned:
@@ -3800,16 +4029,117 @@ class OG_PT_Waypoints(Panel):
 class OG_OT_SpawnCamera(Operator):
     bl_idname = "og.spawn_camera"
     bl_label  = "Add Camera"
-    bl_description = "Place a camera entity at the 3D cursor (placeholder — switching coming soon)"
+    bl_description = (
+        "Place a fixed camera empty at the 3D cursor.\n"
+        "Name: CAMERA_0, CAMERA_1 etc.\n"
+        "Rotate the empty so its -Z axis points where you want to look.\n"
+        "Link a CAMVOL_N mesh to give it a trigger volume."
+    )
     def execute(self, ctx):
-        n = len([o for o in ctx.scene.objects if o.name.startswith("CAMERA_") and o.type == "EMPTY"])
+        n = len([o for o in ctx.scene.objects
+                 if o.name.startswith("CAMERA_") and o.type == "EMPTY"
+                 and not o.name.endswith("_ALIGN") and not o.name.endswith("_PIVOT")])
         bpy.ops.object.empty_add(type="ARROWS", location=ctx.scene.cursor.location)
         o = ctx.active_object
         o.name = f"CAMERA_{n}"
         o.show_name = True
         o.empty_display_size = 0.8
         o.color = (0.0, 0.8, 0.9, 1.0)
-        self.report({"INFO"}, f"Added {o.name} — camera switching coming soon!")
+        # Default custom properties
+        o["og_cam_mode"]   = "fixed"
+        o["og_cam_interp"] = 1.0
+        o["og_cam_fov"]    = 0.0
+        self.report({"INFO"}, f"Added {o.name}  |  mode=fixed  |  rotate -Z toward look target")
+        return {"FINISHED"}
+
+
+class OG_OT_SpawnCamVolume(Operator):
+    bl_idname = "og.spawn_cam_volume"
+    bl_label  = "Add Trigger Volume"
+    bl_description = (
+        "Add a box mesh trigger volume linked to the selected CAMERA_N empty.\n"
+        "The camera activates when Jak walks inside the volume.\n"
+        "Without a volume the camera is always active."
+    )
+    def execute(self, ctx):
+        sel = ctx.active_object
+        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "EMPTY":
+            self.report({"ERROR"}, "Select a CAMERA_N empty first")
+            return {"CANCELLED"}
+        # Extract camera index from name (CAMERA_0 -> CAMVOL_0)
+        parts = sel.name.split("_", 1)
+        if len(parts) < 2:
+            self.report({"ERROR"}, "Camera name must be CAMERA_<N>")
+            return {"CANCELLED"}
+        vol_name = "CAMVOL_" + parts[1]
+        if ctx.scene.objects.get(vol_name):
+            self.report({"WARNING"}, f"{vol_name} already exists — rename it first")
+            return {"CANCELLED"}
+        # Create a cube at camera location, scaled to a reasonable default
+        bpy.ops.mesh.primitive_cube_add(size=4.0, location=sel.location)
+        vol = ctx.active_object
+        vol.name = vol_name
+        vol.show_name = True
+        vol.display_type = "WIRE"
+        vol.color = (0.0, 0.9, 0.3, 0.4)
+        # Mark invisible + no collision so it doesn't affect gameplay geometry
+        vol["set_invisible"] = True
+        vol["set_collision"]  = True
+        vol["ignore"]         = True
+        self.report({"INFO"}, f"Added {vol_name}  —  resize/move to cover trigger area")
+        return {"FINISHED"}
+
+
+class OG_OT_SpawnCamAlign(Operator):
+    bl_idname = "og.spawn_cam_align"
+    bl_label  = "Add Player Anchor"
+    bl_description = (
+        "Add a CAMERA_N_ALIGN empty for standoff (side-scroller) mode.\n"
+        "Place this at the player position the camera tracks.\n"
+        "The camera will maintain a fixed offset between its position and this anchor."
+    )
+    def execute(self, ctx):
+        sel = ctx.active_object
+        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "EMPTY":
+            self.report({"ERROR"}, "Select a CAMERA_N empty first")
+            return {"CANCELLED"}
+        align_name = sel.name + "_ALIGN"
+        if ctx.scene.objects.get(align_name):
+            self.report({"WARNING"}, f"{align_name} already exists")
+            return {"CANCELLED"}
+        bpy.ops.object.empty_add(type="PLAIN_AXES", location=ctx.scene.cursor.location)
+        o = ctx.active_object
+        o.name = align_name
+        o.show_name = True
+        o.empty_display_size = 0.5
+        o.color = (1.0, 0.6, 0.0, 1.0)
+        self.report({"INFO"}, f"Added {align_name}  —  place at player anchor position")
+        return {"FINISHED"}
+
+
+class OG_OT_SpawnCamPivot(Operator):
+    bl_idname = "og.spawn_cam_pivot"
+    bl_label  = "Add Orbit Pivot"
+    bl_description = (
+        "Add a CAMERA_N_PIVOT empty for orbit mode.\n"
+        "The camera will orbit around this world position while tracking the player angle."
+    )
+    def execute(self, ctx):
+        sel = ctx.active_object
+        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "EMPTY":
+            self.report({"ERROR"}, "Select a CAMERA_N empty first")
+            return {"CANCELLED"}
+        pivot_name = sel.name + "_PIVOT"
+        if ctx.scene.objects.get(pivot_name):
+            self.report({"WARNING"}, f"{pivot_name} already exists")
+            return {"CANCELLED"}
+        bpy.ops.object.empty_add(type="SPHERE", location=ctx.scene.cursor.location)
+        o = ctx.active_object
+        o.name = pivot_name
+        o.show_name = True
+        o.empty_display_size = 0.5
+        o.color = (1.0, 0.2, 0.8, 1.0)
+        self.report({"INFO"}, f"Added {pivot_name}  —  place at orbit center point")
         return {"FINISHED"}
 
 
@@ -3826,10 +4156,125 @@ class OG_PT_Camera(Panel):
 
     def draw(self, ctx):
         layout = self.layout
+        scene  = ctx.scene
+
+        # ── Add Camera button ─────────────────────────────────────────────
         layout.operator("og.spawn_camera", text="Add Camera", icon="CAMERA_DATA")
-        layout.separator()
-        box = layout.box()
-        box.label(text="Camera switching: coming soon", icon="INFO")
+
+        # ── Camera list ───────────────────────────────────────────────────
+        cam_objects = sorted(
+            [o for o in scene.objects
+             if o.name.startswith("CAMERA_") and o.type == "EMPTY"
+             and not o.name.endswith("_ALIGN") and not o.name.endswith("_PIVOT")],
+            key=lambda o: o.name,
+        )
+
+        if not cam_objects:
+            box = layout.box()
+            box.label(text="No cameras placed yet", icon="INFO")
+            return
+
+        for cam_obj in cam_objects:
+            box = layout.box()
+            row = box.row()
+            row.label(text=cam_obj.name, icon="CAMERA_DATA")
+
+            mode    = cam_obj.get("og_cam_mode",   "fixed")
+            interp  = cam_obj.get("og_cam_interp",  1.0)
+            fov     = cam_obj.get("og_cam_fov",     0.0)
+
+            # Mode selector
+            mode_row = box.row(align=True)
+            mode_row.label(text="Mode:")
+            for m, label in (("fixed", "Fixed"), ("standoff", "Side-Scroll"), ("orbit", "Orbit")):
+                op = mode_row.operator("og.set_cam_prop", text=label,
+                                       depress=(mode == m))
+                op.cam_name  = cam_obj.name
+                op.prop_name = "og_cam_mode"
+                op.str_val   = m
+
+            # Blend time
+            blend_row = box.row(align=True)
+            blend_row.label(text="Blend (s):")
+            op_m = blend_row.operator("og.nudge_cam_float", text="-0.5")
+            op_m.cam_name = cam_obj.name; op_m.prop_name = "og_cam_interp"; op_m.delta = -0.5
+            blend_row.label(text=f"{float(interp):.1f}s")
+            op_p = blend_row.operator("og.nudge_cam_float", text="+0.5")
+            op_p.cam_name = cam_obj.name; op_p.prop_name = "og_cam_interp"; op_p.delta = 0.5
+
+            # FOV
+            fov_row = box.row(align=True)
+            fov_row.label(text="FOV (°):")
+            op_fm = fov_row.operator("og.nudge_cam_float", text="-5")
+            op_fm.cam_name = cam_obj.name; op_fm.prop_name = "og_cam_fov"; op_fm.delta = -5.0
+            fov_label = f"{float(fov):.0f}°" if float(fov) > 0 else "default"
+            fov_row.label(text=fov_label)
+            op_fp = fov_row.operator("og.nudge_cam_float", text="+5")
+            op_fp.cam_name = cam_obj.name; op_fp.prop_name = "og_cam_fov"; op_fp.delta = 5.0
+
+            # Mode-specific helpers
+            if mode == "standoff":
+                align_name = cam_obj.name + "_ALIGN"
+                has_align  = bool(scene.objects.get(align_name))
+                sub = box.row(align=True)
+                if has_align:
+                    sub.label(text=f"Anchor: {align_name}", icon="CHECKMARK")
+                else:
+                    sub.label(text="No anchor yet", icon="ERROR")
+                    sub2 = box.row()
+                    sub2.operator("og.spawn_cam_align", text="Add Player Anchor")
+
+            elif mode == "orbit":
+                pivot_name = cam_obj.name + "_PIVOT"
+                has_pivot  = bool(scene.objects.get(pivot_name))
+                sub = box.row(align=True)
+                if has_pivot:
+                    sub.label(text=f"Pivot: {pivot_name}", icon="CHECKMARK")
+                else:
+                    sub.label(text="No pivot yet", icon="ERROR")
+                    sub2 = box.row()
+                    sub2.operator("og.spawn_cam_pivot", text="Add Orbit Pivot")
+
+            # Trigger volume status
+            vol_name = cam_obj.name.replace("CAMERA_", "CAMVOL_")
+            has_vol  = bool(scene.objects.get(vol_name))
+            vol_row  = box.row(align=True)
+            if has_vol:
+                vol_row.label(text=f"Vol: {vol_name}", icon="CHECKMARK")
+            else:
+                vol_row.label(text="No volume — always active", icon="INFO")
+                vol_row.operator("og.spawn_cam_volume", text="Add Vol", icon="CUBE")
+
+
+class OG_OT_SetCamProp(Operator):
+    """Set a string custom property on a CAMERA_ empty."""
+    bl_idname   = "og.set_cam_prop"
+    bl_label    = "Set Camera Property"
+    bl_options  = {"REGISTER", "UNDO"}
+    cam_name:  bpy.props.StringProperty()
+    prop_name: bpy.props.StringProperty()
+    str_val:   bpy.props.StringProperty()
+    def execute(self, ctx):
+        o = ctx.scene.objects.get(self.cam_name)
+        if o:
+            o[self.prop_name] = self.str_val
+        return {"FINISHED"}
+
+
+class OG_OT_NudgeCamFloat(Operator):
+    """Nudge a float custom property on a CAMERA_ empty."""
+    bl_idname   = "og.nudge_cam_float"
+    bl_label    = "Nudge Camera Float"
+    bl_options  = {"REGISTER", "UNDO"}
+    cam_name:  bpy.props.StringProperty()
+    prop_name: bpy.props.StringProperty()
+    delta:     bpy.props.FloatProperty()
+    def execute(self, ctx):
+        o = ctx.scene.objects.get(self.cam_name)
+        if o:
+            current = float(o.get(self.prop_name, 0.0))
+            o[self.prop_name] = round(max(0.0, current + self.delta), 2)
+        return {"FINISHED"}
 
 
 class OG_PT_NavMesh(Panel):
@@ -4287,7 +4732,8 @@ class OG_PT_LightBaking(Panel):
 classes = (
     OGPreferences, OGProperties,
     OG_OT_SpawnPlayer, OG_OT_SpawnEntity,
-    OG_OT_SpawnCamera,
+    OG_OT_SpawnCamera, OG_OT_SpawnCamVolume, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
+    OG_OT_SetCamProp, OG_OT_NudgeCamFloat,
     OG_OT_AddWaypoint, OG_OT_DeleteWaypoint,
     OG_OT_MarkNavMesh, OG_OT_UnmarkNavMesh,
     OG_OT_LinkNavMesh, OG_OT_UnlinkNavMesh,
