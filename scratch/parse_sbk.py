@@ -9,128 +9,36 @@ import struct
 import json
 from pathlib import Path
 
-BLOCK_HAS_NAMES = 0x100
-
-def fourcc(s):
-    # little-endian fourcc
-    b = s.encode('ascii')
-    return struct.unpack('<I', b)[0]
-
-SBLK = fourcc('SBlk')
-
 def parse_sbk(filepath):
     data = Path(filepath).read_bytes()
-    if len(data) < 8:
+    if len(data) < 0x18:
         return None, []
 
-    # FileAttributes header
-    fa_type    = struct.unpack_from('<I', data, 0)[0]
-    num_chunks = struct.unpack_from('<I', data, 4)[0]
+    # SBK prefix layout (before the binary FA/SBlk section):
+    #   0x00: bank name (16 bytes, null-padded)
+    #   0x10: u32 unknown (0)
+    #   0x14: u32 num_sounds
+    #   0x18: entries — each is 16-byte name + 4-byte params = 20 bytes each
 
-    if num_chunks < 2 or num_chunks > 8:
-        return None, []
+    bank_name = data[:16].rstrip(b'\x00').decode('ascii', errors='replace').lower()
+    num_sounds = struct.unpack_from('<I', data, 0x14)[0]
 
-    chunks = []
-    for i in range(num_chunks):
-        offset = struct.unpack_from('<I', data, 8 + i*8)[0]
-        size   = struct.unpack_from('<I', data, 8 + i*8 + 4)[0]
-        chunks.append((offset, size))
+    # Sanity check — reject obviously wrong values
+    if num_sounds == 0 or num_sounds > 2000:
+        return bank_name, []
 
-    bank_offset, bank_size = chunks[0]
-    # size=0 means "rest of file" in some versions
-    if bank_size == 0:
-        bank_size = len(data) - bank_offset
-    bd = data[bank_offset : bank_offset + bank_size]
+    names = []
+    pos = 0x18
+    for i in range(num_sounds):
+        if pos + 20 > len(data):
+            break
+        raw  = data[pos:pos+16]
+        name = raw.rstrip(b'\x00').decode('ascii', errors='replace').lower().replace('_', '-')
+        if name and not name.startswith('\x00'):
+            names.append(name)
+        pos += 20
 
-    if len(bd) < 4:
-        return None, []
-
-    data_id = struct.unpack_from('<I', bd, 0)[0]
-    if data_id != SBLK:
-        return None, []  # music bank (SBv2) — skip
-
-    version = struct.unpack_from('<I', bd, 4)[0]
-    flags   = struct.unpack_from('<I', bd, 8)[0]
-
-    # Skip ahead to BlockNames offset
-    # Header layout (bytes):
-    #  0: DataID u32
-    #  4: Version u32
-    #  8: Flags u32
-    # 12: BankID u32
-    # 16: BankNum s8
-    # 17: pad s8
-    # 18: pad s16
-    # 20: pad s16
-    # 22: NumSounds s16
-    # 24: NumGrains s16
-    # 26: NumVAGs s16
-    # 28: FirstSound u32
-    # 32: FirstGrain u32
-    # 36: VagsInSR u32
-    # 40: VagDataSize u32
-    # 44: SRAMAllocSize u32
-    # 48: NextBlock u32
-    # 52: GrainData u32  (only if version >= 2)
-    # 52 or 56: BlockNames u32
-
-    if version >= 2:
-        block_names_pos = 56
-    else:
-        block_names_pos = 52
-
-    if block_names_pos + 4 > len(bd):
-        return None, []
-
-    block_names = struct.unpack_from('<I', bd, block_names_pos)[0]
-
-    bank_name   = Path(filepath).stem.lower()
-    sound_names = []
-
-    if (flags & BLOCK_HAS_NAMES) and 0 < block_names < len(bd):
-        # SFXBlockNames layout:
-        #  +0x00  u32 BlockName[2]          (8 bytes — bank name string)
-        #  +0x08  u32 SFXNameTableOffset
-        #  +0x0c  u32 VAGNameTableOffset
-        #  +0x10  u32 VAGImportsTableOffset
-        #  +0x14  u32 VAGExportsTableOffset
-        #  +0x18  s16 SFXHashOffsets[32]    (64 bytes)
-        #  +0x58  s16 VAGHashOffsets[32]    (64 bytes)
-
-        p = block_names
-        if p + 0x18 + 64 > len(bd):
-            return bank_name, []
-
-        raw_name = bd[p : p+8].rstrip(b'\x00')
-        try:
-            bank_name = raw_name.decode('ascii').lower()
-        except Exception:
-            pass
-
-        sfx_table_off    = struct.unpack_from('<I',  bd, p + 0x08)[0]
-        sfx_hash_offsets = struct.unpack_from('<32h', bd, p + 0x18)
-        name_table_base  = block_names + sfx_table_off
-
-        # SFXName: 16-byte name + s16 Index + s16 reserved = 0x14 bytes per entry
-        seen = set()
-        for hash_offset in sfx_hash_offsets:
-            entry_pos = name_table_base + hash_offset * 0x14
-            while entry_pos + 0x14 <= len(bd):
-                raw = bd[entry_pos : entry_pos + 16]
-                if raw[:4] == b'\x00\x00\x00\x00':
-                    break
-                try:
-                    name = raw.rstrip(b'\x00').decode('ascii').lower().replace('_', '-')
-                except Exception:
-                    break
-                if not name:
-                    break
-                if name not in seen:
-                    seen.add(name)
-                    sound_names.append(name)
-                entry_pos += 0x14
-
-    return bank_name, sorted(sound_names)
+    return bank_name, sorted(names)
 
 
 def main():
@@ -147,7 +55,7 @@ def main():
             print(f"  {sbk_file.name:22s} → {len(names):3d} sounds")
             results[bank_name] = names
         else:
-            print(f"  {sbk_file.name:22s} → skipped (music/empty/unrecognised)")
+            print(f"  {sbk_file.name:22s} → skipped (empty or unrecognised)")
 
     out = Path(__file__).parent / "sbk_sounds.json"
     out.write_text(json.dumps(results, indent=2))
