@@ -4047,9 +4047,12 @@ class OG_OT_SpawnCamVolume(Operator):
         vol.show_name = True
         vol.display_type = "WIRE"
         vol.color = (0.0, 0.9, 0.3, 0.4)
-        vol["set_invisible"] = True
-        vol["set_collision"]  = True
-        vol["ignore"]         = True
+        # Use registered BoolProperty (not dict-style) so Blender's GLTF exporter
+        # writes these as JSON integers (1/0). The C++ extractor uses .Get<int>()
+        # which returns 0 for JSON booleans — dict-style would silently break.
+        vol.set_invisible = True
+        vol.set_collision = True
+        vol.ignore        = True
         self.report({"INFO"}, f"Added {vol.name}  —  resize, then Link Trigger Volume to a camera")
         return {"FINISHED"}
 
