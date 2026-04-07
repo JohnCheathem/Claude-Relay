@@ -822,15 +822,26 @@ def collect_cameras(scene):
         gz = round(-loc.y, 4)
 
         import mathutils
-        rot_bl  = cam_obj.matrix_world.to_quaternion()
-        flip_y  = mathutils.Quaternion((0, 1, 0), math.radians(180))
-        offset  = mathutils.Quaternion((1, 0, 0), math.radians(-90))
-        rot_adj = rot_bl @ flip_y @ offset
-        bx, by, bz, bw = rot_adj.x, rot_adj.y, rot_adj.z, rot_adj.w
-        qx = round(bx, 6)
-        qy = round(bz, 6)
-        qz = round(-by, 6)
-        qw = round(bw, 6)
+        # Blender -> game quaternion conversion.
+        # Position remap: gx=bx, gy=bz, gz=-by  (Blender Z-up -> Game Y-up)
+        # This changes coordinate handedness (right->left handed).
+        # For rotations, a handedness flip = conjugate the quaternion (negate XYZ, keep W).
+        # Axis remap: game X=bl X, game Y=bl Z, game Z=-bl Y (same as positions).
+        # Combined: remap axes then conjugate.
+        q = cam_obj.matrix_world.to_quaternion()
+        # Step 1: remap axes  (bl x,y,z -> game x,z,-y)
+        qx =  q.x
+        qy =  q.z
+        qz = -q.y
+        qw =  q.w
+        # Step 2: conjugate for handedness flip (negate xyz)
+        qx = -qx
+        qy = -qy
+        qz = -qz
+        qx = round(qx, 6)
+        qy = round(qy, 6)
+        qz = round(qz, 6)
+        qw = round(qw, 6)
 
         cam_mode = cam_obj.get("og_cam_mode",  "fixed")
         interp_t = float(cam_obj.get("og_cam_interp", 1.0))
