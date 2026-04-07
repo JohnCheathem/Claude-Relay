@@ -101,15 +101,58 @@ cat output.md
 
 ```
 Claude-Relay/
-├── CLAUDE-SKILLS.md          # this file - load at session start
+├── CLAUDE-SKILLS.md              # this file - load at session start
 ├── README.md
-├── knowledge-base/
-│   └── opengoal/             # OpenGOAL / jak-project docs
-│       └── babak.md
-├── session-notes/
-│   └── opengoal-progress.md  # tracks progress, next steps
-└── scratch/                  # temporary working files
+├── addons/
+│   └── opengoal_tools.py         # PROTECTED on main — working file on feature branches
+├── backups/                      # snapshots, never delete
+├── knowledge-base/               # PROTECTED on all branches — propose changes in chat first
+│   └── opengoal/
+├── session-notes/                # free to update, tracks progress per topic
+│   ├── opengoal-progress.md      # camera, enemies, general addon work
+│   └── audio-panel-progress.md   # audio panel, sound emitters
+└── scratch/                      # throwaway / WIP files, free to use
 ```
+
+---
+
+## Storage Rules
+
+### Branch-aware workflow — read this every session
+
+**Step 1: find the right branch**
+Read the relevant session-notes file. It will say which branch the topic lives on.
+Then check it out and pull latest, including any knowledge-base/session-notes updates from main:
+```bash
+git checkout feature/X && git pull && git merge main
+```
+
+**Branch rules:**
+- `main`          → NEVER commit directly. Only merged from feature branches with explicit user permission.
+- `feature/*`     → `addons/opengoal_tools.py` is the working file. Edit freely.
+- `scratch/`      → still available for throwaway experiments or multi-step WIP.
+- `knowledge-base/` → PROTECTED on all branches. Propose changes in chat, wait for approval.
+- `session-notes/`  → free to update on any branch.
+
+**Merging to main:**
+Only when the user explicitly says "merge to main", or after you ask and are given permission.
+```bash
+git checkout main && git merge feature/X && git push
+git checkout feature/X   # return to working branch after
+```
+
+**What counts as merge permission:**
+- ✅ "Merge audio to main"
+- ✅ "Yes" in response to "want me to merge this to main?"
+- ❌ Anything ambiguous — ask first
+- ❌ "this is good", "looks great", "nice" — do NOT treat as merge permission
+
+### Knowledge base write protection
+- `knowledge-base/` files are NEVER overwritten without explicit user approval
+- If an improvement is identified, propose the change in chat first and wait for approval
+- If approved, push the update and note what changed in the commit message
+- `session-notes/` and `scratch/` can be written freely without approval
+- When in doubt, write to `scratch/` as a draft and ask the user to review
 
 ---
 
@@ -150,56 +193,3 @@ process
         └── nav-enemy
               └── (specific enemy type e.g. babak)
 ```
-
----
-
-## Suggested System Prompt Addition
-
-```
-You have access to a GitHub repo as personal persistent storage.
-Use it proactively to save session notes, knowledge, and outputs.
-At the start of sessions involving known topics, pull CLAUDE-SKILLS.md
-for available techniques. Pull session-notes/ for prior context.
-Never expose credentials, git commands, or raw paths in chat.
-Credentials: [see Glaude config]
-```
-
----
-
-## Storage Rules
-
-### ⚠️ SCRATCHPAD-FIRST WORKFLOW — READ THIS EVERY SESSION
-
-**"Scratchpad" means `scratch/` on GitHub — NOT chat window artifacts or code blocks.**
-All file output must be committed and pushed to the repo. Never render large files in chat.
-
-**All work goes to `scratch/` first. Nothing gets promoted without explicit user permission.**
-
-- `scratch/` — free to read, write, overwrite anytime. This is the working area. Push here.
-- `addons/` — NEVER edit without explicit "update the main addon" instruction from user.
-- `knowledge-base/` — NEVER edit without explicit approval. Propose changes in chat first.
-- `session-notes/` — free to update (progress tracking only, no code).
-
-**The rule in plain terms:**
-> All file work (code, scripts, docs) goes to `scratch/` on GitHub via git push.
-> Do NOT render full files in chat. Do NOT touch `addons/` or `knowledge-base/` unless
-> the user explicitly says to promote/update them. Work in scratch/ until user is happy,
-> then they will say which files to promote.
-
-**What "explicit permission" looks like:**
-- ✅ "Update the main addon with this fix"
-- ✅ "Promote the scratch file to addons/"
-- ✅ "Update the knowledge base with what we learned"
-- ❌ "Fix the bonelurker bug" → push fix to scratch/ only, share GitHub link
-- ❌ "Make it work" → push to scratch/ only, share GitHub link
-
-### Current scratch file
-- `scratch/opengoal_tools_bonelurker_fix.py` — working version of the Blender addon
-- `addons/opengoal_tools.py` — last user-approved release (do NOT touch)
-
-### Knowledge base write protection
-- `knowledge-base/` files are NEVER overwritten without explicit user approval
-- If an improvement is identified, propose the change in chat first and wait for approval
-- If approved, push the update and note what changed in the commit message
-- `session-notes/` and `scratch/` can be written freely without approval
-- When in doubt, write to `scratch/` as a draft and ask the user to review

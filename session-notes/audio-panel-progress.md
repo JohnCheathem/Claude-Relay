@@ -173,3 +173,133 @@ Stores the symbol pointer directly in `user-float 2`, no `rand-vu-int-count` inv
 - Implement looping sound emitters in addon using `cycle-speed: ["float", -1.0, 0.0]`
 - For one-shots / random sounds: use obs.gc trigger pattern
 - Music via `type='music` ambient is unaffected (different code path, no exact lookup)
+
+---
+
+## Branch Strategy (set up April 7 2026)
+
+Audio work lives on: **`feature/audio`**
+
+### How to use
+- At session start: `git checkout feature/audio && git pull`
+- All audio/sound panel work goes on this branch
+- When user approves a build → merge to `main`
+- `main` stays always-installable
+
+### Current state of feature/audio
+Branched from `main` at commit `c7e0303`.
+`addons/opengoal_tools.py` on this branch = the mid-session promote version
+(has audio panel but: old JSONC format, SEQUENCE_COLOR_04 icon bug, autoload button).
+
+The fixed version is in `scratch/opengoal_tools_with_audio.py`.
+
+**Recommended first task on this branch:**
+Replace `addons/opengoal_tools.py` with the fixed scratch version,
+then implement looping sound emitters using confirmed-working `cycle-speed < 0` format.
+
+---
+
+## Audio Panel Implementation Session (April 7 2026)
+
+### Status: feature/audio branch updated ✅
+
+### What was done
+All fixes applied directly to `addons/opengoal_tools.py` on `feature/audio`.
+
+**JSONC crash fix:**
+- `type`: `'ambient-sound` → `'sound`
+- `sound-name` → `effect-name`
+- bare string → `["symbol", name]`
+- `cycle-speed`: now `["float", -1.0, 0.0]` for loop (engine crash confirmed for one-shot)
+
+**Icon fix:** `SEQUENCE_COLOR_04` → `PLAY`
+
+**Sound data:** Replaced `MUSIC_BANK_ITEMS` with full `LEVEL_BANKS + SBK_SOUNDS + ALL_SFX_ITEMS` (1048 sounds from actual .SBK files)
+
+**Scene props:**
+- `sound_bank_1`, `sound_bank_2` (replaces freetext `sound_banks`)
+- `sfx_sound` EnumProperty (1048 searchable sounds)
+- `music_bank` now uses `LEVEL_BANKS`
+- Removed `music_bank_custom`, `sound_banks`
+
+**New operator:** `OG_OT_PickSound` — `invoke_search_popup` over all 1048 sounds
+
+**Panel improvements:**
+- Two bank dropdowns + duplicate warning + live sound count
+- Pick... button opens searchable sound popup
+- Add Emitter places emitter with currently picked sound
+- Emitter list shows sound + loop/one-shot mode
+
+### Files changed
+- `addons/opengoal_tools.py` on `feature/audio`
+
+### To test
+1. Install `addons/opengoal_tools.py` from `feature/audio` branch
+2. Audio panel → set Bank 1 to `village1`, Music Bank to `village1`
+3. Pick sound → search "waterfall" → select → Add Emitter at Cursor
+4. Export & compile → walk into emitter bsphere → should hear waterfall looping
+5. Check level-info.gc has `:sound-banks '(village1)` and `:music-bank 'village1`
+6. Music should start playing on level load
+
+### Known limitation
+One-shot sounds (`og_sound_mode = "one-shot"`) still crash — engine bug in
+`ambient-type-sound` using `lookup-tag-idx 'exact 0.0` on tags at `-1e9`.
+Only looping sounds work via ambient system. One-shots require obs.gc trigger.
+
+### Next steps
+- [ ] Test in-game
+- [ ] If music ambient zones wanted: add `'music` type ambient support to panel
+- [ ] If merge approved: `git checkout main && git merge feature/audio && git push`
+
+---
+
+## ✅ CONFIRMED WORKING — April 7 2026
+
+Sound emitters work in-game. Tested with `waterfall` sound, `village1` bank.
+
+### Root bugs fixed this session
+1. **JSONC crash**: `type='ambient-sound` → `'sound`, `sound-name` → `effect-name`, bare string → `["symbol",name]`
+2. **Sound bank GOAL syntax**: was `'('beach)` → fixed to `'(beach)`
+3. **Icon**: `SEQUENCE_COLOR_04` → `PLAY`
+4. **Autoload button**: removed from Build & Play panel
+
+### Merged to main ✅
+Commit: `8e2eb13` on main
+
+### Next session starting point
+- feature/audio branch still exists for future audio work
+- One-shot ambients still broken (engine bug) — obs.gc trigger is the workaround
+- Music ambient zones (`type='music`) not yet exposed in Blender UI — could add
+- Could add a mode toggle (loop/one-shot) to emitter UI once engine bug is patched
+
+---
+
+## Future Improvements (low priority — current system works well)
+
+### Volume control
+- `ambient-type-sound-loop` hardcodes volume to 1024 (100%)
+- Fix: expose `og_sound_volume` slider (0-100%) on emitter empty
+- Write as `(the int (* vol 10.24))` into sound spec in `collect_ambients`
+- Estimated effort: 1 iteration
+
+### Pitch / speed control  
+- Needs `effect-param` lump (binary `sound-play-parms` struct)
+- More involved to write from Python
+- Estimated effort: 2-3 iterations
+
+### Falloff distance
+- bsphere radius currently controls activation distance only
+- `fo-min` / `fo-max` in sound spec control volume fade with distance
+- Could expose as separate "inner radius" / "outer radius" on emitter
+- Estimated effort: 1-2 iterations
+
+### One-shot sounds (engine bug — needs upstream fix)
+- `cycle-speed >= 0` crashes due to `lookup-tag-idx 'exact 0.0` vs tags at `-1e9`
+- Fix requires PR to OpenGOAL: patch `ResLump.cpp` to write sound tags at `0.0`
+  OR patch `birth-ambient!` in `ambient.gc` to use `'interp` instead of `'exact`
+- Worth reporting upstream
+
+### Note on all 1048 sounds
+All sounds work as looping emitters regardless of whether they were "one-shot"
+in the original game. Short sounds (explosions, jumps etc.) just loop continuously.
+This is fine — use with appropriate radius so it doesn't sound ridiculous.

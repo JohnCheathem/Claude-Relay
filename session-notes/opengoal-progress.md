@@ -51,43 +51,46 @@ Play button successfully launches game and spawns in custom level.
 4. Launch GK
 5. Poll `(if (nonzero? *game-info*) 'ready 'wait)` — check `"'ready" in r` (with quote)
 6. When ready: `goalc_send("(bg '{name}-vis)")` → sleep 1s → `(start 'play ...)`
-7. sleep 2.0s → `goalc_send("{camera_nrepl_expr}")` for each camera trigger
+7. sleep 0.5s → `({name}_obs_init)` — spawns camera trigger processes
 
-## Camera System (feature/camera branch)
+## Camera System (scratch branch — needs testing)
 
-### Research complete — 3 iterations
-Full research document: `knowledge-base/opengoal/camera-system.md`
+### Root Cause Discovery
+`LevelFile.cpp` line 155 has the cameras BSP array write **commented out**:
+```cpp
+//(cameras  (array entity-camera)  :offset-assert 116)
+```
+`Entity.cpp` line 5 hardcodes ALL actors as `entity-actor` header regardless of etype.
+So `entity-camera` entries never get `birth!` called, never register with `*camera-engine*`,
+and `master-check-regions` finds nothing to switch to.
 
-### Architecture confirmed:
-- Camera entities go in JSONC **actors array** (not a separate cameras array)
-- `etype: "camera-tracker"` — safe, no init-from-entity!
-- `change-to-entity-by-name` finds actors by `name` lump ✓
-- `cam-state-from-entity` reads lumps to determine camera mode:
-  - no special lumps → `cam-fixed` (locked camera)
-  - `align` lump → `cam-standoff` (side-scroller, follows player at offset)
-  - `pivot` lump → `cam-circular` (orbit around point)
-- Trigger volumes spawned via nREPL after level load (obs.gc AABB approach)
+### Solution (no C++ changes needed)
+- `cam-state-from-entity` reads lump data only — doesn't care about entity type
+- `change-to-entity-by-name` searches the **actors array** directly
+- Camera actor sits in actors array with `trans` lump + `quat` field → works perfectly
+- Trigger volume = generated GOAL process in obs.gc polling `*target* control trans` AABB
+- On enter: `(send-event *camera* 'change-to-entity-by-name "camera-N")`
+- On exit: `(send-event *camera* 'clear-entity)`
 
-### Current scratch build bugs (priority order):
-1. **Camera quat export** — needs testing in-game. Blender camera -Z = look direction,
-   game camera -Z = look direction, but Blender Y-up vs game Y-up may need adjustment.
-2. **vol lump format** — currently exports 8 corners, should be 6 plane equations.
-   Low priority — vol lump not used by runtime trigger (we use obs.gc AABB).
-3. **No standoff support** — only cam-fixed implemented. Need `align` lump export.
-4. **Trigger volumes are AABB only** — no OBB/rotation support yet.
+### Blender Workflow
+1. **Add Camera** button in 📷 Camera panel → places ARROWS empty named `CAMERA_0`
+2. Rotate empty to aim (-Z axis = look direction)
+3. Make a box mesh for the trigger area
+4. Shift-click camera + box → **Link Trigger Volume**
+5. Box auto-tagged as Trigger Zone (no collision, invisible)
+6. Build & Play → obs.gc generated, `{level}_obs_init()` called after spawn
 
-### Key source file confirmed working:
-`scratch/opengoal_tools_camera_test.py` — has camera panel, JSONC export, nREPL trigger spawning
+### Export Details
+- Camera actor: `entity-camera` etype in actors array with `trans` lump + `quat`
+- No volume → no GOAL trigger → always-active (engine verified: no vol/pvol = always on)
+- With volume → obs.gc generates `cam-trigger-camera_N` defun + `obs_init` spawner
+- Vol lump (`vector-vol`) still exported for completeness / future use
+- AABB computed from 8 bounding-box corners of the CAMVOL_ mesh
 
-### 📌 NEXT SESSION: Implementation
-1. Start from `scratch/opengoal_tools_camera_test.py`
-2. Fix camera quat export (test simple forward-facing camera first)
-3. Add cam-standoff mode (add `align` property to CAMERA_ empty, export `trans`+`align` lumps)
-4. Add `interpTime` and `fov` controls to Blender camera panel
-5. Consider OBB trigger volumes (use mesh rotation matrix for plane normals)
-6. Once working → promote to `addons/opengoal_tools.py` on `feature/camera`
-
----
+### Collision/Invisible Fixes
+- `export_extras=True` added to GLB export — custom props now reach C++ extractor
+- `og_trigger` bool: stamps `set_invisible=1 + set_collision=1 + ignore=1` pre-export
+- CAMVOL_ meshes always auto-stamped as triggers (no manual step needed)
 
 ## Enemy Spawning Status
 
@@ -104,26 +107,171 @@ Full research document: `knowledge-base/opengoal/camera-system.md`
 ### ❌ Known Issues
 - navmesh full pathfinding — no engine support yet
 
+## 📌 NEXT SESSION
+1. Test camera scratch build in-game:
+   - No-volume camera → always active?
+   - Volume camera → switches on enter, clears on exit?
+2. If trigger defun crashes: check `(loop (suspend))` survives as process thread body
+3. If `change-to-entity-by-name` returns error: check lump name matches exactly
+4. Once working, merge camera changes into main `addons/opengoal_tools.py`
+
+## Camera Debug Session (latest)
+
+### What we confirmed from logs
+- `my-level-obs` links successfully every time ✓
+- `entity-camera` birth loop fixed (etype→camera-tracker) ✓
+- `art-group "process" not valid` error fixed (etype→camera-tracker) ✓
+- obs.gc is being generated correctly ✓
+- **`my_level_obs_init` was never called** — nREPL *target* poll was unreliable
+
+### Root cause of obs_init not running
+The `*target*` poll (`(if *target* 'alive 'wait)`) was checking every 0.25s but 
+the response matching `"'alive" in r2` may have been failing — the nREPL returns
+a prompt string alongside the value, and timing/encoding issues could cause misses.
+
+### Fix applied
+- Replaced fragile poll with `time.sleep(2.0)` then direct `goalc_send(f"({init_fn})")`
+- The trigger lambda's own `(when *target* ...)` handles the case where it starts 
+  before Jak spawns — it just waits in the loop until *target* exists
+- Restructured generated GOAL to put trigger body directly inside the 
+  `process-spawn-function` lambda (matches all real game examples)
+- Added `[obs-init] calling...` / `[obs-init] response:` logging to Blender console
+
+### Generated obs.gc structure (current)
+```lisp
+(defun my_level_obs_init ()
+  (process-spawn-function process
+    (lambda ()
+      (let ((inside #f))
+        (loop
+          (when *target*
+            (let* ((pos (-> *target* control trans))
+                   (in-vol (and <AABB checks>)))
+              (cond
+                ((and in-vol (not inside))
+                 (set! inside #t)
+                 (send-event *camera* 'change-to-entity-by-name "camera-0"))
+                ((and (not in-vol) inside)
+                 (set! inside #f)
+                 (send-event *camera* 'clear-entity)))))
+          (suspend))))
+    :to *entity-pool*)
+  (none))
+```
+
+### 📌 NEXT SESSION
+1. Test with new build — check Blender System Console for `[obs-init] calling...`
+2. If obs_init fires but camera doesn't switch: check entity-by-name finds "camera-0"
+3. If obs_init still doesn't fire: the 2s sleep after (start) isn't enough — try 4s
+   or add a second attempt: retry obs_init once more after another 2s
+4. Once working: merge to main addon
+
+## Enemy Data (Images + Definitions)
+
+### Status
+- **Images**: 37 JPGs pushed to `knowledge-base/opengoal/enemy-images/` (compressed from wiki renders, 94% smaller)
+- **Definitions**: 30/33 enemies scraped to `knowledge-base/opengoal/jak1-enemy-definitions.json`
+
+### Missing definitions (3 enemies — wrong wiki title guessed)
+- `billy` (lurker frog) — try: "Lurker frog", "Billy (lurker)", "Bog lurker"
+- `baby-spider` — try: "Baby spider (The Precursor Legacy)", "Spider lurker"  
+- `mother-spider` — try: "Mother spider (The Precursor Legacy)", "Spider boss"
+
+### How to find correct wiki titles
+1. Go to https://jakanddaxter.fandom.com and search the enemy name
+2. Note the exact URL slug (e.g. `/wiki/Baby_spider_(lurker)`)
+3. Add that title to the `alts:[]` array in `jak1-enemy-definitions-grabber.html` for that enemy
+4. Re-run just that enemy (or all) and re-download JSON
+
+### Scraper tools (in scratch/)
+- `scratch/jak1-enemy-image-grabber.html` — grabs all enemy images from wiki category, downloads ZIP
+- `scratch/jak1-enemy-definitions-grabber.html` — grabs intro text from each enemy article via `parse&prop=wikitext&section=0`, strips wiki markup, downloads JSON + CSV
+
+### API used for definitions
+```
+https://jakanddaxter.fandom.com/api.php?action=parse&page=<TITLE>&prop=wikitext&section=0&redirects=true&format=json
+```
+`section=0` = everything before the first heading (the intro you see above Contents).
+Response is raw wikitext → strip `{{templates}}`, `[[links]]`, `<ref>` tags client-side.
+Uses 5-proxy CORS fallback chain (allorigins → corsproxy.io → codetabs → thingproxy → htmldriven).
+
+### Next steps for addon integration
+- Wire image filenames to code names (image filename → `code_name` field in JSON)
+- Add enemy picker UI in Blender addon using images + short_desc
+
+## Known Enemy Issues
+
+### Double Lurker — crashes game
+`double-lurker` causes a crash when spawned in a custom level. Needs further investigation.
+Possible causes: requires linked actor pair (two entities referencing each other), or specific tpage/DGO dependency not met.
+TODO: check `double-lurker.gc` for any paired actor setup logic.
+
 ---
 
-## Audio
+## Audio Research Session
 
-### Status: ✅ CONFIRMED WORKING (merged to main)
-- Feature branch: `feature/audio`
-- Sound emitters work in-game (waterfall, village1 bank)
-- See `session-notes/audio-panel-progress.md` for full details
+### Status: Research complete ✅ — knowledge base written to scratch/
+
+### Key Findings
+
+**Sound System Architecture:**
+- Two swappable level SFX bank slots + always-loaded `common` bank
+- Music bank loaded separately from SFX banks
+- `level-load-info` has `:sound-banks` and `:music-bank` fields (already in level-info.gc)
+- `test-zone` has `:music-bank #f` and `:sound-banks '()` — so currently SILENT
+
+**Ambient System (jsonc-driven):**
+- Ambients are bsphere triggers in the `.jsonc` file under `"ambients": [...]`
+- `"type": "'music"` changes music/flava when player enters sphere
+- `"type": "'sound"` plays SFX at a world position with falloff
+- Music lumps: `"music"` (bank symbol), `"flava"` (float index), `"priority"` (float)
+- Sound lumps: `"effect-name"` (symbol), `"cycle-speed"` [base, random] (negative = loop)
+
+**Trigger Volume Music (obs.gc method):**
+- Exact same AABB polling pattern as camera triggers
+- `(set-setting! 'sound-flava #f 40.0 (music-flava darkcave))` — switches variant
+- `(remove-setting! 'sound-flava)` — reverts to level default
+- `(set-setting! 'music 'maincave 0.0 0)` — switches entire music bank
+- Used by: rolling gorge race, battle controller, boss fights
+
+**To add music to our level:**
+1. Set `:music-bank 'village1` in our level-info.gc entry
+2. Set `:sound-banks '(village1)` (or whatever bank has needed SFX)
+3. Add `"ambients"` array to our `.jsonc` with type `'music` spheres
+4. For rectangular trigger zones: use obs.gc process (same as camera trigger pattern)
+
+### 📌 NEXT STEPS for Audio
+1. Add `:music-bank` and `:sound-banks` to our level in level-info.gc
+2. Test: does basic music play just from those fields?
+3. Add a `'music` ambient sphere in jsonc to test zone switching
+4. Try a `'sound` ambient for a looping SFX emitter
+5. Eventually: hook obs.gc trigger volumes to `set-setting! 'sound-flava`
+
+### Reference
+Full knowledge base: `scratch/opengoal-audio-knowledge.md`
 
 ---
 
-## Branch Strategy
+## Branch Strategy (set up April 7 2026)
 
 ```
 main            ← always installable, user-approved only
-feature/audio   ← audio panel, sound emitters, music zones (clean)
-feature/camera  ← camera trigger system (in progress)
+feature/audio   ← audio panel, sound emitters, music zones
+feature/camera  ← camera trigger system
 ```
 
 Camera work lives on: **`feature/camera`**
-- Working file: `scratch/opengoal_tools_camera_test.py`
-- When ready to promote: copy to `addons/opengoal_tools.py` on this branch
 
+### How to use
+- At session start: `git checkout feature/camera && git pull`
+- Camera trigger work goes on this branch
+- When user approves → merge to `main`
+
+### Current state of feature/camera
+Branched from `main` at commit `c7e0303`.
+Camera work in progress is in `scratch/opengoal_tools_camera_test.py`.
+
+**Recommended first task on this branch:**
+Take `scratch/opengoal_tools_camera_test.py` as the base,
+test it in-game (see camera debug session notes above for next steps),
+then promote to `addons/opengoal_tools.py` on this branch when working.
