@@ -276,9 +276,9 @@ def _draw_wiki_preview(layout, etype: str):
     # custom images. scale_y enlarges the row so the icon renders big.
     if pcoll and etype in pcoll:
         icon_id = pcoll[etype].icon_id
-        row = box.row()
-        row.scale_y = 5.0
-        row.label(text="", icon_value=icon_id)
+        col = box.column(align=True)
+        col.scale_y = 1.0
+        col.template_icon(icon_value=icon_id, scale=10.0)
     elif wiki.get('img'):
         box.label(text="Image not found — check enemy-images/ folder", icon="ERROR")
     else:
