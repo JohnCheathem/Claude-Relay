@@ -877,6 +877,14 @@ class OGProperties(PropertyGroup):
     base_id:     IntProperty(name="Base Actor ID", default=10000, min=1000, max=60000,
                              description="Starting actor ID for this level. Must be unique across all custom levels to avoid ghost entity spawns.")
 
+
+class OGBakeProps(PropertyGroup):
+    samples: IntProperty(
+        name="Samples",
+        description="Cycles samples per vertex. Higher = cleaner but slower. 64-256 is usually enough.",
+        default=128, min=1, max=4096,
+    )
+
 # ---------------------------------------------------------------------------
 # PROCESS MANAGEMENT
 # ---------------------------------------------------------------------------
@@ -2772,6 +2780,96 @@ class OG_PT_DevTools(Panel):
 
 # ── Collision (per-object, separate panel) ────────────────────────────────────
 
+# ── Light Baking ──────────────────────────────────────────────────────────────
+
+class OG_OT_BakeVertexLighting(Operator):
+    bl_idname      = "og.bake_vertex_lighting"
+    bl_label       = "Bake Vertex Lighting"
+    bl_description = ("Bake scene lighting to vertex colors on all selected mesh objects. "
+                      "Forces Cycles. Existing 'BakedLight' attribute is overwritten; created if absent.")
+    bl_options     = {"REGISTER", "UNDO"}
+
+    def execute(self, ctx):
+        meshes = [o for o in ctx.selected_objects if o.type == 'MESH']
+        if not meshes:
+            self.report({"WARNING"}, "No mesh objects selected")
+            return {"CANCELLED"}
+
+        scene = ctx.scene
+        prev_engine  = scene.render.engine
+        prev_samples = scene.cycles.samples
+        prev_active  = ctx.view_layer.objects.active
+
+        scene.render.engine  = "CYCLES"
+        scene.cycles.samples = ctx.scene.og_bake_props.samples
+
+        baked, skipped = 0, 0
+        for obj in meshes:
+            ctx.view_layer.objects.active = obj
+            mesh = obj.data
+            attr_name = "BakedLight"
+
+            if attr_name in mesh.color_attributes:
+                mesh.color_attributes.remove(mesh.color_attributes[attr_name])
+            mesh.color_attributes.new(name=attr_name, type="BYTE_COLOR", domain="CORNER")
+            mesh.color_attributes.active_color = mesh.color_attributes[attr_name]
+
+            try:
+                bpy.ops.object.bake(
+                    type="DIFFUSE",
+                    pass_filter={"DIRECT", "INDIRECT"},
+                    target="VERTEX_COLORS",
+                    save_mode="INTERNAL",
+                )
+                self.report({"INFO"}, f"Baked: {obj.name}")
+                baked += 1
+            except Exception as e:
+                self.report({"WARNING"}, f"Failed on {obj.name}: {e}")
+                skipped += 1
+
+        scene.render.engine           = prev_engine
+        scene.cycles.samples          = prev_samples
+        ctx.view_layer.objects.active = prev_active
+
+        self.report({"INFO"}, f"Light bake done — {baked} baked, {skipped} skipped")
+        return {"FINISHED"}
+
+
+class OG_PT_LightBaking(Panel):
+    bl_label       = "🔆  Light Baking"
+    bl_idname      = "OG_PT_light_baking"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        layout = self.layout
+        props  = ctx.scene.og_bake_props
+
+        col = layout.column(align=True)
+        col.label(text="Bakes lighting → vertex colors", icon="LIGHT_SUN")
+        col.label(text="Attribute name: BakedLight",     icon="BLANK1")
+        layout.separator(factor=0.5)
+
+        layout.prop(props, "samples")
+        layout.separator(factor=0.3)
+
+        sel_meshes = [o for o in ctx.selected_objects if o.type == 'MESH']
+        count = len(sel_meshes)
+        row = layout.row()
+        row.scale_y = 1.4
+        if count == 0:
+            row.enabled = False
+            row.operator("og.bake_vertex_lighting",
+                         text="Bake Vertex Lighting (select meshes first)",
+                         icon="RENDER_STILL")
+        else:
+            row.operator("og.bake_vertex_lighting",
+                         text=f"Bake Vertex Lighting  ({count} object{'s' if count != 1 else ''})",
+                         icon="RENDER_STILL")
+
+
 class OG_PT_Collision(Panel):
     bl_label       = "OpenGOAL Collision"
     bl_idname      = "OG_PT_collision"
@@ -2897,6 +2995,8 @@ classes = (
     OG_PT_NavMesh,
     OG_PT_BuildPlay,
     OG_PT_DevTools,
+    OG_OT_BakeVertexLighting,
+    OG_PT_LightBaking,
     OG_PT_Collision,
 )
 
@@ -2905,6 +3005,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.og_props = PointerProperty(type=OGProperties)
+    bpy.types.Scene.og_bake_props = PointerProperty(type=OGBakeProps)
 
     bpy.types.Material.set_invisible    = bpy.props.BoolProperty(name="Invisible")
     bpy.types.Material.set_collision    = bpy.props.BoolProperty(name="Apply Collision Properties")
@@ -2939,6 +3040,8 @@ def unregister():
         bpy.utils.unregister_class(cls)
     if hasattr(bpy.types.Scene, "og_props"):
         del bpy.types.Scene.og_props
+    if hasattr(bpy.types.Scene, "og_bake_props"):
+        del bpy.types.Scene.og_bake_props
     for a in ("set_invisible","set_collision","ignore","noedge","noentity",
               "nolineofsight","nocamera","collide_material","collide_event","collide_mode"):
         try: delattr(bpy.types.Material, a)
