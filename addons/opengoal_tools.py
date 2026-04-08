@@ -4286,6 +4286,16 @@ class OG_PT_Camera(Panel):
         box = layout.box()
         box.label(text=f"Selected: {cam.name}", icon="CAMERA_DATA")
         box.label(text="Numpad-0 to look through camera", icon="INFO")
+        # Show the actual world rotation quaternion so user can verify it's not identity
+        try:
+            q = cam.matrix_world.to_quaternion()
+            row = box.row()
+            row.label(text=f"Rot (wxyz): {q.w:.2f} {q.x:.2f} {q.y:.2f} {q.z:.2f}")
+            if abs(q.w) > 0.99:
+                box.label(text="⚠ Camera has no rotation!", icon="ERROR")
+                box.label(text="Rotate it to aim, then export.")
+        except Exception:
+            pass
         # Mode-specific helpers
         mode = cam.get("og_cam_mode", "fixed")
         if mode == "standoff" and not scene.objects.get(cam.name + "_ALIGN"):
