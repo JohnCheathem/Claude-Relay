@@ -1194,6 +1194,12 @@ MOOD_ITEMS = [
     ("default",    "Default",      "Fallback — village1 tables, safe for any custom level starting point",   20),
 ]
 
+# Some levels use a mood-func that differs from their mood global name.
+# Sourced directly from goal_src/jak1/engine/level/level-info.gc.
+MOOD_FUNC_OVERRIDES = {
+    "beach": "update-mood-village1",  # *beach-mood* data, but village1 callback
+}
+
 SBK_SOUNDS = {
     "common": ['---close-racerin', '---large-steam-l', '-lav-dark-eco', 'arena', 'arena-steps', 'arenadoor-close', 'arenadoor-open', 'babak-breathin', 'babak-chest', 'babak-dies', 'babak-roar', 'babak-taunt', 'babk-taunt', 'balloon-dies', 'bigshark-alert', 'bigshark-bite', 'bigshark-idle', 'bigshark-taunt', 'bigswing', 'blob-explode', 'blob-land', 'blue-eco-charg', 'blue-eco-idle', 'blue-eco-jak', 'blue-eco-on', 'blue-eco-start', 'blue-light', 'bluesage-fires', 'boat-start', 'boat-stop', 'bomb-open', 'bonelurk-roar', 'bonelurker-dies', 'bonelurker-grunt', 'breath-in', 'breath-in-loud', 'breath-out', 'breath-out-loud', 'bridge-button', 'bridge-hover', 'bully-bounce', 'bully-dies', 'bully-dizzy', 'bully-idle', 'bully-jump', 'bully-land', 'bully-spin1', 'bully-spin2', 'bumper-button', 'bumper-pwr-dwn', 'burst-out', 'buzzer', 'buzzer-pickup', 'caught-eel', 'cave-spatula', 'cave-top-falls', 'cave-top-lands', 'cave-top-rises', 'cell-prize', 'chamber-land', 'chamber-lift', 'close-orb-cash', 'crab-walk1', 'crab-walk2', 'crab-walk3', 'crate-jump', 'crystal-on', 'cursor-l-r', 'cursor-options', 'cursor-up-down', 'darkeco-pool', 'dcrate-break', 'death-darkeco', 'death-drown', 'death-fall', 'death-melt', 'door-lock', 'door-unlock', 'dril-step', 'eco-beam', 'eco-bg-blue', 'eco-bg-green', 'eco-bg-red', 'eco-bg-yellow', 'eco-engine-1', 'eco-engine-2', 'eco-plat-hover', 'eco3', 'ecohit2', 'ecoroom1', 'electric-loop', 'elev-button', 'elev-land', 'eng-shut-down', 'eng-start-up', 'explosion', 'explosion-2', 'fire-boulder', 'fire-crackle', 'fire-loop', 'fish-spawn', 'flame-pot', 'flop-down', 'flop-hit', 'flop-land', 'flut-land-crwood', 'flut-land-dirt', 'flut-land-grass', 'flut-land-pcmeta', 'flut-land-sand', 'flut-land-snow', 'flut-land-stone', 'flut-land-straw', 'flut-land-swamp', 'flut-land-water', 'flut-land-wood', 'flylurk-dies', 'flylurk-idle', 'flylurk-plane', 'flylurk-roar', 'flylurk-taunt', 'foothit', 'gdl-gen-loop', 'gdl-pulley', 'gdl-shut-down', 'gdl-start-up', 'get-all-orbs', 'get-big-fish', 'get-blue-eco', 'get-burned', 'get-fried', 'get-green-eco', 'get-powered', 'get-red-eco', 'get-shocked', 'get-small-fish', 'get-yellow-eco', 'glowing-gen', 'green-eco-idle', 'green-eco-jak', 'green-fire', 'green-steam', 'greensage-fires', 'grunt', 'hand-grab', 'heart-drone', 'helix-dark-eco', 'hit-back', 'hit-dizzy', 'hit-dummy', 'hit-lurk-metal', 'hit-metal', 'hit-metal-big', 'hit-metal-large', 'hit-metal-small', 'hit-metal-tiny', 'hit-temple', 'hit-up', 'ice-breathin', 'ice-loop', 'icelurk-land', 'icelurk-step', 'icrate-break', 'irisdoor1', 'irisdoor2', 'jak-clap', 'jak-deatha', 'jak-idle1', 'jak-shocked', 'jak-stretch', 'jng-piston-dwn', 'jng-piston-up', 'jngb-eggtop-seq', 'jump', 'jump-double', 'jump-long', 'jump-low', 'jump-lurk-metal', 'jungle-part', 'kermit-loop', 'land-crwood', 'land-dirt', 'land-dpsnow', 'land-dwater', 'land-grass', 'land-hard', 'land-metal', 'land-pcmetal', 'land-sand', 'land-snow', 'land-stone', 'land-straw', 'land-swamp', 'land-water', 'land-wood', 'launch-fire', 'launch-idle', 'launch-start', 'lav-blue-vent', 'lav-dark-boom', 'lav-green-vent', 'lav-mine-boom', 'lav-spin-gen', 'lav-yell-vent', 'lava-mines', 'lava-pulley', 'ldoor-close', 'ldoor-open', 'lev-mach-fires', 'lev-mach-idle', 'lev-mach-start', 'loop-racering', 'lurkerfish-swim', 'maindoor', 'mayor-step-carp', 'mayor-step-wood', 'mayors-gears', 'medium-steam-lp', 'menu-close', 'menu-stats', 'miners-fire', 'misty-steam', 'money-pickup', 'mother-charge', 'mother-fire', 'mother-hit', 'mother-track', 'mud', 'mud-lurk-inhale', 'mushroom-gen', 'mushroom-off', 'ogre-rock', 'ogre-throw', 'ogre-windup', 'oof', 'open-orb-cash', 'oracle-awake', 'oracle-sleep', 'pedals', 'pill-pickup', 'piston-close', 'piston-open', 'plat-light-off', 'plat-light-on', 'pontoonten', 'powercell-idle', 'powercell-out', 'prec-button1', 'prec-button2', 'prec-button3', 'prec-button4', 'prec-button6', 'prec-button7', 'prec-button8', 'prec-on-water', 'punch', 'punch-hit', 'ramboss-charge', 'ramboss-dies', 'ramboss-fire', 'ramboss-hit', 'ramboss-idle', 'ramboss-land', 'ramboss-roar', 'ramboss-shield', 'ramboss-step', 'ramboss-taunt', 'ramboss-track', 'red-eco-idle', 'red-eco-jak', 'red-fireball', 'redsage-fires', 'robber-dies', 'robber-idle', 'robber-roar', 'robber-taunt', 'robo-blue-lp', 'robo-warning', 'robot-arm', 'robotcage-lp', 'robotcage-off', 'rock-hover', 'roll-crwood', 'roll-dirt', 'roll-dpsnow', 'roll-dwater', 'roll-grass', 'roll-pcmetal', 'roll-sand', 'roll-snow', 'roll-stone', 'roll-straw', 'roll-swamp', 'roll-water', 'roll-wood', 'rounddoor', 'run-step-left', 'run-step-right', 'sagecage-gen', 'sagecage-off', 'sages-machine', 'sandworm-dies', 'scrate-break', 'scrate-nobreak', 'select-menu', 'select-option', 'select-option2', 'shark-bite', 'shark-dies', 'shark-idle', 'shark-swim', 'shield-zap', 'shldlurk-breathi', 'shldlurk-chest', 'shldlurk-dies', 'shldlurk-roar', 'shldlurk-taunt', 'shut-down', 'sidedoor', 'silo-button', 'slide-crwood', 'slide-dirt', 'slide-dpsnow', 'slide-dwater', 'slide-grass', 'slide-pcmetal', 'slide-sand', 'slide-snow', 'slide-stone', 'slide-straw', 'slide-swamp', 'slide-water', 'slide-wood', 'slider2001', 'smack-surface', 'small-steam-lp', 'snow-bumper', 'snow-pist-cls2', 'snow-pist-cls3', 'snow-pist-opn2', 'snow-pist-opn3', 'snow-piston-cls', 'snow-piston-opn', 'snow-plat-1', 'snow-plat-2', 'snow-plat-3', 'snw-door', 'snw-eggtop-seq', 'spin', 'spin-hit', 'spin-kick', 'spin-pole', 'split-steps', 'start-options', 'start-up', 'steam-long', 'steam-medium', 'steam-short', 'stopwatch', 'sunk-top-falls', 'sunk-top-lands', 'sunk-top-rises', 'swim-dive', 'swim-down', 'swim-flop', 'swim-idle1', 'swim-idle2', 'swim-jump', 'swim-kick-surf', 'swim-kick-under', 'swim-noseblow', 'swim-stroke', 'swim-surface', 'swim-to-down', 'swim-turn', 'swim-up', 'temp-enemy-die', 'touch-pipes', 'uppercut', 'uppercut-hit', 'v3-bridge', 'v3-cartride', 'v3-minecart', 'vent-switch', 'walk-crwood1', 'walk-crwood2', 'walk-dirt1', 'walk-dirt2', 'walk-dpsnow1', 'walk-dpsnow2', 'walk-dwater1', 'walk-dwater2', 'walk-grass1', 'walk-grass2', 'walk-metal1', 'walk-metal2', 'walk-pcmetal1', 'walk-pcmetal2', 'walk-sand1', 'walk-sand2', 'walk-slide', 'walk-snow1', 'walk-snow2', 'walk-step-left', 'walk-step-right', 'walk-stone1', 'walk-stone2', 'walk-straw1', 'walk-straw2', 'walk-swamp1', 'walk-swamp2', 'walk-water1', 'walk-water2', 'walk-wood1', 'walk-wood2', 'warning', 'warpgate-act', 'warpgate-butt', 'warpgate-loop', 'warpgate-tele', 'water-drop', 'water-explosion', 'water-loop', 'water-off', 'water-on', 'waterfall', 'wcrate-break', 'wood-gears2', 'yel-eco-idle', 'yel-eco-jak', 'yellsage-fire', 'yeti-breathin', 'yeti-dies', 'yeti-roar', 'yeti-taunt', 'zoom-boost', 'zoom-hit-crwood', 'zoom-hit-dirt', 'zoom-hit-grass', 'zoom-hit-lava', 'zoom-hit-metal', 'zoom-hit-sand', 'zoom-hit-stone', 'zoom-hit-water', 'zoom-hit-wood', 'zoom-land-crwood', 'zoom-land-dirt', 'zoom-land-grass', 'zoom-land-lava', 'zoom-land-metal', 'zoom-land-sand', 'zoom-land-stone', 'zoom-land-water', 'zoom-land-wood', 'zoom-teleport', 'zoomer-crash-2', 'zoomer-explode', 'zoomer-jump', 'zoomer-melt', 'zoomer-rev1', 'zoomer-rev2'],
     "beach": ['beach-amb2', 'bird', 'cannon-charge', 'cannon-shot', 'crab-slide', 'dirt-crumble', 'drip', 'egg-crack', 'egg-hit', 'falling-egg', 'fuse', 'gears-rumble', 'grotto-pole-hit', 'lurkercrab-dies', 'lurkerdog-bite', 'lurkerdog-dies', 'lurkerdog-idle', 'monkey', 'pelican-flap', 'pelican-gulp', 'puppy-bark', 'rope-stretch', 'sack-incoming', 'sack-land', 'seagull-takeoff', 'shell-down', 'shell-up', 'snap', 'telescope', 'tower-wind2', 'tower-wind3', 'tower-winds', 'vent-rock-break', 'water-lap', 'worm-bite', 'worm-dies', 'worm-idle', 'worm-rise1', 'worm-sink', 'worm-taunt'],
@@ -2813,9 +2819,11 @@ def patch_level_info(name, spawns, scene=None):
         # Lighting settings
         _mood_id = props.mood
         _mood_val = f"'*{_mood_id}-mood*"
-        _mood_func = f"'update-mood-{_mood_id}"
+        _mood_func = f"'{ MOOD_FUNC_OVERRIDES.get(_mood_id, f'update-mood-{_mood_id}') }"
         _sky_val = "#t" if props.sky else "#f"
-        _sun_fade_val = f"{props.sun_fade:.4f}"
+        # GOAL requires float literals — ensure at least one decimal place
+        _sf = props.sun_fade
+        _sun_fade_val = f"{_sf:.1f}" if _sf == int(_sf) else f"{_sf:g}"
     else:
         _music_val = "#f"
         _sbanks_val = "'()"
@@ -3068,14 +3076,20 @@ def remove_level(name):
 
 def export_glb(ctx, name):
     d = _ldir(name); d.mkdir(parents=True, exist_ok=True)
-    bpy.ops.export_scene.gltf(
+    kwargs = dict(
         filepath=str(d / f"{name}.glb"), export_format="GLB",
         export_vertex_color="ACTIVE", export_normals=True,
-        export_attributes=True,
         export_materials="EXPORT", export_texcoords=True,
         export_apply=True, use_selection=False,
         export_yup=True, export_skins=False, export_animations=False,
         export_extras=True)
+    # export_attributes (Blender 3.4+) exports underscore-prefixed custom
+    # attributes — required for time-of-day vertex color slots (_SUNRISE etc.)
+    if bpy.app.version >= (3, 4, 0):
+        kwargs["export_attributes"] = True
+    else:
+        log("WARNING: Blender < 3.4 — ToD vertex color attributes (_SUNRISE etc.) will NOT be exported")
+    bpy.ops.export_scene.gltf(**kwargs)
     log("Exported GLB")
 
 # ---------------------------------------------------------------------------
@@ -5041,7 +5055,7 @@ class OG_OT_BakeLighting(Operator):
         # Store previous render settings
         prev_engine  = scene.render.engine
         prev_samples = scene.cycles.samples
-        prev_device  = scene.cycles.device
+        prev_active  = ctx.view_layer.objects.active
 
         scene.render.engine  = "CYCLES"
         scene.cycles.samples = samples
@@ -5078,16 +5092,14 @@ class OG_OT_BakeLighting(Operator):
             except Exception as exc:
                 failed.append(f"{obj.name}: {exc}")
 
-        # Restore render settings
+        # Restore render settings and selection
         scene.render.engine  = prev_engine
         scene.cycles.samples = prev_samples
 
-        # Restore original selection
         bpy.ops.object.select_all(action="DESELECT")
         for obj in targets:
             obj.select_set(True)
-        if targets:
-            ctx.view_layer.objects.active = targets[0]
+        ctx.view_layer.objects.active = prev_active
 
         if failed:
             self.report({"WARNING"}, f"Baked {len(baked)}, failed: {'; '.join(failed)}")
@@ -5122,6 +5134,7 @@ class OG_OT_BakeToDSlot(Operator):
 
         prev_engine  = scene.render.engine
         prev_samples = scene.cycles.samples
+        prev_active  = ctx.view_layer.objects.active
 
         scene.render.engine  = "CYCLES"
         scene.cycles.samples = samples
@@ -5156,8 +5169,7 @@ class OG_OT_BakeToDSlot(Operator):
         bpy.ops.object.select_all(action="DESELECT")
         for obj in targets:
             obj.select_set(True)
-        if targets:
-            ctx.view_layer.objects.active = targets[0]
+        ctx.view_layer.objects.active = prev_active
 
         if failed:
             self.report({"WARNING"}, f"Baked {slot} on {len(baked)}, failed: {'; '.join(failed)}")
@@ -5186,6 +5198,7 @@ class OG_OT_BakeAllToDSlots(Operator):
         prev_engine  = scene.render.engine
         prev_samples = scene.cycles.samples
         prev_slot    = props.tod_slot
+        prev_active  = ctx.view_layer.objects.active
 
         scene.render.engine  = "CYCLES"
         scene.cycles.samples = samples
@@ -5222,8 +5235,7 @@ class OG_OT_BakeAllToDSlots(Operator):
         bpy.ops.object.select_all(action="DESELECT")
         for obj in targets:
             obj.select_set(True)
-        if targets:
-            ctx.view_layer.objects.active = targets[0]
+        ctx.view_layer.objects.active = prev_active
 
         if total_failed:
             self.report({"WARNING"}, f"Baked {total_baked} slot/mesh pairs, failed: {'; '.join(total_failed)}")
