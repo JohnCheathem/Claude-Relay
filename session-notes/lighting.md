@@ -27,11 +27,11 @@
 - Custom level needs: mood global + mood-lights/fog/sun tables + update-mood-* function + level-info entries
 
 ## Next Steps (implementation)
-- [ ] Decide on desired ToD features: full 8-slot cycle? simplified static? dynamic effects?
+- [x] Decide on desired ToD features: expose all moods as presets via UI
 - [ ] Create custom mood tables (fog/lights/sun) for target level — village1 tables in knowledge doc are copy-paste ready
 - [ ] Write update-mood-LEVELNAME callback in mood.gc
 - [ ] Register mood global in mood-tables.gc
-- [ ] Wire :mood and :mood-func in level-info.gc (or patch addon to emit them)
+- [x] Wire :mood and :mood-func in level-info.gc — done via addon
 - [ ] Bake vertex colors in Blender using the 8 _SUNRISE/_MORNING/etc. attributes
 - [ ] Test with (set-time-of-day 12.0) etc. in REPL to verify transitions
 
