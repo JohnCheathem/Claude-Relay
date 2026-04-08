@@ -226,6 +226,18 @@ The game interpolates between adjacent slots at runtime using `time-of-day-inter
 
 **The `itimes` field** in `mood-context` is the integer-packed version of `times` (for VU use), recomputed every frame by `update-mood-itimes`. The packing applies `vftoi12` (fixed point 12) after squaring each weight — this is a non-linear response curve.
 
+### Baking workflow (addon)
+The Light Baking panel in the addon handles this directly:
+
+1. Set up Cycles lighting for the time of day you want to bake
+2. Select your level meshes
+3. Pick a slot from the **Slot** dropdown (`_SUNRISE`, `_NOON`, etc.)
+4. Click **Bake {SlotName}** — the addon creates the named attribute if needed and bakes into it
+5. Repeat for each slot with appropriate lighting adjustments
+6. Or use **Bake All 8 Slots** to bake the same lighting into all 8 at once (useful as a starting point to then adjust per slot)
+
+After baking, `active_color` is set to `_NOON` on each mesh for sensible viewport display. All `_`-prefixed attributes are exported automatically via `export_attributes=True` (Blender 3.4+).
+
 ---
 
 ## The Mood System — Frame-by-Frame Flow
@@ -437,13 +449,14 @@ In `update-time-of-day`, a clamp is applied: if shadow direction y < 0.9063, the
 ## Implementation Notes for Custom Levels
 
 ### Minimum viable setup
-A custom level needs in `level-info.gc`:
-```
-:mood '*village1-mood*          ; safest default — uses village1 tables
-:mood-func 'update-mood-village1
-:sky #t                         ; or #f for interior
-:sun-fade 1.0                   ; or lower for overcast
-```
+In the addon's **Level Settings** panel, set:
+- **Mood** — pick a preset (Village 1 is the safe default for outdoor levels)
+- **Has Sky** — enable for outdoor, disable for caves/interiors
+- **Sun Fade** — 1.0 for full sun, 0.25 for overcast, 0.0 for no sun
+
+The addon writes the correct `:mood`, `:mood-func`, `:sky`, and `:sun-fade` into `level-info.gc` on every export. No manual GOAL editing needed for preset moods.
+
+For a level that just needs to look like an existing game area, this is all that's required — the existing mood tables and callbacks are reused verbatim.
 
 ### Adding time-of-day lighting to a custom level
 1. **Geometry**: bake vertex colors into the 8 `_SUNRISE` / `_MORNING` / etc. attributes in Blender (exporter handles mapping).
@@ -622,20 +635,35 @@ Note: `env-color` is the sky/environment reflection color. It's multiplied by 0.
 
 ---
 
-## Addon Hardcoding — What Needs Changing
+## Addon Implementation — Lighting Features (feature/lighting)
 
-The OpenGOAL tools addon (`opengoal_tools_v9.py`) currently writes fixed values into every custom level's `level-load-info` block:
+The following lighting controls are implemented in the addon (`addons/opengoal_tools.py` on `feature/lighting`):
 
-```python
-f"       :mood '*village1-mood*\n"
-f"       :mood-func 'update-mood-village1\n"
-f"       :sky #t\n"
-f"       :sun-fade 1.0\n"
-```
+### Level Settings panel — new Lighting section
+Three new scene properties, all written into `level-load-info` on every export:
 
-To support custom lighting, the addon needs to expose these as configurable properties on the Blender level object (or a level settings panel), and substitute them into the generated GOAL code. The simplest first step is adding a dropdown for `mood-func` and a float for `sun-fade`. Custom mood tables would require generating new GOAL code blocks into `mood-tables.gc` and `mood.gc`.
+| Property | Type | Default | Maps to |
+|---|---|---|---|
+| `mood` | Enum (21 options) | `village1` | `:mood '*{id}-mood*` |
+| `sky` | Bool | `True` | `:sky #t / #f` |
+| `sun_fade` | Float 0.0–1.0 | `1.0` | `:sun-fade {val}` |
 
-Until then, a workaround is to manually edit the generated level-info after export and patch `*village1-mood*` references to a custom mood global.
+**`beach` override** — the `beach` mood uses `*beach-mood*` data tables but `update-mood-village1` as its callback. A `MOOD_FUNC_OVERRIDES` dict handles this automatically; the user just selects "Beach" from the dropdown and the correct GOAL is emitted.
+
+### Light Baking panel — Time-of-Day workflow
+Two new operators for baking vertex color ToD slots:
+
+**`OG_OT_BakeToDSlot`** (`og.bake_tod_slot`) — bakes current Cycles lighting into the selected ToD slot (`tod_slot` property). Creates the attribute if it doesn't exist. Restores engine, sample count, selection, and active object after bake.
+
+**`OG_OT_BakeAllToDSlots`** (`og.bake_all_tod_slots`) — bakes all 8 slots with the same current lighting in one pass. Useful as a base; slots can be hand-painted or re-baked individually afterward. Resets `active_color` to `_NOON` after completion so the viewport and Blender <3.4 export show daylight.
+
+### GLB export — `export_attributes`
+`export_glb()` passes `export_attributes=True` on Blender >= 3.4. This exports all custom attributes whose names start with `_` (e.g. `_SUNRISE`, `_NOON`) as glTF custom attributes. Required for the ToD vertex color slots to reach the OpenGOAL level builder. On Blender < 3.4, a warning is logged and the flag is omitted — ToD slots will not export on those versions.
+
+### Known gaps (not yet implemented)
+- Custom mood tables — creating new `*mylevel-mood*` globals and `update-mood-mylevel` callbacks still requires manual GOAL editing
+- `num-stars` — not yet exposed in UI (controls star count at night; set per-mood in mood context)
+- Blender <3.4 ToD export — `export_attributes` not available; ToD baking works but slots won't export
 
 ---
 
