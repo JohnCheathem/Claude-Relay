@@ -2268,14 +2268,15 @@ def kill_gk():
     time.sleep(0.5)
 
 def kill_goalc():
+    killed_port = GOALC_PORT   # snapshot the port we think GOALC is on before killing
     _kill_process(f"goalc{_EXE}")
     time.sleep(0.5)
-    # On Windows, SO_EXCLUSIVEADDRUSE holds port 8181 until the process fully
+    # On Windows, SO_EXCLUSIVEADDRUSE holds the port until the process fully
     # exits. Poll until the port is free so the next launch_goalc() doesn't
     # hit "nREPL: DISABLED" from a bind() on a not-yet-released port.
     for _ in range(20):
         try:
-            with socket.create_connection(("localhost", GOALC_PORT), timeout=0.3):
+            with socket.create_connection(("localhost", killed_port), timeout=0.3):
                 pass
             time.sleep(0.3)  # port still held, keep waiting
         except (ConnectionRefusedError, OSError):
@@ -2312,7 +2313,38 @@ def goalc_send(cmd, timeout=GOALC_TIMEOUT):
     except Exception as e: return f"ERROR:{e}"
 
 def goalc_ok():
-    return goalc_send("(+ 1 1)", timeout=3) is not None
+    """Return True if GOALC's nREPL is reachable.
+
+    Probes the current GOALC_PORT first (fast path), then scans the full
+    auto-detect range.  This handles the case where GOALC was already running
+    before this Blender session started — GOALC_PORT may still be at its
+    module default (8181) while the real port is 8182 or higher.
+    Updates GOALC_PORT in-place so subsequent goalc_send() calls use the
+    correct port without re-scanning.
+    """
+    global GOALC_PORT
+    # Fast path — port is already correct
+    if goalc_send("(+ 1 1)", timeout=3) is not None:
+        return True
+    # Slow path — scan range in case GOALC is on a different port
+    for port in range(8181, 8192):
+        if port == GOALC_PORT:
+            continue  # already tried
+        try:
+            import struct
+            with socket.create_connection(("localhost", port), timeout=0.5) as s:
+                cmd = b"(+ 1 1)"
+                header = struct.pack("<II", len(cmd), 10)
+                s.sendall(header + cmd)
+                s.settimeout(3)
+                data = s.recv(4096)
+                if data:
+                    GOALC_PORT = port
+                    log(f"[nREPL] found existing GOALC on port {port}, updating GOALC_PORT")
+                    return True
+        except Exception:
+            continue
+    return False
 
 USER_NAME = "blender"
 
