@@ -3175,7 +3175,7 @@ class OG_OT_SpawnPlayer(Operator):
     bl_label  = "Add Player Spawn"
     bl_description = "Place a player spawn empty at the 3D cursor"
     def execute(self, ctx):
-        n   = len([o for o in ctx.scene.objects if o.name.startswith("SPAWN_")])
+        n   = len([o for o in ctx.scene.objects if o.name.startswith("SPAWN_") and not o.name.endswith("_CAM")])
         uid = "start" if n == 0 else f"spawn{n}"
         bpy.ops.object.empty_add(type="ARROWS", location=ctx.scene.cursor.location)
         o = ctx.active_object
@@ -3194,7 +3194,7 @@ class OG_OT_SpawnCheckpoint(Operator):
         "moves around, so these act as silent progress saves without any trigger actors."
     )
     def execute(self, ctx):
-        n   = len([o for o in ctx.scene.objects if o.name.startswith("CHECKPOINT_")])
+        n   = len([o for o in ctx.scene.objects if o.name.startswith("CHECKPOINT_") and not o.name.endswith("_CAM")])
         uid = f"cp{n}"
         bpy.ops.object.empty_add(type="SINGLE_ARROW", location=ctx.scene.cursor.location)
         o = ctx.active_object
@@ -4325,8 +4325,8 @@ class OG_PT_Scene(Panel):
         col.operator("og.spawn_player",     text="Add Player Spawn",  icon="ADD")
         col.operator("og.spawn_checkpoint", text="Add Checkpoint",    icon="KEYFRAME")
 
-        spawns      = [o for o in scene.objects if o.name.startswith("SPAWN_")      and o.type == "EMPTY"]
-        checkpoints = [o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY"]
+        spawns      = [o for o in scene.objects if o.name.startswith("SPAWN_")      and o.type == "EMPTY" and not o.name.endswith("_CAM")]
+        checkpoints = [o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]
 
         if spawns or checkpoints:
             layout.separator(factor=0.4)
