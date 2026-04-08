@@ -2287,6 +2287,17 @@ class OGProperties(PropertyGroup):
                            description="Whether this level renders a sky. Disable for caves and interiors")
     sun_fade: FloatProperty(name="Sun Fade", default=1.0, min=0.0, max=1.0,
                             description="Sun disc visibility. 1.0 = full sun, 0.0 = no sun (overcast/interior). misty uses 0.25, snow uses 0.5")
+    tod_slot: EnumProperty(name="ToD Slot", default="_NOON", description="Time-of-day vertex color slot to bake into",
+                           items=[
+                               ("_SUNRISE",   "Sunrise",   "Dawn — slot 0", 0),
+                               ("_MORNING",   "Morning",   "Morning — slot 1", 1),
+                               ("_NOON",      "Noon",      "Midday — slot 2", 2),
+                               ("_AFTERNOON", "Afternoon", "Afternoon — slot 3", 3),
+                               ("_SUNSET",    "Sunset",    "Dusk — slot 4", 4),
+                               ("_TWILIGHT",  "Twilight",  "Twilight — slot 5", 5),
+                               ("_EVENING",   "Evening",   "Night — slot 6", 6),
+                               ("_GREENSUN",  "Green Sun", "Green moon night — slot 7", 7),
+                           ])
 
 # ---------------------------------------------------------------------------
 # PROCESS MANAGEMENT
@@ -3060,6 +3071,7 @@ def export_glb(ctx, name):
     bpy.ops.export_scene.gltf(
         filepath=str(d / f"{name}.glb"), export_format="GLB",
         export_vertex_color="ACTIVE", export_normals=True,
+        export_attributes=True,
         export_materials="EXPORT", export_texcoords=True,
         export_apply=True, use_selection=False,
         export_yup=True, export_skins=False, export_animations=False,
@@ -5086,11 +5098,147 @@ class OG_OT_BakeLighting(Operator):
 
 
 # ---------------------------------------------------------------------------
+# OPERATOR — Bake single ToD slot
+# ---------------------------------------------------------------------------
+
+TOD_SLOTS = ["_SUNRISE", "_MORNING", "_NOON", "_AFTERNOON", "_SUNSET", "_TWILIGHT", "_EVENING", "_GREENSUN"]
+
+class OG_OT_BakeToDSlot(Operator):
+    """Bake Cycles lighting into the selected time-of-day vertex color slot on each selected mesh."""
+    bl_idname      = "og.bake_tod_slot"
+    bl_label       = "Bake ToD Slot"
+    bl_description = "Bake Cycles lighting into the selected time-of-day vertex color slot (_SUNRISE, _NOON, etc.)"
+
+    def execute(self, ctx):
+        scene   = ctx.scene
+        props   = scene.og_props
+        samples = props.lightbake_samples
+        slot    = props.tod_slot
+
+        targets = [o for o in ctx.selected_objects if o.type == "MESH"]
+        if not targets:
+            self.report({"ERROR"}, "No mesh objects selected")
+            return {"CANCELLED"}
+
+        prev_engine  = scene.render.engine
+        prev_samples = scene.cycles.samples
+
+        scene.render.engine  = "CYCLES"
+        scene.cycles.samples = samples
+
+        baked, failed = [], []
+
+        for obj in targets:
+            try:
+                mesh = obj.data
+                if slot not in mesh.color_attributes:
+                    mesh.color_attributes.new(name=slot, type="BYTE_COLOR", domain="CORNER")
+                attr = mesh.color_attributes[slot]
+                mesh.color_attributes.active_color = attr
+
+                bpy.ops.object.select_all(action="DESELECT")
+                obj.select_set(True)
+                ctx.view_layer.objects.active = obj
+
+                bpy.ops.object.bake(
+                    type="DIFFUSE",
+                    pass_filter={"COLOR", "DIRECT", "INDIRECT"},
+                    target="VERTEX_COLORS",
+                    save_mode="INTERNAL",
+                )
+                baked.append(obj.name)
+            except Exception as exc:
+                failed.append(f"{obj.name}: {exc}")
+
+        scene.render.engine  = prev_engine
+        scene.cycles.samples = prev_samples
+
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in targets:
+            obj.select_set(True)
+        if targets:
+            ctx.view_layer.objects.active = targets[0]
+
+        if failed:
+            self.report({"WARNING"}, f"Baked {slot} on {len(baked)}, failed: {'; '.join(failed)}")
+        else:
+            self.report({"INFO"}, f"Baked {slot} on: {', '.join(baked)}")
+
+        return {"FINISHED"}
+
+
+class OG_OT_BakeAllToDSlots(Operator):
+    """Bake all 8 time-of-day slots sequentially. Set up your lighting for each slot beforehand, or use this as a base-pass (bake once, then adjust per slot manually)."""
+    bl_idname      = "og.bake_all_tod_slots"
+    bl_label       = "Bake All ToD Slots"
+    bl_description = "Bake all 8 ToD slots sequentially with current lighting. Useful as a single-pass base; adjust individual slots separately afterward"
+
+    def execute(self, ctx):
+        scene   = ctx.scene
+        props   = scene.og_props
+        samples = props.lightbake_samples
+
+        targets = [o for o in ctx.selected_objects if o.type == "MESH"]
+        if not targets:
+            self.report({"ERROR"}, "No mesh objects selected")
+            return {"CANCELLED"}
+
+        prev_engine  = scene.render.engine
+        prev_samples = scene.cycles.samples
+        prev_slot    = props.tod_slot
+
+        scene.render.engine  = "CYCLES"
+        scene.cycles.samples = samples
+
+        total_baked, total_failed = 0, []
+
+        for slot in TOD_SLOTS:
+            for obj in targets:
+                try:
+                    mesh = obj.data
+                    if slot not in mesh.color_attributes:
+                        mesh.color_attributes.new(name=slot, type="BYTE_COLOR", domain="CORNER")
+                    attr = mesh.color_attributes[slot]
+                    mesh.color_attributes.active_color = attr
+
+                    bpy.ops.object.select_all(action="DESELECT")
+                    obj.select_set(True)
+                    ctx.view_layer.objects.active = obj
+
+                    bpy.ops.object.bake(
+                        type="DIFFUSE",
+                        pass_filter={"COLOR", "DIRECT", "INDIRECT"},
+                        target="VERTEX_COLORS",
+                        save_mode="INTERNAL",
+                    )
+                    total_baked += 1
+                except Exception as exc:
+                    total_failed.append(f"{slot}/{obj.name}: {exc}")
+
+        scene.render.engine  = prev_engine
+        scene.cycles.samples = prev_samples
+        props.tod_slot = prev_slot
+
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in targets:
+            obj.select_set(True)
+        if targets:
+            ctx.view_layer.objects.active = targets[0]
+
+        if total_failed:
+            self.report({"WARNING"}, f"Baked {total_baked} slot/mesh pairs, failed: {'; '.join(total_failed)}")
+        else:
+            self.report({"INFO"}, f"Baked all 8 ToD slots on {len(targets)} mesh(es) — {total_baked} total passes")
+
+        return {"FINISHED"}
+
+
+# ---------------------------------------------------------------------------
 # PANEL — Light Baking
 # ---------------------------------------------------------------------------
 
 class OG_PT_LightBaking(Panel):
-    bl_label       = "OpenGOAL Light Baking"
+    bl_label       = "☀  Light Baking"
     bl_idname      = "OG_PT_lightbaking"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
@@ -5100,36 +5248,58 @@ class OG_PT_LightBaking(Panel):
     def draw(self, ctx):
         layout = self.layout
         props  = ctx.scene.og_props
+        targets = [o for o in ctx.selected_objects if o.type == "MESH"]
+        has_targets = len(targets) > 0
 
-        # Sample count input
         col = layout.column(align=True)
         col.label(text="Cycles Bake Settings:", icon="LIGHT")
         col.prop(props, "lightbake_samples")
 
         layout.separator(factor=0.5)
 
-        # Info about what will be baked
-        targets = [o for o in ctx.selected_objects if o.type == "MESH"]
-        if targets:
+        # Mesh selection info
+        if has_targets:
             box = layout.box()
             box.label(text=f"{len(targets)} mesh(es) selected:", icon="OBJECT_DATA")
-            for o in targets[:6]:
+            for o in targets[:4]:
                 box.label(text=f"  • {o.name}")
-            if len(targets) > 6:
-                box.label(text=f"  … and {len(targets) - 6} more")
+            if len(targets) > 4:
+                box.label(text=f"  … and {len(targets) - 4} more")
         else:
             layout.label(text="Select mesh object(s) to bake", icon="INFO")
 
-        layout.separator(factor=0.5)
+        layout.separator(factor=0.6)
 
-        # Bake button — disabled when nothing is selected
-        row = layout.row()
-        row.enabled = len(targets) > 0
-        row.scale_y = 1.6
-        row.operator("og.bake_lighting", text="Bake Lighting → Vertex Color", icon="RENDER_STILL")
+        # ── Time of Day Baking ────────────────────────────────────────────
+        box = layout.box()
+        box.label(text="Time of Day Slots", icon="TIME")
+        col = box.column(align=True)
+        col.label(text="Each slot = one lighting condition.", icon="INFO")
+        col.label(text="Set up lights, pick slot, bake.")
+        col.separator(factor=0.4)
+        col.prop(props, "tod_slot", text="Slot")
+        col.separator(factor=0.4)
+        row = col.row(align=True)
+        row.enabled = has_targets
+        row.scale_y = 1.4
+        row.operator("og.bake_tod_slot", text=f"Bake  {props.tod_slot}", icon="RENDER_STILL")
+        col.separator(factor=0.4)
+        row2 = col.row()
+        row2.enabled = has_targets
+        row2.operator("og.bake_all_tod_slots",
+                      text="Bake All 8 Slots (same lighting)", icon="RENDERLAYERS")
+        box.label(text="All 8: _SUNRISE → _GREENSUN", icon="INFO")
 
-        layout.separator(factor=0.3)
-        layout.label(text="Result stored in 'BakedLight' layer", icon="GROUP_VCOL")
+        layout.separator(factor=0.6)
+
+        # ── Single-pass Bake (legacy / non-ToD) ──────────────────────────
+        box2 = layout.box()
+        box2.label(text="Single Pass (no ToD)", icon="RESTRICT_COLOR_OFF")
+        row3 = box2.row()
+        row3.enabled = has_targets
+        row3.scale_y = 1.3
+        row3.operator("og.bake_lighting", text="Bake → BakedLight", icon="SHADING_RENDERED")
+        box2.label(text="Stores result in 'BakedLight' layer", icon="GROUP_VCOL")
 
 
 
@@ -5239,6 +5409,8 @@ classes = (
     OG_OT_ExportBuildPlay,
     OG_OT_OpenFolder, OG_OT_OpenFile,
     OG_OT_BakeLighting,
+    OG_OT_BakeToDSlot,
+    OG_OT_BakeAllToDSlots,
     OG_OT_PickSound,
     OG_OT_AddSoundEmitter,
     OG_PT_LevelSettings,
