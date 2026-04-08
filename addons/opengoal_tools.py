@@ -1167,6 +1167,33 @@ LEVEL_BANKS = [
     ("village3", "village3", "", 19),
 ]
 
+# Mood presets — each entry is (id, label, description, index)
+# id maps to the GOAL symbol *id-mood* and update-mood-id function.
+# Descriptions pulled from source knowledge (lighting-system.md).
+MOOD_ITEMS = [
+    ("village1",   "Village 1",    "Open outdoor — warm day/night cycle, torch flames, 8 ToD slots",         0),
+    ("village2",   "Village 2",    "Swamp village — torches, lightning, cloudy sky variant",                  1),
+    ("village3",   "Village 3",    "Volcano village — lava glow, intense directional lighting",               2),
+    ("beach",      "Beach",        "Open beach — same tables as village1, bright sky",                        3),
+    ("jungle",     "Jungle",       "Dense canopy — reduced sky, task-triggered light change",                 4),
+    ("jungleb",    "Jungle B",     "Dark jungle interior — fixed blue/green lighting, no ToD",                5),
+    ("misty",      "Misty",        "Overcast/misty — single slot with brightness cycle, torch flames",        6),
+    ("firecanyon", "Fire Canyon",  "No night — orange/red daytime only, lava glow effect",                    7),
+    ("swamp",      "Swamp",        "Fog-heavy — camera-pitch fog modifier, lightning, torch flames",          8),
+    ("sunken",     "Sunken",       "Underwater — depth-driven ambient shift, caustic ripples, no sky",        9),
+    ("rolling",    "Rolling",      "Rolling hills — sphere-activated light zones, lightning",                 10),
+    ("ogre",       "Ogre",         "Boss arena — blends between 3 sub-moods by camera distance",             11),
+    ("snow",       "Snow",         "Snow field — weather toggle via *weather-off*, sun fade 0.5",            12),
+    ("maincave",   "Main Cave",    "Interior cave — static slot 0, palette-fade crystal control",            13),
+    ("darkcave",   "Dark Cave",    "Dark interior — player-proximity ambient light, no sky",                  14),
+    ("robocave",   "Robo Cave",    "Interior — static slot 0, torch flames",                                  15),
+    ("lavatube",   "Lava Tube",    "Interior lava — lava glow + palette-fade, no sky",                       16),
+    ("citadel",    "Citadel",      "Interior citadel — flicker lights, proximity shield effect, no sky",     17),
+    ("training",   "Training",     "Open outdoor — same tables as village1, wide fog distances",             18),
+    ("finalboss",  "Final Boss",   "Boss arena — sky fades in during fight, dynamic sun/star reveal",        19),
+    ("default",    "Default",      "Fallback — village1 tables, safe for any custom level starting point",   20),
+]
+
 SBK_SOUNDS = {
     "common": ['---close-racerin', '---large-steam-l', '-lav-dark-eco', 'arena', 'arena-steps', 'arenadoor-close', 'arenadoor-open', 'babak-breathin', 'babak-chest', 'babak-dies', 'babak-roar', 'babak-taunt', 'babk-taunt', 'balloon-dies', 'bigshark-alert', 'bigshark-bite', 'bigshark-idle', 'bigshark-taunt', 'bigswing', 'blob-explode', 'blob-land', 'blue-eco-charg', 'blue-eco-idle', 'blue-eco-jak', 'blue-eco-on', 'blue-eco-start', 'blue-light', 'bluesage-fires', 'boat-start', 'boat-stop', 'bomb-open', 'bonelurk-roar', 'bonelurker-dies', 'bonelurker-grunt', 'breath-in', 'breath-in-loud', 'breath-out', 'breath-out-loud', 'bridge-button', 'bridge-hover', 'bully-bounce', 'bully-dies', 'bully-dizzy', 'bully-idle', 'bully-jump', 'bully-land', 'bully-spin1', 'bully-spin2', 'bumper-button', 'bumper-pwr-dwn', 'burst-out', 'buzzer', 'buzzer-pickup', 'caught-eel', 'cave-spatula', 'cave-top-falls', 'cave-top-lands', 'cave-top-rises', 'cell-prize', 'chamber-land', 'chamber-lift', 'close-orb-cash', 'crab-walk1', 'crab-walk2', 'crab-walk3', 'crate-jump', 'crystal-on', 'cursor-l-r', 'cursor-options', 'cursor-up-down', 'darkeco-pool', 'dcrate-break', 'death-darkeco', 'death-drown', 'death-fall', 'death-melt', 'door-lock', 'door-unlock', 'dril-step', 'eco-beam', 'eco-bg-blue', 'eco-bg-green', 'eco-bg-red', 'eco-bg-yellow', 'eco-engine-1', 'eco-engine-2', 'eco-plat-hover', 'eco3', 'ecohit2', 'ecoroom1', 'electric-loop', 'elev-button', 'elev-land', 'eng-shut-down', 'eng-start-up', 'explosion', 'explosion-2', 'fire-boulder', 'fire-crackle', 'fire-loop', 'fish-spawn', 'flame-pot', 'flop-down', 'flop-hit', 'flop-land', 'flut-land-crwood', 'flut-land-dirt', 'flut-land-grass', 'flut-land-pcmeta', 'flut-land-sand', 'flut-land-snow', 'flut-land-stone', 'flut-land-straw', 'flut-land-swamp', 'flut-land-water', 'flut-land-wood', 'flylurk-dies', 'flylurk-idle', 'flylurk-plane', 'flylurk-roar', 'flylurk-taunt', 'foothit', 'gdl-gen-loop', 'gdl-pulley', 'gdl-shut-down', 'gdl-start-up', 'get-all-orbs', 'get-big-fish', 'get-blue-eco', 'get-burned', 'get-fried', 'get-green-eco', 'get-powered', 'get-red-eco', 'get-shocked', 'get-small-fish', 'get-yellow-eco', 'glowing-gen', 'green-eco-idle', 'green-eco-jak', 'green-fire', 'green-steam', 'greensage-fires', 'grunt', 'hand-grab', 'heart-drone', 'helix-dark-eco', 'hit-back', 'hit-dizzy', 'hit-dummy', 'hit-lurk-metal', 'hit-metal', 'hit-metal-big', 'hit-metal-large', 'hit-metal-small', 'hit-metal-tiny', 'hit-temple', 'hit-up', 'ice-breathin', 'ice-loop', 'icelurk-land', 'icelurk-step', 'icrate-break', 'irisdoor1', 'irisdoor2', 'jak-clap', 'jak-deatha', 'jak-idle1', 'jak-shocked', 'jak-stretch', 'jng-piston-dwn', 'jng-piston-up', 'jngb-eggtop-seq', 'jump', 'jump-double', 'jump-long', 'jump-low', 'jump-lurk-metal', 'jungle-part', 'kermit-loop', 'land-crwood', 'land-dirt', 'land-dpsnow', 'land-dwater', 'land-grass', 'land-hard', 'land-metal', 'land-pcmetal', 'land-sand', 'land-snow', 'land-stone', 'land-straw', 'land-swamp', 'land-water', 'land-wood', 'launch-fire', 'launch-idle', 'launch-start', 'lav-blue-vent', 'lav-dark-boom', 'lav-green-vent', 'lav-mine-boom', 'lav-spin-gen', 'lav-yell-vent', 'lava-mines', 'lava-pulley', 'ldoor-close', 'ldoor-open', 'lev-mach-fires', 'lev-mach-idle', 'lev-mach-start', 'loop-racering', 'lurkerfish-swim', 'maindoor', 'mayor-step-carp', 'mayor-step-wood', 'mayors-gears', 'medium-steam-lp', 'menu-close', 'menu-stats', 'miners-fire', 'misty-steam', 'money-pickup', 'mother-charge', 'mother-fire', 'mother-hit', 'mother-track', 'mud', 'mud-lurk-inhale', 'mushroom-gen', 'mushroom-off', 'ogre-rock', 'ogre-throw', 'ogre-windup', 'oof', 'open-orb-cash', 'oracle-awake', 'oracle-sleep', 'pedals', 'pill-pickup', 'piston-close', 'piston-open', 'plat-light-off', 'plat-light-on', 'pontoonten', 'powercell-idle', 'powercell-out', 'prec-button1', 'prec-button2', 'prec-button3', 'prec-button4', 'prec-button6', 'prec-button7', 'prec-button8', 'prec-on-water', 'punch', 'punch-hit', 'ramboss-charge', 'ramboss-dies', 'ramboss-fire', 'ramboss-hit', 'ramboss-idle', 'ramboss-land', 'ramboss-roar', 'ramboss-shield', 'ramboss-step', 'ramboss-taunt', 'ramboss-track', 'red-eco-idle', 'red-eco-jak', 'red-fireball', 'redsage-fires', 'robber-dies', 'robber-idle', 'robber-roar', 'robber-taunt', 'robo-blue-lp', 'robo-warning', 'robot-arm', 'robotcage-lp', 'robotcage-off', 'rock-hover', 'roll-crwood', 'roll-dirt', 'roll-dpsnow', 'roll-dwater', 'roll-grass', 'roll-pcmetal', 'roll-sand', 'roll-snow', 'roll-stone', 'roll-straw', 'roll-swamp', 'roll-water', 'roll-wood', 'rounddoor', 'run-step-left', 'run-step-right', 'sagecage-gen', 'sagecage-off', 'sages-machine', 'sandworm-dies', 'scrate-break', 'scrate-nobreak', 'select-menu', 'select-option', 'select-option2', 'shark-bite', 'shark-dies', 'shark-idle', 'shark-swim', 'shield-zap', 'shldlurk-breathi', 'shldlurk-chest', 'shldlurk-dies', 'shldlurk-roar', 'shldlurk-taunt', 'shut-down', 'sidedoor', 'silo-button', 'slide-crwood', 'slide-dirt', 'slide-dpsnow', 'slide-dwater', 'slide-grass', 'slide-pcmetal', 'slide-sand', 'slide-snow', 'slide-stone', 'slide-straw', 'slide-swamp', 'slide-water', 'slide-wood', 'slider2001', 'smack-surface', 'small-steam-lp', 'snow-bumper', 'snow-pist-cls2', 'snow-pist-cls3', 'snow-pist-opn2', 'snow-pist-opn3', 'snow-piston-cls', 'snow-piston-opn', 'snow-plat-1', 'snow-plat-2', 'snow-plat-3', 'snw-door', 'snw-eggtop-seq', 'spin', 'spin-hit', 'spin-kick', 'spin-pole', 'split-steps', 'start-options', 'start-up', 'steam-long', 'steam-medium', 'steam-short', 'stopwatch', 'sunk-top-falls', 'sunk-top-lands', 'sunk-top-rises', 'swim-dive', 'swim-down', 'swim-flop', 'swim-idle1', 'swim-idle2', 'swim-jump', 'swim-kick-surf', 'swim-kick-under', 'swim-noseblow', 'swim-stroke', 'swim-surface', 'swim-to-down', 'swim-turn', 'swim-up', 'temp-enemy-die', 'touch-pipes', 'uppercut', 'uppercut-hit', 'v3-bridge', 'v3-cartride', 'v3-minecart', 'vent-switch', 'walk-crwood1', 'walk-crwood2', 'walk-dirt1', 'walk-dirt2', 'walk-dpsnow1', 'walk-dpsnow2', 'walk-dwater1', 'walk-dwater2', 'walk-grass1', 'walk-grass2', 'walk-metal1', 'walk-metal2', 'walk-pcmetal1', 'walk-pcmetal2', 'walk-sand1', 'walk-sand2', 'walk-slide', 'walk-snow1', 'walk-snow2', 'walk-step-left', 'walk-step-right', 'walk-stone1', 'walk-stone2', 'walk-straw1', 'walk-straw2', 'walk-swamp1', 'walk-swamp2', 'walk-water1', 'walk-water2', 'walk-wood1', 'walk-wood2', 'warning', 'warpgate-act', 'warpgate-butt', 'warpgate-loop', 'warpgate-tele', 'water-drop', 'water-explosion', 'water-loop', 'water-off', 'water-on', 'waterfall', 'wcrate-break', 'wood-gears2', 'yel-eco-idle', 'yel-eco-jak', 'yellsage-fire', 'yeti-breathin', 'yeti-dies', 'yeti-roar', 'yeti-taunt', 'zoom-boost', 'zoom-hit-crwood', 'zoom-hit-dirt', 'zoom-hit-grass', 'zoom-hit-lava', 'zoom-hit-metal', 'zoom-hit-sand', 'zoom-hit-stone', 'zoom-hit-water', 'zoom-hit-wood', 'zoom-land-crwood', 'zoom-land-dirt', 'zoom-land-grass', 'zoom-land-lava', 'zoom-land-metal', 'zoom-land-sand', 'zoom-land-stone', 'zoom-land-water', 'zoom-land-wood', 'zoom-teleport', 'zoomer-crash-2', 'zoomer-explode', 'zoomer-jump', 'zoomer-melt', 'zoomer-rev1', 'zoomer-rev2'],
     "beach": ['beach-amb2', 'bird', 'cannon-charge', 'cannon-shot', 'crab-slide', 'dirt-crumble', 'drip', 'egg-crack', 'egg-hit', 'falling-egg', 'fuse', 'gears-rumble', 'grotto-pole-hit', 'lurkercrab-dies', 'lurkerdog-bite', 'lurkerdog-dies', 'lurkerdog-idle', 'monkey', 'pelican-flap', 'pelican-gulp', 'puppy-bark', 'rope-stretch', 'sack-incoming', 'sack-land', 'seagull-takeoff', 'shell-down', 'shell-up', 'snap', 'telescope', 'tower-wind2', 'tower-wind3', 'tower-winds', 'vent-rock-break', 'water-lap', 'worm-bite', 'worm-dies', 'worm-idle', 'worm-rise1', 'worm-sink', 'worm-taunt'],
@@ -2253,6 +2280,13 @@ class OGProperties(PropertyGroup):
                                          description="Currently selected sound for emitter placement")
     ambient_default_radius: FloatProperty(name="Default Emitter Radius (m)", default=15.0, min=1.0, max=200.0,
                                           description="Bsphere radius for new sound emitter empties")
+    # Lighting
+    mood:     EnumProperty(name="Mood", items=MOOD_ITEMS, default="village1",
+                           description="Lighting mood preset — controls fog, sky, sun, and actor lighting style")
+    sky:      BoolProperty(name="Has Sky", default=True,
+                           description="Whether this level renders a sky. Disable for caves and interiors")
+    sun_fade: FloatProperty(name="Sun Fade", default=1.0, min=0.0, max=1.0,
+                            description="Sun disc visibility. 1.0 = full sun, 0.0 = no sun (overcast/interior). misty uses 0.25, snow uses 0.5")
 
 # ---------------------------------------------------------------------------
 # PROCESS MANAGEMENT
@@ -2765,10 +2799,20 @@ def patch_level_info(name, spawns, scene=None):
         _sb_list = [s for s in [props.sound_bank_1, props.sound_bank_2] if s and s != "none"]
         _sbanks = " ".join(s for s in _sb_list)
         _sbanks_val = f"'({_sbanks})" if _sbanks else "'()"
+        # Lighting settings
+        _mood_id = props.mood
+        _mood_val = f"'*{_mood_id}-mood*"
+        _mood_func = f"'update-mood-{_mood_id}"
+        _sky_val = "#t" if props.sky else "#f"
+        _sun_fade_val = f"{props.sun_fade:.4f}"
     else:
         _music_val = "#f"
         _sbanks_val = "'()"
         props = None
+        _mood_val = "'*village1-mood*"
+        _mood_func = "'update-mood-village1"
+        _sky_val = "#t"
+        _sun_fade_val = "1.0"
     block = (f"\n(define {name}\n"
              f"  (new 'static 'level-load-info\n"
              f"       :index 27\n"
@@ -2779,11 +2823,11 @@ def patch_level_info(name, spawns, scene=None):
              f"       :sound-banks {_sbanks_val}\n"
              f"       :music-bank {_music_val}\n"
              f"       :ambient-sounds '()\n"
-             f"       :mood '*village1-mood*\n"
-             f"       :mood-func 'update-mood-village1\n"
+             f"       :mood {_mood_val}\n"
+             f"       :mood-func {_mood_func}\n"
              f"       :ocean #f\n"
-             f"       :sky #t\n"
-             f"       :sun-fade 1.0\n"
+             f"       :sky {_sky_val}\n"
+             f"       :sun-fade {_sun_fade_val}\n"
              f"       :continues\n"
              f"       {_make_continues(name, spawns)}\n"
              f"       :tasks '()\n"
@@ -4103,6 +4147,22 @@ class OG_PT_LevelSettings(Panel):
                 row = layout.row()
                 row.enabled = False
                 row.label(text=f"ISO: {_iso(name)}   Nick: {_nick(name)}", icon="INFO")
+
+        # ── Lighting ─────────────────────────────────────────────────────
+        layout.separator(factor=0.6)
+        box = layout.box()
+        box.label(text="Lighting", icon="LIGHT_SUN")
+        col = box.column(align=True)
+        col.prop(props, "mood", text="Mood")
+        row = col.row(align=True)
+        row.prop(props, "sky",      text="Has Sky")
+        sub = row.row(align=True)
+        sub.enabled = props.sky
+        sub.prop(props, "sun_fade", text="Sun Fade")
+        # Info line: interior hint when sky is off
+        if not props.sky:
+            info = box.row()
+            info.label(text="Interior mode — no sky or sun rendered", icon="INFO")
 
 
 # ── Scene Setup ──────────────────────────────────────────────────────────────
