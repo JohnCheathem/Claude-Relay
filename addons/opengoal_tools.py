@@ -821,13 +821,13 @@ def collect_cameras(scene):
         gy = round(loc.z, 4)
         gz = round(-loc.y, 4)
 
-        import mathutils
-        # Blender -> game quaternion: remap axes to match position remap (gx=bx, gy=bz, gz=-by)
-        # No conjugate needed — the JSONC quat feeds straight into quaternion->matrix unchanged.
+        # Blender -> game quaternion.
+        # Verified correct for all 6 cardinal directions:
+        #   qx=-bl.x, qy=+bl.y, qz=+bl.z, qw=+bl.w
         q = cam_obj.matrix_world.to_quaternion()
-        qx = round( q.x, 6)
-        qy = round( q.z, 6)
-        qz = round(-q.y, 6)
+        qx = round(-q.x, 6)
+        qy = round( q.y, 6)
+        qz = round( q.z, 6)
         qw = round( q.w, 6)
 
         cam_mode = cam_obj.get("og_cam_mode",  "fixed")
