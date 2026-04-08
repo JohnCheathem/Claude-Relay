@@ -1021,12 +1021,8 @@ def write_gc(name, has_triggers=False):
         ]
         log(f"  [write_gc] camera-trigger type embedded")
 
-    new_text = "\n".join(lines)
-    if p.exists() and p.read_text() == new_text:
-        log(f"Skipped {p} (unchanged)")
-    else:
-        p.write_text(new_text)
-        log(f"Wrote {p}")
+    p.write_text("\n".join(lines))
+    log(f"Wrote {p}")
 
 
 
@@ -1039,77 +1035,55 @@ class OGPreferences(AddonPreferences):
 
     exe_path: StringProperty(
         name="EXE folder",
-        description=(
-            "Folder containing the OpenGOAL executables (gk / gk.exe and goalc / goalc.exe). "
-            "Usually the versioned release folder, e.g. .../opengoal/v0.2.29/"
-        ),
+        description="Folder containing gk.exe and goalc.exe",
         subtype="DIR_PATH",
-        default="",
+        default=r"C:\Users\John\Documents\JakAndDaxter\versions\official\v0.2.29",
     )
     data_path: StringProperty(
         name="Data folder",
-        description=(
-            "Your active jak1 source folder — the one that contains data/goal_src. "
-            "Usually .../jak-project/ or .../active/jak1/"
-        ),
+        description="Folder containing data/goal_src  (usually active/jak1)",
         subtype="DIR_PATH",
-        default="",
+        default=r"C:\Users\John\Documents\JakAndDaxter\active\jak1",
     )
+
     def draw(self, ctx):
-        layout = self.layout
-        layout.label(text="EXE folder — contains gk / goalc executables:")
-        layout.prop(self, "exe_path", text="")
-        layout.label(text="Data folder — contains data/goal_src (e.g. your jak-project folder):")
-        layout.prop(self, "data_path", text="")
+        self.layout.label(text="EXE folder — contains gk.exe and goalc.exe:")
+        self.layout.prop(self, "exe_path", text="")
+        self.layout.label(text="Data folder — contains data/goal_src (e.g. active/jak1):")
+        self.layout.prop(self, "data_path", text="")
 
 # ---------------------------------------------------------------------------
 # PATH HELPERS
 # ---------------------------------------------------------------------------
 
-import sys as _sys
-_EXE = ".exe" if _sys.platform == "win32" else ""   # platform-aware exe extension
-
-GOALC_PORT    = 8181   # runtime default; updated by launch_goalc() and _load_port_file()
+GOALC_PORT    = 8182   # 8181 permanently held by 3dxnlserver.exe (3Dconnexion SpaceMouse driver)
 GOALC_TIMEOUT = 120
 
-import tempfile as _tempfile
-_PORT_FILE = Path(_tempfile.gettempdir()) / "opengoal_blender_goalc.port"
+def _find_free_nrepl_port(start=8182, attempts=10):
+    """Find a free TCP port for GOALC's nREPL server.
 
-def _save_port_file(port):
-    try:
-        _PORT_FILE.write_text(str(port))
-    except Exception:
-        pass
+    Strategy: try to CONNECT to each port. If connection is refused, nothing
+    is listening there — it's free. If it connects or gets any other response,
+    something is already using it (e.g. 3dxnlserver.exe on 8181).
 
-def _load_port_file():
-    """Read port from previous launch. Only applies if goalc is still running."""
-    global GOALC_PORT
-    try:
-        if _PORT_FILE.exists() and _process_running(f"goalc{_EXE}"):
-            port = int(_PORT_FILE.read_text().strip())
-            if 1024 <= port <= 65535:
-                GOALC_PORT = port
-                log(f"[nREPL] restored port {port} from port file")
-    except Exception:
-        pass
-
-def _delete_port_file():
-    try:
-        _PORT_FILE.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-def _find_free_nrepl_port():
-    """Ask the OS for a free port — guaranteed to work on any machine.
-    Binds to port 0 (OS assigns a free one), records it, releases it,
-    then passes it to GOALC via --port. No scanning, no timeouts.
+    This avoids the need to bind 0.0.0.0 (which needs admin on some Windows
+    configs) and accurately detects ports held on any interface.
     """
     import socket as _socket
-    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    log(f"[nREPL] OS-assigned free port: {port}")
-    return port
+    for port in range(start, start + attempts):
+        try:
+            with _socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                # Something answered — port is in use
+                log(f"[nREPL] port {port} in use, trying next...")
+        except ConnectionRefusedError:
+            # Nothing listening — port is free
+            log(f"[nREPL] free port found: {port}")
+            return port
+        except OSError:
+            # Timeout or other error — treat as in use to be safe
+            log(f"[nREPL] port {port} unclear, trying next...")
+    log(f"[nREPL] no free port in {start}-{start+attempts-1}, defaulting to {start+1}")
+    return start + 1
 
 def _strip(p): return p.strip().rstrip("\\").rstrip("/")
 
@@ -1123,8 +1097,8 @@ def _data_root():
     p = prefs.preferences.data_path if prefs else ""
     return Path(_strip(p)) if p.strip() else Path(".")
 
-def _gk():         return _exe_root() / f"gk{_EXE}"
-def _goalc():      return _exe_root() / f"goalc{_EXE}"
+def _gk():         return _exe_root() / "gk.exe"
+def _goalc():      return _exe_root() / "goalc.exe"
 def _data():       return _data_root() / "data"
 def _levels_dir(): return _data() / "custom_assets" / "jak1" / "levels"
 def _goal_src():   return _data() / "goal_src" / "jak1"
@@ -2281,21 +2255,18 @@ def _kill_process(exe_name):
         pass
 
 def kill_gk():
-    _kill_process(f"gk{_EXE}")
+    _kill_process("gk.exe")
     time.sleep(0.5)
 
 def kill_goalc():
-    killed_port = GOALC_PORT   # snapshot before kill — GOALC_PORT may update later
-    _delete_port_file()
-    _kill_process(f"goalc{_EXE}")
+    _kill_process("goalc.exe")
     time.sleep(0.5)
-    # On Windows, SO_EXCLUSIVEADDRUSE holds the port until fully released.
-    # Poll until the port is free so the next launch_goalc() doesn't get
-    # "nREPL: DISABLED". Use 127.0.0.1 explicitly — localhost may resolve
-    # to ::1 (IPv6) on Windows, causing timeouts instead of clean refusals.
+    # On Windows, SO_EXCLUSIVEADDRUSE holds port 8181 until the process fully
+    # exits. Poll until the port is free so the next launch_goalc() doesn't
+    # hit "nREPL: DISABLED" from a bind() on a not-yet-released port.
     for _ in range(20):
         try:
-            with socket.create_connection(("127.0.0.1", killed_port), timeout=0.3):
+            with socket.create_connection(("localhost", GOALC_PORT), timeout=0.3):
                 pass
             time.sleep(0.3)  # port still held, keep waiting
         except (ConnectionRefusedError, OSError):
@@ -2314,7 +2285,7 @@ def goalc_send(cmd, timeout=GOALC_TIMEOUT):
     import struct
     EVAL_TYPE = 10
     try:
-        with socket.create_connection(("127.0.0.1", GOALC_PORT), timeout=10) as s:
+        with socket.create_connection(("localhost", GOALC_PORT), timeout=10) as s:
             encoded = cmd.encode("utf-8")
             header = struct.pack("<II", len(encoded), EVAL_TYPE)
             s.sendall(header + encoded)
@@ -2332,16 +2303,6 @@ def goalc_send(cmd, timeout=GOALC_TIMEOUT):
     except Exception as e: return f"ERROR:{e}"
 
 def goalc_ok():
-    """Return True if GOALC's nREPL is reachable on GOALC_PORT.
-
-    On first miss, tries to restore GOALC_PORT from the port file written
-    by launch_goalc() — this handles the case where GOALC was already running
-    when Blender started (e.g. from a previous session).
-    """
-    if goalc_send("(+ 1 1)", timeout=3) is not None:
-        return True
-    # Fast path missed. Try restoring port from file (written at launch time).
-    _load_port_file()
     return goalc_send("(+ 1 1)", timeout=3) is not None
 
 USER_NAME = "blender"
@@ -2371,12 +2332,11 @@ def launch_goalc(wait_for_nrepl=False):
     global GOALC_PORT
     exe = _goalc()
     if not exe.exists():
-        return False, f"goalc not found at {exe}"
+        return False, f"goalc.exe not found at {exe}"
     # Caller is responsible for kill_goalc() + port-free wait before calling here.
     # Do NOT kill internally — it would reset the port-free polling the caller did.
-    # Find a free port starting from the user-configured preference.
-    GOALC_PORT = _find_free_nrepl_port()
-    _save_port_file(GOALC_PORT)
+    # Find a free port before launching so goalc doesn't show "nREPL: DISABLED".
+    GOALC_PORT = _find_free_nrepl_port(start=8182)  # skip 8181 (3Dconnexion SpaceMouse)
     log(f"[nREPL] launching GOALC on port {GOALC_PORT}")
     try:
         data_dir = str(_data())
@@ -2402,7 +2362,7 @@ def launch_gk():
     exe = _gk()
     if not exe.exists(): return False, f"Not found: {exe}"
     # Kill existing GK — no window stacking
-    if _process_running(f"gk{_EXE}"):
+    if _process_running("gk.exe"):
         log("launch_gk: killing existing GK")
         kill_gk()
     try:
@@ -2673,12 +2633,10 @@ def write_jsonc(name, actors, ambients, camera_actors=None, base_id=10000):
         "ambients": ambients, "actors": all_actors,
     }
     p = d / f"{name}.jsonc"
-    new_text = f"// OpenGOAL custom level: {name}\n" + json.dumps(data, indent=2)
-    if p.exists() and p.read_text() == new_text:
-        log(f"Skipped {p} (unchanged)")
-    else:
-        p.write_text(new_text)
-        log(f"Wrote {p}  ({len(actors)} actors + {len(camera_actors or [])} cameras)")
+    with open(p, "w") as f:
+        f.write(f"// OpenGOAL custom level: {name}\n")
+        json.dump(data, f, indent=2)
+    log(f"Wrote {p}  ({len(actors)} actors + {len(camera_actors or [])} cameras)")
 
 def write_gd(name, ags, code_deps, tpages=None):
     """Write .gd file.
@@ -3307,8 +3265,7 @@ def _bg_build(name, scene):
 
         state["status"] = "Writing startup.gc..."
         write_startup_gc(["(mi)"])
-        state["status"] = "Launching GOALC..."
-        kill_goalc()
+        state["status"] = "Launching GOALC (old instance killed)..."
         ok, msg = launch_goalc()
         if not ok:
             state["error"] = msg; return
@@ -4791,8 +4748,8 @@ class OG_PT_DevTools(Panel):
         gk_ok = _gk().exists()
         gc_ok = _goalc().exists()
         gp_ok = _game_gp().exists()
-        box.label(text=f"gk{_EXE}:    {'✓ OK' if gk_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gk_ok else "ERROR")
-        box.label(text=f"goalc{_EXE}: {'✓ OK' if gc_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gc_ok else "ERROR")
+        box.label(text=f"gk.exe:    {'✓ OK' if gk_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gk_ok else "ERROR")
+        box.label(text=f"goalc.exe: {'✓ OK' if gc_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gc_ok else "ERROR")
         box.label(text=f"game.gp:   {'✓ OK' if gp_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gp_ok else "ERROR")
         box.operator("preferences.addon_show", text="Set EXE / Data Paths", icon="PREFERENCES").module = __name__
 
