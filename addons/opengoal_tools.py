@@ -2832,6 +2832,143 @@ def patch_game_gp(name, code_deps=None):
     p.write_bytes(txt.encode("utf-8"))
     log(f"Patched game.gp  (extra goal-src: {[gc for _,gc,_ in (code_deps or []) if gc is not None]})")
 
+
+
+# ---------------------------------------------------------------------------
+# LEVEL MANAGER — discover / remove custom levels
+# ---------------------------------------------------------------------------
+
+def discover_custom_levels():
+    """Scan the filesystem and game.gp to find all custom levels.
+
+    Returns a list of dicts:
+      name        - level name (folder name)
+      has_glb     - .glb exists
+      has_jsonc   - .jsonc exists
+      has_obs     - obs.gc exists
+      has_gp      - entry found in game.gp
+      conflict    - True if multiple levels share the same DGO nick
+      nick        - 3-char nickname
+      dgo         - DGO filename
+    """
+    levels_dir = _levels_dir()
+    goal_levels = _goal_src() / "levels"
+    gp_path = _game_gp()
+
+    # Read game.gp entries
+    gp_names = set()
+    if gp_path.exists():
+        txt = gp_path.read_text(encoding="utf-8")
+        for m in re.finditer(r'\(build-custom-level "([^"]+)"\)', txt):
+            gp_names.add(m.group(1))
+
+    # Scan custom_assets/jak1/levels/
+    found = {}
+    if levels_dir.exists():
+        for d in sorted(levels_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            name = d.name
+            nick = _nick(name)
+            dgo  = f"{nick.upper()}.DGO"
+            found[name] = {
+                "name":      name,
+                "has_glb":   (d / f"{name}.glb").exists(),
+                "has_jsonc": (d / f"{name}.jsonc").exists(),
+                "has_gd":    (d / f"{nick}.gd").exists(),
+                "has_obs":   (goal_levels / name / f"{name}-obs.gc").exists(),
+                "has_gp":    name in gp_names,
+                "nick":      nick,
+                "dgo":       dgo,
+                "conflict":  False,
+            }
+
+    # Detect DGO nickname conflicts
+    nick_to_names = {}
+    for info in found.values():
+        nick_to_names.setdefault(info["dgo"], []).append(info["name"])
+    for names in nick_to_names.values():
+        if len(names) > 1:
+            for n in names:
+                found[n]["conflict"] = True
+
+    return list(found.values())
+
+
+def remove_level(name):
+    """Remove all files for a custom level and clean game.gp.
+
+    Deletes:
+      custom_assets/jak1/levels/<name>/   (entire folder)
+      goal_src/jak1/levels/<name>/        (entire folder)
+
+    Removes from game.gp:
+      (build-custom-level "<name>")
+      (custom-level-cgo ...)
+      (goal-src "levels/<name>/...")
+
+    Returns list of log messages.
+    """
+    import shutil
+    msgs = []
+
+    # Delete custom_assets folder
+    assets_dir = _levels_dir() / name
+    if assets_dir.exists():
+        shutil.rmtree(assets_dir)
+        msgs.append(f"Deleted {assets_dir}")
+    else:
+        msgs.append(f"(not found) {assets_dir}")
+
+    # Delete goal_src levels folder
+    goal_dir = _goal_src() / "levels" / name
+    if goal_dir.exists():
+        shutil.rmtree(goal_dir)
+        msgs.append(f"Deleted {goal_dir}")
+    else:
+        msgs.append(f"(not found) {goal_dir}")
+
+    # Patch level-info.gc — strip the define block and cons! entry
+    li_path = _level_info()
+    if li_path.exists():
+        txt = li_path.read_text(encoding="utf-8")
+        new_txt = re.sub(
+            rf"\n\(define {re.escape(name)}\b.*?\(cons!.*?'{re.escape(name)}\)\n",
+            "", txt, flags=re.DOTALL)
+        if new_txt != txt:
+            li_path.write_text(new_txt, encoding="utf-8")
+            msgs.append(f"Cleaned level-info.gc entry for '{name}'")
+        else:
+            msgs.append(f"level-info.gc had no entry for '{name}'")
+    else:
+        msgs.append("level-info.gc not found")
+
+    # Patch game.gp — strip all entries for this level
+    gp_path = _game_gp()
+    if gp_path.exists():
+        raw  = gp_path.read_bytes()
+        crlf = b"\r\n" in raw
+        txt  = raw.decode("utf-8").replace("\r\n", "\n")
+        before = txt
+
+        nick = _nick(name)
+        txt = re.sub(r'\(build-custom-level "' + re.escape(name) + r'"\)\n', '', txt)
+        txt = re.sub(r'\(custom-level-cgo "[^"]*" "' + re.escape(name) + r'/[^"]+\"\)\n', '', txt)
+        txt = re.sub(r'\(goal-src "levels/' + re.escape(name) + r'/[^"]+\"[^)]*\)\n', '', txt)
+
+        if txt != before:
+            if crlf:
+                txt = txt.replace("\n", "\r\n")
+            gp_path.write_bytes(txt.encode("utf-8"))
+            msgs.append(f"Cleaned game.gp entries for '{name}'")
+        else:
+            msgs.append(f"game.gp had no entries for '{name}'")
+    else:
+        msgs.append("game.gp not found")
+
+    return msgs
+
+
 def export_glb(ctx, name):
     d = _ldir(name); d.mkdir(parents=True, exist_ok=True)
     bpy.ops.export_scene.gltf(
@@ -3149,6 +3286,11 @@ class OG_OT_ExportBuild(Operator):
         name = _lname(ctx)
         if not name:
             self.report({"ERROR"}, "Enter a level name first"); return {"CANCELLED"}
+        if len(name) > 10:
+            self.report({"ERROR"}, f"Level name '{name}' is {len(name)} chars — max 10"); return {"CANCELLED"}
+        if len(name) > 10:
+            self.report({"ERROR"}, f"Level name '{name}' is {len(name)} chars — max is 10. Shorten it in Level Settings.")
+            return {"CANCELLED"}
         try:
             export_glb(ctx, name)
         except Exception as e:
@@ -3358,6 +3500,8 @@ class OG_OT_PlayAutoLoad(Operator):
         name = _lname(ctx)
         if not name:
             self.report({"ERROR"}, "Enter a level name first"); return {"CANCELLED"}
+        if len(name) > 10:
+            self.report({"ERROR"}, f"Level name '{name}' is {len(name)} chars — max 10"); return {"CANCELLED"}
         _PLAY_STATE.clear()
         _PLAY_STATE.update({"done":False,"error":None,"status":"Starting..."})
         threading.Thread(target=_bg_play, args=(name,), daemon=True).start()
@@ -3522,6 +3666,11 @@ class OG_OT_GeoRebuild(Operator):
         name = _lname(ctx)
         if not name:
             self.report({"ERROR"}, "Enter a level name first"); return {"CANCELLED"}
+        if len(name) > 10:
+            self.report({"ERROR"}, f"Level name '{name}' is {len(name)} chars — max 10"); return {"CANCELLED"}
+        if len(name) > 10:
+            self.report({"ERROR"}, f"Level name '{name}' is {len(name)} chars — max is 10. Shorten it in Level Settings.")
+            return {"CANCELLED"}
         try:
             export_glb(ctx, name)
         except Exception as e:
@@ -3902,9 +4051,15 @@ class OG_PT_LevelSettings(Panel):
         col.prop(props, "base_id",    text="Base Actor ID")
 
         if name:
-            row = layout.row()
-            row.enabled = False
-            row.label(text=f"ISO: {_iso(name)}   Nick: {_nick(name)}", icon="INFO")
+            name_clean = name.lower().replace(" ", "-")
+            if len(name_clean) > 10:
+                warn = layout.row()
+                warn.alert = True
+                warn.label(text=f"Name too long ({len(name_clean)} chars, max 10)!", icon="ERROR")
+            else:
+                row = layout.row()
+                row.enabled = False
+                row.label(text=f"ISO: {_iso(name)}   Nick: {_nick(name)}", icon="INFO")
 
 
 # ── Scene Setup ──────────────────────────────────────────────────────────────
@@ -4874,6 +5029,94 @@ class OG_PT_LightBaking(Panel):
         layout.label(text="Result stored in 'BakedLight' layer", icon="GROUP_VCOL")
 
 
+
+class OG_OT_RemoveLevel(Operator):
+    """Remove a custom level and all its files from the project."""
+    bl_idname   = "og.remove_level"
+    bl_label    = "Remove Level"
+    bl_options  = {"REGISTER", "UNDO"}
+    level_name: bpy.props.StringProperty()
+
+    def invoke(self, ctx, event):
+        return ctx.window_manager.invoke_confirm(self, event)
+
+    def execute(self, ctx):
+        if not self.level_name:
+            self.report({"ERROR"}, "No level name given")
+            return {"CANCELLED"}
+        msgs = remove_level(self.level_name)
+        for m in msgs:
+            log(m)
+        self.report({"INFO"}, f"Removed level '{self.level_name}'")
+        return {"FINISHED"}
+
+
+class OG_OT_RefreshLevels(Operator):
+    """Refresh the custom levels list."""
+    bl_idname = "og.refresh_levels"
+    bl_label  = "Refresh"
+    def execute(self, ctx):
+        return {"FINISHED"}
+
+
+class OG_PT_LevelManager(Panel):
+    bl_label       = "🗂  Level Manager"
+    bl_idname      = "OG_PT_level_manager"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        layout = self.layout
+
+        try:
+            levels = discover_custom_levels()
+        except Exception as e:
+            layout.label(text=f"Error scanning levels: {e}", icon="ERROR")
+            return
+
+        if not levels:
+            layout.label(text="No custom levels found", icon="INFO")
+            layout.label(text="Set data path in addon preferences")
+            return
+
+        for info in levels:
+            box  = layout.box()
+            row  = box.row()
+
+            # Name + conflict warning
+            if info["conflict"]:
+                row.alert = True
+                row.label(text=f"⚠ {info['name']}", icon="ERROR")
+            elif len(info["name"]) > 10:
+                row.alert = True
+                row.label(text=f"⚠ {info['name']} (name too long!)", icon="ERROR")
+            else:
+                row.label(text=info["name"], icon="SCENE_DATA")
+
+            # Remove button
+            op = row.operator("og.remove_level", text="", icon="TRASH")
+            op.level_name = info["name"]
+
+            # Status dots
+            srow = box.row(align=True)
+            srow.enabled = False
+            srow.label(text=f"glb:{'✓' if info['has_glb'] else '✗'}  "
+                           f"jsonc:{'✓' if info['has_jsonc'] else '✗'}  "
+                           f"obs:{'✓' if info['has_obs'] else '✗'}  "
+                           f"gp:{'✓' if info['has_gp'] else '✗'}  "
+                           f"DGO:{info['dgo']}")
+
+            if info["conflict"]:
+                box.label(text="DGO name conflict — rename this level!", icon="ERROR")
+            if not info["has_gp"] and (info["has_glb"] or info["has_obs"]):
+                box.label(text="Not registered in game.gp — re-export to fix", icon="ERROR")
+
+        layout.separator()
+        layout.operator("og.refresh_levels", text="Refresh List", icon="FILE_REFRESH")
+
+
 # ---------------------------------------------------------------------------
 # REGISTER / UNREGISTER
 # ---------------------------------------------------------------------------
@@ -4896,6 +5139,9 @@ classes = (
     OG_OT_PickSound,
     OG_OT_AddSoundEmitter,
     OG_PT_LevelSettings,
+    OG_PT_LevelManager,
+    OG_OT_RemoveLevel,
+    OG_OT_RefreshLevels,
     OG_PT_Scene,
     OG_PT_PlaceObjects,
     OG_PT_Waypoints,
