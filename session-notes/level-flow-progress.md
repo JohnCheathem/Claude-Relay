@@ -129,3 +129,50 @@ Knowledge base: `knowledge-base/opengoal/level-flow.md` (17 sections, fully comp
 - [ ] Player respawns facing correct direction after death
 - [ ] bsphere centre/radius plausible in level-info.gc output
 - [ ] bottom_height and vis_nick_override props work in panel
+
+---
+
+## Second Pre-Testing Review (this session)
+
+### Areas checked that first pass missed
+- Operator uid counters (SpawnPlayer, SpawnCheckpoint)
+- Panel list comprehensions (spawns, checkpoints display)
+- SpawnCamAnchor operator edge cases
+- GOAL symbol validity for level names with hyphens
+- continue-point :name special character risk
+- cam_rot matrix orthonormality
+- R_remap construction and transposed() correctness
+- bsphere including checkpoints (intentional, confirmed correct)
+- bottom_height range bounds
+- vis_nick_override length limits
+- hardcoded :index 27 (pre-existing, not our issue)
+
+### Bugs Found and Fixed
+
+**BUG 3: SpawnPlayer uid counter counted _CAM empties**
+- After placing SPAWN_start + SPAWN_start_CAM, next "Add Player Spawn" would skip uid "spawn1" and jump to "spawn2"
+- Fix: `not o.name.endswith("_CAM")` added to len() filter
+
+**BUG 4: SpawnCheckpoint uid counter same issue**
+- Fix: same filter
+
+**BUG 5: Level Flow panel listed _CAM empties as spawn/checkpoint points**
+- SPAWN_start_CAM appeared in the spawns list, triggered "no cam" alert on itself
+- Also inflated bsphere preview calculation with cam anchor positions
+- Fix: `not o.name.endswith("_CAM")` on both panel list comprehensions
+
+### Confirmed Non-Issues
+- SpawnCamAnchor zero-direction guard present ✓
+- GOAL hyphens in symbol names valid ✓
+- cam_rot matrix is orthonormal (normalized in formula) ✓
+- R_remap row 0:(1,0,0) row1:(0,0,1) row2:(0,-1,0) → game(x=bl_x, y=bl_z, z=-bl_y) ✓
+- bsphere including checkpoints is correct/intentional ✓
+- Straight-up cam degenerate: same limitation as existing camera system, accepted ✓
+
+### Accepted Known Issues (not fixing now)
+- :index 27 hardcoded — pre-existing, multiple custom levels share index (only affects progress menu icon)
+- SPAWN_ uid ending in '_CAM' would be silently skipped — pathological naming, not realistic
+
+### Final status
+Branch is at 2c02baf. 5 bugs found and fixed across two review passes before any in-game testing.
+Ready for testing.
