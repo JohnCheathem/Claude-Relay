@@ -823,17 +823,16 @@ def collect_cameras(scene):
 
         # Blender -> game camera quaternion.
         #
-        # Extract the camera look direction (-local Z in Blender world space),
-        # remap to game coords (bl.x->gx, bl.z->gy, -bl.y->gz) with sign correction,
-        # then build a canonical rotation using game world-down as roll reference.
-        # This matches forward-down->inv-matrix in geometry.gc.
+        # 1. Extract camera look direction: -local_Z of matrix_world (BL cam looks along -Z)
+        # 2. Remap to game space: (bl.x, bl.z, -bl.y)  -- same as position remap
+        # 3. Build canonical rotation via forward-down->inv-matrix style (world-down roll ref)
+        # 4. Conjugate the result (negate xyz) -- the game's quaternion->matrix reads
+        #    the inverse convention from what standard math produces.
         #
-        # Sign note: the remap for the Y axis must be negated (-bl.z not +bl.z)
-        # to avoid X/Z facing cameras appearing inverted in game.
-        # Confirmed empirically: +Y/-Y correct without fix, +X/-X +Z/-Z inverted.
+        # All four steps confirmed empirically via nREPL inv-camera-rot readback.
         m3 = cam_obj.matrix_world.to_3x3()
         bl_look = -m3.col[2]   # BL camera looks along local -Z (world space)
-        # Remap to game space — note: game_y = -bl.z (negated vs position remap)
+        # Remap to game space: bl(x,y,z) -> game(x,z,-y)
         gl = mathutils.Vector((bl_look.x, bl_look.z, -bl_look.y))
         gl.normalize()
         # Build canonical game rotation: forward=gl, roll from world down (0,-1,0)
