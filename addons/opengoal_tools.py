@@ -8,7 +8,7 @@ bl_info = {
     "category": "Development",
 }
 
-import bpy, os, re, json, socket, subprocess, threading, time, math
+import bpy, os, re, json, socket, subprocess, threading, time, math, mathutils
 from pathlib import Path
 from bpy.props import (StringProperty, BoolProperty, IntProperty,
                        EnumProperty, PointerProperty, FloatProperty)
@@ -821,29 +821,35 @@ def collect_cameras(scene):
         gy = round(loc.z, 4)
         gz = round(-loc.y, 4)
 
-        # Blender -> game quaternion (axis remap).
+        # Blender -> game camera quaternion.
         #
-        # Position remap:  gx=bl.x,  gy=bl.z,  gz=-bl.y
-        # The same remap applies to the quaternion's XYZ axes:
-        #   game_qx = bl_qx   (X stays X)
-        #   game_qy = bl_qz   (Blender Z → Game Y)
-        #   game_qz = -bl_qy  (Blender -Y → Game Z)
-        #   game_qw = bl_qw   (scalar unchanged)
+        # Strategy: extract the Blender camera's look direction (-local Z in world space),
+        # remap it to game coordinates, then build a canonical game rotation using
+        # game world-up as the roll reference. This matches the game engine's own
+        # forward-down->inv-matrix convention and prevents upside-down cameras.
         #
-        # Why no extra correction needed:
-        # A Blender camera at identity looks along BL -Z local.
-        # After the axis remap, BL -Z = (0,0,-1) becomes game (0,-1,0) ... but
-        # the camera object's local -Z maps through matrix_world, so we work in
-        # world space: the remap converts the world-space quaternion axes directly,
-        # which correctly places the camera look direction along game +Z.
-        #
-        # Previous attempts added a Y+180 post-multiply but forgot the axis remap,
-        # so both corrections fought each other. The remap alone is correct.
-        q = cam_obj.matrix_world.to_quaternion()
-        qx = round(q.x,  6)
-        qy = round(q.z,  6)   # bl_z  → game_y
-        qz = round(-q.y, 6)   # -bl_y → game_z
-        qw = round(q.w,  6)
+        # Coordinate remap (same as position): bl(x,y,z) -> game(x,z,-y)
+        m3 = cam_obj.matrix_world.to_3x3()
+        bl_look = -m3.col[2]   # BL camera looks along local -Z (world space)
+        # Remap look direction to game space
+        gl = mathutils.Vector((bl_look.x, bl_look.z, -bl_look.y))
+        gl.normalize()
+        # Build canonical game rotation: forward=gl, up derived from world down (0,-1,0)
+        # Mirrors forward-down->inv-matrix in geometry.gc
+        game_down = mathutils.Vector((0.0, -1.0, 0.0))
+        right = gl.cross(game_down)
+        if right.length < 1e-6:
+            right = mathutils.Vector((1.0, 0.0, 0.0))  # degenerate: looking straight up/down
+        right.normalize()
+        up = gl.cross(right)
+        up.normalize()
+        # Assemble rotation matrix rows = [right, up, forward] then convert to quat
+        game_mat = mathutils.Matrix([right, up, gl])
+        gq = game_mat.to_quaternion()
+        qx = round(gq.x, 6)
+        qy = round(gq.y, 6)
+        qz = round(gq.z, 6)
+        qw = round(gq.w, 6)
 
         cam_mode = cam_obj.get("og_cam_mode",  "fixed")
         interp_t = float(cam_obj.get("og_cam_interp", 1.0))
