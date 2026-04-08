@@ -1,64 +1,98 @@
 # OpenGOAL Blender Addon — Session Progress
 
-## Status: WORKING ✅ (camera system in active development on feature/camera)
+## Status: WORKING ✅ (camera trigger works, rotation export is BROKEN)
 
-## Official Addon (main branch)
-`addons/opengoal_tools.py` — install this in Blender.
-
-## Active Camera Branch
-`feature/camera` — install `addons/opengoal_tools.py` from THIS branch for camera work.
+## Active Branch: `feature/camera`
+Install `addons/opengoal_tools.py` from this branch for camera work.
 
 ---
 
-## Camera System — Current Architecture
+## Camera System — What Works
 
-### How it works (entity-based, no nREPL needed)
+### Trigger volume ✅
+- Walk into CAMVOL mesh → camera switches → walk out → camera reverts
+- Entity-based: `camera-trigger` actor births on level load, no nREPL needed
+- Works with manual level loading AND Build & Play
 
-Two new entity types defined in `{name}-obs.gc`:
+### Camera placement ✅
+- `camera-marker` entity exports correctly to actors array
+- `entity-by-name` finds it → `change-to-entity-by-name` works
+- Level doesn't crash
 
-**`camera-marker`** — inert process-drawable that holds camera position/rotation.
-- Exported as actor with `"etype": "camera-marker"`
-- `init-from-entity!`: allocates trsqv root, calls process-drawable-from-entity!, goes idle
-- `entity-by-name` finds it → `change-to-entity-by-name "CAMERA_0"` works
-- `cam-state-from-entity` reads lump data → `cam-fixed-read-entity` (default, no special lumps)
-- Also supports `cam-standoff` (side-scroller) via `align` lump, `cam-circular` via `pivot` lump
+### Blender UI ✅
+- Add Camera → places Blender CAMERA object (Numpad-0 to preview)
+- Add Volume → places CAMVOL wireframe cube
+- Shift-select both → Link Trigger Volume
+- Panel shows live rotation wxyz for debugging
 
-**`camera-trigger`** — AABB polling entity-actor that switches the camera.
-- Exported as actor with `"etype": "camera-trigger"`
-- Reads bounds from `bound-xmin/xmax/ymin/ymax/zmin/zmax` meter lumps
-- Reads target camera name from `cam-name` string lump
-- `init-from-entity!`: allocates root, reads lumps, goes to `camera-trigger-active`
-- `camera-trigger-active` state: polls `*target* control trans` each frame, AABB test
-- On enter: `send-event *camera* 'change-to-entity-by-name cam-name`
-- On exit: `send-event *camera* 'clear-entity`
-- **No nREPL call needed** — births automatically via `entity-actor.birth!` on level load
-- Works whether player loads manually or via Build & Play
+---
 
-### Blender workflow
-1. **Add Camera** → places `CAMERA_0` Blender camera (Numpad-0 to look through)
-2. **Add Volume** → places `CAMVOL_0` wireframe cube (resize to cover trigger area)
-3. Shift-select volume + camera → **Link Trigger Volume** (sets `og_cam_link` on volume)
-4. Export & Build → level recompiles, both entities appear in JSONC actors array
-5. Walk into volume in-game → camera switches automatically
+## Camera Rotation Export — BROKEN ❌
 
-### Camera modes (set via panel or `og_cam_mode` property)
-- `fixed` → `cam-fixed-read-entity` — locked position/rotation
-- `standoff` → `cam-standoff` — side-scroller (fixed offset from player). Needs `CAMERA_N_ALIGN` empty.
-- `orbit` → `cam-circular` — orbits a pivot point. Needs `CAMERA_N_PIVOT` empty.
+### The core problem (plain English)
+Blender and the game have different coordinate systems:
+- Blender: Z=up, Y=forward into scene
+- Game: Y=up, Z=forward into scene
 
-### deftype field offsets (camera-trigger)
+A camera at zero rotation in Blender points in a different real-world direction
+than a camera at zero rotation in the game. The quaternion that represents
+"looking forward" is different in each system.
+
+### What the user confirmed (ground truth)
+- User's camera at **zero rotation** in Blender → game cam points **forward** (wrong)
+- User manually rotates camera **Y+180** in Blender → game cam points **correctly**
+- This has been consistent across multiple test sessions
+
+### What we've tried (all failed)
+1. Raw component remap: `qx=-bl.x, qy=bl.z, qz=-bl.y, qw=bl.w`
+2. Component remap + conjugate (negate xyz)
+3. Pre-multiply by flip_y (world space)
+4. Post-multiply by flip_y (local space): `q @ flip_y`
+5. Left-multiply by -90° X correction
+6. Combined -90X + Y180
+
+Every attempt either produces the same wrong result or a different wrong result.
+
+### Why it's hard
+The game's `cam-slave-get-rot` calls `quaternion->matrix(entity.quat)` and stores
+the result as `inv-mat` (camera-to-world matrix). The camera looks along -Z column
+of that matrix. The quaternion→matrix math is standard, but determining the RIGHT
+quaternion to produce the correct orientation requires knowing the exact relationship
+between Blender's quaternion representation and the game's coordinate frame.
+
+The math appears correct in isolation but produces wrong results in practice,
+suggesting either:
+- The JSONC quat field component order is different from what we think [x,y,z,w]
+- The game's `quaternion->matrix` uses a different convention (row vs column major)
+- There's a coordinate handedness issue we're not accounting for correctly
+- The `inv-mat` usage in cam-combiner does something we haven't traced fully
+
+### Diagnostic approach (not yet tried)
+Send REPL commands to query the actual camera matrix in-game after switching:
+```lisp
+;; After camera switches, read the inv-mat to see what orientation it has
+(-> *camera-combiner* inv-camera-rot vector 0)  ; right vector
+(-> *camera-combiner* inv-camera-rot vector 1)  ; up vector  
+(-> *camera-combiner* inv-camera-rot vector 2)  ; forward vector
 ```
-process-drawable: 0xb0 = 176 bytes
-cam-name  string  :offset-assert 176
-xmin      float   :offset-assert 180
-xmax      float   :offset-assert 184
-ymin      float   :offset-assert 188
-ymax      float   :offset-assert 192
-zmin      float   :offset-assert 196
-zmax      float   :offset-assert 200
-inside    symbol  :offset-assert 204
-:heap-base #x60   :size-assert #xd0
+This would tell us exactly what matrix the game computed from our quat,
+and we can work backwards to what quat we should have sent.
+
+Also useful: print the raw quat from the entity after level load:
+```lisp
+(let ((e (entity-by-name "CAMERA_0")))
+  (-> e quat))
 ```
+
+### Current state of the code
+`addons/opengoal_tools.py` on `feature/camera`, current rotation code:
+```python
+q = cam_obj.matrix_world.to_quaternion()
+flip = mathutils.Quaternion((0, 1, 0), math.radians(180))
+gq = q @ flip
+qx, qy, qz, qw = gq.x, gq.y, gq.z, gq.w
+```
+This is the latest attempt (Y+180 post-multiply). Also wrong.
 
 ---
 
@@ -66,55 +100,62 @@ inside    symbol  :offset-assert 204
 
 | Bug | Root cause | Fix |
 |---|---|---|
-| Art group not found | `camera-tracker` etype doesn't exist; engine called `birth-viewer` which tried to load `camera-tracker-ag.go` | Define `camera-marker` type in obs.gc with proper `init-from-entity!` |
-| Level crash on load | `process-drawable-from-entity!` writes to `this->root->trans` but `root` was null | Add `(set! (-> this root) (new 'process 'trsqv))` before call |
-| Trigger never fires (manual load) | `my_level_obs_init()` called via nREPL 2s after spawn — never runs when player loads manually | Replaced with `camera-trigger` entity-actor that births on level load |
-| Volume visible/collidable | `vol["set_invisible"] = True` (dict-style) exports as JSON bool; C++ uses `.Get<int>()` = 0 | Use `vol.set_invisible = True` (registered BoolProperty) |
+| Art group not found | `camera-tracker` etype doesn't exist | Define `camera-marker` in obs.gc |
+| Level crash on load | `process-drawable-from-entity!` dereferences null root | `(set! (-> this root) (new 'process 'trsqv))` first |
+| Trigger never fires (manual load) | nREPL obs_init call only runs via Build & Play | Replaced with `camera-trigger` entity-actor |
+| Volume visible/collidable | dict-style props export as JSON bool, C++ reads as 0 | Use registered `BoolProperty` (`vol.set_invisible = True`) |
+| Camera rotation wrong | See above — unresolved | — |
 
 ---
 
-## Key Source References (from research)
+## Architecture (correct parts)
 
-### Camera state selection (camera.gc:101)
+### obs.gc defines two types:
 ```lisp
-(cond
-  ((res-lump-struct entity 'pivot structure)      cam-circular)
-  ((res-lump-struct entity 'align structure)      cam-standoff-read-entity)
-  ((get-curve-data! entity ...)                   cam-spline)
-  ((< 0 (cam-slave-get-float entity 'stringMaxLength 0)) *camera-base-mode*)
-  (else                                           cam-fixed-read-entity))
+;; camera-marker: inert, holds position/rotation
+(deftype camera-marker (process-drawable) () (:states camera-marker-idle))
+(defmethod init-from-entity! ((this camera-marker) (arg0 entity-actor))
+  (set! (-> this root) (new 'process 'trsqv))
+  (process-drawable-from-entity! this arg0)
+  (go camera-marker-idle) (none))
+
+;; camera-trigger: AABB volume, polls player position each frame
+(deftype camera-trigger (process-drawable)
+  ((cam-name string :offset 176) (xmin float :offset 180) ... (inside symbol :offset 204))
+  :heap-base #x60 :size-assert #xd0)
+(defmethod init-from-entity! ((this camera-trigger) (arg0 entity-actor))
+  (set! (-> this root) (new 'process 'trsqv))
+  (process-drawable-from-entity! this arg0)
+  (set! (-> this cam-name) (res-lump-struct arg0 'cam-name string))
+  (set! (-> this xmin) (res-lump-float arg0 'bound-xmin))
+  ... go camera-trigger-active)
 ```
 
-### Camera event API
-```lisp
-(send-event *camera* 'change-to-entity-by-name "CAMERA_0")  ; activate named camera
-(send-event *camera* 'clear-entity)                          ; return to default
+### JSONC format:
+```jsonc
+// Camera marker (holds position + rotation)
+{ "trans": [gx,gy,gz], "etype": "camera-marker", "quat": [qx,qy,qz,qw],
+  "lump": { "name": "CAMERA_0", "interpTime": ["float", 1.0] } }
+
+// Camera trigger (AABB volume → switches camera)
+{ "trans": [cx,cy,cz], "etype": "camera-trigger",
+  "lump": { "name": "camtrig-camera_0", "cam-name": "CAMERA_0",
+            "bound-xmin": ["meters", -5.0], "bound-xmax": ["meters", 5.0], ... } }
 ```
 
-### entity-by-name search order (entity.gc:92)
-1. bsp.actors ← **our camera-marker is found here**
-2. bsp.ambients
-3. bsp.cameras (always empty for custom levels — LevelFile.cpp bug)
+### Key source references:
+- `cam-slave-get-rot` → `camera.gc:87` — reads entity-actor.quat, calls quaternion->matrix
+- `quaternion->matrix` stores into `tracking.inv-mat` (cam-rotation-tracker at offset 0)
+- `cam-combiner` copies `slave[0].tracking.inv-mat` → `self.inv-camera-rot`
+- `cam-update` multiplies view frustum corners by `inv-camera-rot`
+- `entity-by-name` searches actors array first → our camera-marker IS found
 
-### Minimal process-drawable entity pattern
-```lisp
-(deftype my-type (process-drawable) () (:states my-state))
-(defstate my-state (my-type) :code (behavior () (loop (suspend))))
-(defmethod init-from-entity! ((this my-type) (arg0 entity-actor))
-  (set! (-> this root) (new 'process 'trsqv))   ; MUST allocate root first
-  (process-drawable-from-entity! this arg0)       ; copies trans/quat from entity
-  (go my-state)
-  (none))
-```
+### Coordinate system:
+- Position remap: `gx=bl.x, gy=bl.z, gz=-bl.y`
+- Quaternion: unknown correct remap (the broken part)
 
 ---
 
 ## Files
-- `addons/opengoal_tools.py` on `feature/camera` — working addon
+- `addons/opengoal_tools.py` on `feature/camera`
 - `knowledge-base/opengoal/camera-system.md` — full research notes
-
-## Next session
-- Test camera trigger in-game (walk through volume, verify camera switches)
-- Test camera rotation (does Blender camera -Z look direction export correctly?)
-- Test standoff mode for side-scroller
-- If working → merge to main
