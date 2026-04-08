@@ -2538,8 +2538,11 @@ def collect_actors(scene):
                 lump["sync"] = ["float", period, phase, ease_out, ease_in]
                 wrap = bool(o.get("og_sync_wrap", False))
                 if wrap:
-                    # fact-options wrap-phase: set bit 0 on fact-options lump
-                    lump["fact-options"] = ["uint32", 1]
+                    # fact-options wrap-phase: bit 3 of the options uint64
+                    # GOAL: (defenum fact-options :bitfield #t  (wrap-phase 3))
+                    # → value = 1 << 3 = 8
+                    # Read via: (res-lump-value ent 'options fact-options)
+                    lump["options"] = ["uint32", 8]
                 log(f"  [sync] {o.name}  period={period}s  phase={phase}  ease={ease_out}/{ease_in}  wrap={wrap}")
             else:
                 log(f"  [sync-platform] {o.name}  no waypoints — will spawn idle (add waypoints to make it move)")
@@ -4678,6 +4681,21 @@ class OG_OT_NudgeCamFloat(Operator):
         return {"FINISHED"}
 
 
+class OG_OT_NudgeFloatProp(Operator):
+    """Nudge a float custom property on the active object."""
+    bl_idname   = "og.nudge_float_prop"
+    bl_label    = "Nudge Float Property"
+    bl_options  = {"REGISTER", "UNDO"}
+    prop_name: bpy.props.StringProperty()
+    delta:     bpy.props.FloatProperty()
+    def execute(self, ctx):
+        o = ctx.active_object
+        if o:
+            current = float(o.get(self.prop_name, 0.0))
+            o[self.prop_name] = round(current + self.delta, 4)
+        return {"FINISHED"}
+
+
 # ── Platform ──────────────────────────────────────────────────────────────────
 
 
@@ -5406,6 +5424,7 @@ classes = (
     OG_PT_Platform,
     OG_OT_SetPlatformDefaults,
     OG_OT_TogglePlatformWrap,
+    OG_OT_NudgeFloatProp,
     OG_PT_Camera,
     OG_PT_NavMesh,
     OG_PT_BuildPlay,
