@@ -83,3 +83,49 @@ Files read: game-save.gc, goalc/build_level Entity.cpp, ResLump.cpp, goal_consta
 test-zone.jsonc, testzone.gd, game.gp, test-zone-obs.gc, task-control-h.gc, game-task-h.gc, logic-target.gc
 
 Knowledge base: `knowledge-base/opengoal/level-flow.md` (17 sections, fully complete)
+
+---
+
+## Pre-Testing Code Review (this session)
+
+### Method
+- Pure Python mathematical verification of all formulae
+- Cross-referenced against vanilla `level-info.gc` and `level.gc` source
+- Sparse-cloned jak-project repo for ground truth
+
+### Bugs Found and Fixed
+
+**BUG 1 — CRITICAL (fixed): spawn facing quat was degenerate**
+- Old code rebuilt a rotation matrix from a forward vector
+- An unrotated Blender empty produced `w:0.0` — a degenerate 180° quaternion
+- Player would spawn facing a broken direction
+- Fix: `game_rot = R_remap @ bl_rot @ R_remap^T` — proven to give identity for identity empty
+- R_remap = `[[1,0,0],[0,0,1],[0,-1,0]]` (Blender x,y,z → game x,z,-y)
+
+**BUG 2 — CRITICAL (fixed): `_CAM` empties matched SPAWN_/CHECKPOINT_ prefix**
+- `SPAWN_start_CAM` starts with `SPAWN_` → was collected as a spurious continue-point
+- Also double-counted as both a spawn AND a camera anchor
+- Fix: `if o.name.endswith("_CAM"): continue` at top of collection loop
+
+**BUG 3 — REVERTED: vis-nick changed to level nick, then reverted back to `'none`**
+- Research showed `test-zone` (official OpenGOAL reference) uses `'none`
+- Runtime analysis: `vis? = #f` for custom levels → vis-nick field never acted on
+- `'none` is correct. `vis_nick_override` controls `:nickname` in level-load-info (different field)
+
+### Non-Bugs Confirmed
+- bsphere `:w` was already raw game units (`r * 4096`) ✓
+- bsphere x/y/z converted to raw game units to match vanilla style (was `(meters ...)`, both compile identically)
+- `(meters ...)` for continue-point `:trans` and `:camera-trans` is valid GOAL ✓
+- camera-rot format matches vanilla exactly ✓
+- nREPL `{name}-start` autoload compatibility ✓
+
+### Testing Checklist (updated)
+- [ ] SPAWN_start unrotated → `:quat :w 1.0` in level-info.gc
+- [ ] SPAWN_start rotated 90°Z → non-identity quat in level-info.gc
+- [ ] SPAWN_start_CAM NOT appearing as a continue-point
+- [ ] SPAWN_start_CAM present → camera-trans/rot use it; absent → default +4m up/identity
+- [ ] CHECKPOINT_cp0 appears in :continues list
+- [ ] Player spawns at correct position and facing in game
+- [ ] Player respawns facing correct direction after death
+- [ ] bsphere centre/radius plausible in level-info.gc output
+- [ ] bottom_height and vis_nick_override props work in panel
