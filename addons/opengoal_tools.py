@@ -822,26 +822,13 @@ def collect_cameras(scene):
         gz = round(-loc.y, 4)
 
         import mathutils
-        # Blender -> game quaternion conversion.
-        # Position remap: gx=bx, gy=bz, gz=-by  (Blender Z-up -> Game Y-up)
-        # This changes coordinate handedness (right->left handed).
-        # For rotations, a handedness flip = conjugate the quaternion (negate XYZ, keep W).
-        # Axis remap: game X=bl X, game Y=bl Z, game Z=-bl Y (same as positions).
-        # Combined: remap axes then conjugate.
+        # Blender -> game quaternion: remap axes to match position remap (gx=bx, gy=bz, gz=-by)
+        # No conjugate needed — the JSONC quat feeds straight into quaternion->matrix unchanged.
         q = cam_obj.matrix_world.to_quaternion()
-        # Step 1: remap axes  (bl x,y,z -> game x,z,-y)
-        qx =  q.x
-        qy =  q.z
-        qz = -q.y
-        qw =  q.w
-        # Step 2: conjugate for handedness flip (negate xyz)
-        qx = -qx
-        qy = -qy
-        qz = -qz
-        qx = round(qx, 6)
-        qy = round(qy, 6)
-        qz = round(qz, 6)
-        qw = round(qw, 6)
+        qx = round( q.x, 6)
+        qy = round( q.z, 6)
+        qz = round(-q.y, 6)
+        qw = round( q.w, 6)
 
         cam_mode = cam_obj.get("og_cam_mode",  "fixed")
         interp_t = float(cam_obj.get("og_cam_interp", 1.0))
