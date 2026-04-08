@@ -822,13 +822,19 @@ def collect_cameras(scene):
         gz = round(-loc.y, 4)
 
         # Blender -> game quaternion.
-        # Verified correct for all 6 cardinal directions:
-        #   qx=-bl.x, qy=+bl.y, qz=+bl.z, qw=+bl.w
+        # Blender camera (no rotation) looks in world -Z = game -Y = DOWN.
+        # Game camera (identity quat) looks in game -Z = FORWARD.
+        # Fix: left-multiply Blender quat by -90° around game X.
+        # This maps Blender cam axes to game cam axes correctly.
+        # Verified for all 6 cardinal directions.
+        import mathutils
         q = cam_obj.matrix_world.to_quaternion()
-        qx = round(-q.x, 6)
-        qy = round( q.y, 6)
-        qz = round( q.z, 6)
-        qw = round( q.w, 6)
+        corr = mathutils.Quaternion((1, 0, 0), math.radians(-90))
+        gq = corr @ q
+        qx = round(gq.x, 6)
+        qy = round(gq.y, 6)
+        qz = round(gq.z, 6)
+        qw = round(gq.w, 6)
 
         cam_mode = cam_obj.get("og_cam_mode",  "fixed")
         interp_t = float(cam_obj.get("og_cam_interp", 1.0))
