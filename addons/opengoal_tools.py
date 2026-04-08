@@ -1035,40 +1035,31 @@ class OGPreferences(AddonPreferences):
 
     exe_path: StringProperty(
         name="EXE folder",
-        description=(
-            "Folder containing the OpenGOAL executables (gk / gk.exe and goalc / goalc.exe). "
-            "Usually the versioned release folder, e.g. .../opengoal/v0.2.29/"
-        ),
+        description="Folder containing gk.exe and goalc.exe",
         subtype="DIR_PATH",
-        default="",
+        default=r"C:\Users\John\Documents\JakAndDaxter\versions\official\v0.2.29",
     )
     data_path: StringProperty(
         name="Data folder",
-        description=(
-            "Your active jak1 source folder — the one that contains data/goal_src. "
-            "Usually .../jak-project/ or .../active/jak1/"
-        ),
+        description="Folder containing data/goal_src  (usually active/jak1)",
         subtype="DIR_PATH",
-        default="",
+        default=r"C:\Users\John\Documents\JakAndDaxter\active\jak1",
     )
+
     def draw(self, ctx):
-        layout = self.layout
-        layout.label(text="EXE folder — contains gk / goalc executables:")
-        layout.prop(self, "exe_path", text="")
-        layout.label(text="Data folder — contains data/goal_src (e.g. your jak-project folder):")
-        layout.prop(self, "data_path", text="")
+        self.layout.label(text="EXE folder — contains gk.exe and goalc.exe:")
+        self.layout.prop(self, "exe_path", text="")
+        self.layout.label(text="Data folder — contains data/goal_src (e.g. active/jak1):")
+        self.layout.prop(self, "data_path", text="")
 
 # ---------------------------------------------------------------------------
 # PATH HELPERS
 # ---------------------------------------------------------------------------
 
-import sys as _sys
-_EXE = ".exe" if _sys.platform == "win32" else ""   # platform-aware exe extension
-
-GOALC_PORT    = 8181   # runtime default; overridden per-launch from preferences
+GOALC_PORT    = 8182   # 8181 permanently held by 3dxnlserver.exe (3Dconnexion SpaceMouse driver)
 GOALC_TIMEOUT = 120
 
-def _find_free_nrepl_port(start=8181, attempts=10):
+def _find_free_nrepl_port(start=8182, attempts=10):
     """Find a free TCP port for GOALC's nREPL server.
 
     Strategy: try to CONNECT to each port. If connection is refused, nothing
@@ -1106,40 +1097,8 @@ def _data_root():
     p = prefs.preferences.data_path if prefs else ""
     return Path(_strip(p)) if p.strip() else Path(".")
 
-def _gk():         return _exe_root() / f"gk{_EXE}"
-def _goalc():      return _exe_root() / f"goalc{_EXE}"
-
-def _check_paths():
-    """Return an error string if required preferences paths are missing or invalid,
-    or None if everything looks okay. Call this at the top of every operator execute()."""
-    prefs = bpy.context.preferences.addons.get(__name__)
-    if not prefs:
-        return "Addon preferences not found — try disabling and re-enabling the addon."
-    p = prefs.preferences
-    if not p.exe_path.strip():
-        return (
-            "EXE path is not set. "
-            "Go to Edit > Preferences > Add-ons > OpenGOAL Level Tools and set the EXE folder "
-            "(the folder containing gk / goalc)."
-        )
-    if not p.data_path.strip():
-        return (
-            "Data path is not set. "
-            "Go to Edit > Preferences > Add-ons > OpenGOAL Level Tools and set the Data folder "
-            "(your jak-project folder that contains data/goal_src)."
-        )
-    exe_root = Path(_strip(p.exe_path))
-    if not exe_root.exists():
-        return f"EXE folder not found: {exe_root}\nCheck your path in addon preferences."
-    data_root = Path(_strip(p.data_path))
-    if not data_root.exists():
-        return f"Data folder not found: {data_root}\nCheck your path in addon preferences."
-    if not _goalc().exists():
-        return (
-            f"goalc{_EXE} not found in {exe_root}\n"
-            "Make sure the EXE folder points to the OpenGOAL release folder."
-        )
-    return None
+def _gk():         return _exe_root() / "gk.exe"
+def _goalc():      return _exe_root() / "goalc.exe"
 def _data():       return _data_root() / "data"
 def _levels_dir(): return _data() / "custom_assets" / "jak1" / "levels"
 def _goal_src():   return _data() / "goal_src" / "jak1"
@@ -2296,19 +2255,18 @@ def _kill_process(exe_name):
         pass
 
 def kill_gk():
-    _kill_process(f"gk{_EXE}")
+    _kill_process("gk.exe")
     time.sleep(0.5)
 
 def kill_goalc():
-    killed_port = GOALC_PORT   # snapshot the port we think GOALC is on before killing
-    _kill_process(f"goalc{_EXE}")
+    _kill_process("goalc.exe")
     time.sleep(0.5)
-    # On Windows, SO_EXCLUSIVEADDRUSE holds the port until the process fully
+    # On Windows, SO_EXCLUSIVEADDRUSE holds port 8181 until the process fully
     # exits. Poll until the port is free so the next launch_goalc() doesn't
     # hit "nREPL: DISABLED" from a bind() on a not-yet-released port.
     for _ in range(20):
         try:
-            with socket.create_connection(("localhost", killed_port), timeout=0.3):
+            with socket.create_connection(("localhost", GOALC_PORT), timeout=0.3):
                 pass
             time.sleep(0.3)  # port still held, keep waiting
         except (ConnectionRefusedError, OSError):
@@ -2345,38 +2303,7 @@ def goalc_send(cmd, timeout=GOALC_TIMEOUT):
     except Exception as e: return f"ERROR:{e}"
 
 def goalc_ok():
-    """Return True if GOALC's nREPL is reachable.
-
-    Probes the current GOALC_PORT first (fast path), then scans the full
-    auto-detect range.  This handles the case where GOALC was already running
-    before this Blender session started — GOALC_PORT may still be at its
-    module default (8181) while the real port is 8182 or higher.
-    Updates GOALC_PORT in-place so subsequent goalc_send() calls use the
-    correct port without re-scanning.
-    """
-    global GOALC_PORT
-    # Fast path — port is already correct
-    if goalc_send("(+ 1 1)", timeout=3) is not None:
-        return True
-    # Slow path — scan range in case GOALC is on a different port
-    for port in range(8181, 8192):
-        if port == GOALC_PORT:
-            continue  # already tried
-        try:
-            import struct
-            with socket.create_connection(("localhost", port), timeout=0.5) as s:
-                cmd = b"(+ 1 1)"
-                header = struct.pack("<II", len(cmd), 10)
-                s.sendall(header + cmd)
-                s.settimeout(3)
-                data = s.recv(4096)
-                if data:
-                    GOALC_PORT = port
-                    log(f"[nREPL] found existing GOALC on port {port}, updating GOALC_PORT")
-                    return True
-        except Exception:
-            continue
-    return False
+    return goalc_send("(+ 1 1)", timeout=3) is not None
 
 USER_NAME = "blender"
 
@@ -2405,11 +2332,11 @@ def launch_goalc(wait_for_nrepl=False):
     global GOALC_PORT
     exe = _goalc()
     if not exe.exists():
-        return False, f"goalc not found at {exe}"
+        return False, f"goalc.exe not found at {exe}"
     # Caller is responsible for kill_goalc() + port-free wait before calling here.
     # Do NOT kill internally — it would reset the port-free polling the caller did.
-    # Find a free port starting from the user-configured preference.
-    GOALC_PORT = _find_free_nrepl_port()
+    # Find a free port before launching so goalc doesn't show "nREPL: DISABLED".
+    GOALC_PORT = _find_free_nrepl_port(start=8182)  # skip 8181 (3Dconnexion SpaceMouse)
     log(f"[nREPL] launching GOALC on port {GOALC_PORT}")
     try:
         data_dir = str(_data())
@@ -2435,7 +2362,7 @@ def launch_gk():
     exe = _gk()
     if not exe.exists(): return False, f"Not found: {exe}"
     # Kill existing GK — no window stacking
-    if _process_running(f"gk{_EXE}"):
+    if _process_running("gk.exe"):
         log("launch_gk: killing existing GK")
         kill_gk()
     try:
@@ -3042,22 +2969,7 @@ def remove_level(name):
     return msgs
 
 
-def _paths_configured():
-    """Return (ok, error_message). Checks both preferences paths are set."""
-    prefs = bpy.context.preferences.addons.get(__name__)
-    if not prefs:
-        return False, "Addon preferences not found — try disabling and re-enabling the addon."
-    p = prefs.preferences
-    if not p.exe_path.strip():
-        return False, "EXE path not set. Go to Edit > Preferences > Add-ons > OpenGOAL Level Tools and set the EXE folder."
-    if not p.data_path.strip():
-        return False, "Data path not set. Go to Edit > Preferences > Add-ons > OpenGOAL Level Tools and set the Data folder."
-    return True, ""
-
 def export_glb(ctx, name):
-    ok, err = _paths_configured()
-    if not ok:
-        raise RuntimeError(err)
     d = _ldir(name); d.mkdir(parents=True, exist_ok=True)
     bpy.ops.export_scene.gltf(
         filepath=str(d / f"{name}.glb"), export_format="GLB",
@@ -3379,9 +3291,6 @@ class OG_OT_ExportBuild(Operator):
         if len(name) > 10:
             self.report({"ERROR"}, f"Level name '{name}' is {len(name)} chars — max is 10. Shorten it in Level Settings.")
             return {"CANCELLED"}
-        path_err = _check_paths()
-        if path_err:
-            self.report({"ERROR"}, path_err); return {"CANCELLED"}
         try:
             export_glb(ctx, name)
         except Exception as e:
@@ -3762,9 +3671,6 @@ class OG_OT_GeoRebuild(Operator):
         if len(name) > 10:
             self.report({"ERROR"}, f"Level name '{name}' is {len(name)} chars — max is 10. Shorten it in Level Settings.")
             return {"CANCELLED"}
-        path_err = _check_paths()
-        if path_err:
-            self.report({"ERROR"}, path_err); return {"CANCELLED"}
         try:
             export_glb(ctx, name)
         except Exception as e:
@@ -3921,9 +3827,6 @@ class OG_OT_ExportBuildPlay(Operator):
         if not name:
             self.report({"ERROR"}, "Enter a level name first")
             return {"CANCELLED"}
-        path_err = _check_paths()
-        if path_err:
-            self.report({"ERROR"}, path_err); return {"CANCELLED"}
         try:
             export_glb(ctx, name)
         except Exception as e:
@@ -4807,13 +4710,6 @@ class OG_PT_BuildPlay(Panel):
 
     def draw(self, ctx):
         layout = self.layout
-        paths_ok, _ = _paths_configured()
-        if not paths_ok:
-            box = layout.box()
-            box.label(text="Paths not set — open preferences", icon="ERROR")
-            box.operator("preferences.addon_show", text="Set EXE / Data Paths", icon="PREFERENCES").module = __name__
-            return
-
         gk_ok  = _gk().exists()
         gc_ok  = _goalc().exists()
         gp_ok  = _game_gp().exists()
@@ -4852,8 +4748,8 @@ class OG_PT_DevTools(Panel):
         gk_ok = _gk().exists()
         gc_ok = _goalc().exists()
         gp_ok = _game_gp().exists()
-        box.label(text=f"gk{_EXE}:    {'✓ OK' if gk_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gk_ok else "ERROR")
-        box.label(text=f"goalc{_EXE}: {'✓ OK' if gc_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gc_ok else "ERROR")
+        box.label(text=f"gk.exe:    {'✓ OK' if gk_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gk_ok else "ERROR")
+        box.label(text=f"goalc.exe: {'✓ OK' if gc_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gc_ok else "ERROR")
         box.label(text=f"game.gp:   {'✓ OK' if gp_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gp_ok else "ERROR")
         box.operator("preferences.addon_show", text="Set EXE / Data Paths", icon="PREFERENCES").module = __name__
 
