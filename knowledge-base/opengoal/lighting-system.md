@@ -464,10 +464,182 @@ A custom level needs in `level-info.gc`:
 
 ---
 
+---
+
+## Interp Tables — Full Reference
+
+The `sky-color-day` interp tables are the schedules that map each real-world hour (0–23) to which pair of ToD slots are active and how blended they are. Three independent tables exist per mood context:
+
+- `fog-interp` — drives fog color/distance interpolation
+- `palette-interp` — drives vertex color geometry interpolation (the key one for level lighting)
+- `sky-texture-interp` — drives sky renderer texture selection
+
+All three can point to the same table (most levels do) or different ones (sunken uses `*misty-palette-interp-table*` for all three).
+
+### `sky-color-hour` fields
+| Field | Meaning |
+|---|---|
+| `snapshot1` | First ToD slot index (0–7) |
+| `snapshot2` | Second ToD slot index (0–7, may equal snapshot1 for no blend) |
+| `morph-start` | Blend weight at the *start* of this hour (how much snapshot2 is visible) |
+| `morph-end` | Blend weight at the *end* of this hour |
+
+When `snapshot1 == snapshot2` (or snapshot2 is unset / 0), only one slot is used — `morph-start` still applies as a straight weight on that single slot.
+
+### Default interp table decoded (`*default-interp-table*`)
+Maps the 24 hours to slot transitions. Slots by name: 0=SUNRISE, 1=MORNING, 2=NOON, 3=AFTERNOON, 4=SUNSET, 5=TWILIGHT, 6=EVENING, 7=GREENSUN.
+
+| Hours | Active slots | Notes |
+|---|---|---|
+| 0–5 | 6 (EVENING) → 7 (GREENSUN) | Deep night, green moon fading in |
+| 6–7 | 7 (GREENSUN) only | Full night with green moon |
+| 7–9 | 7 → 1 (MORNING) | Dawn transition |
+| 9–11 | 2 (NOON) ← 1 (MORNING) | Morning |
+| 11–14 | 2 (NOON) alone | Full midday |
+| 12–14 | 2 → 3 (AFTERNOON) | Noon to afternoon |
+| 15–17 | 4 (SUNSET) ← 3 | Afternoon to sunset |
+| 17–18 | 4 (SUNSET) alone | Full sunset |
+| 18–19 | 4 → 5 (TWILIGHT) | Dusk transition |
+| 19–23 | 6 (EVENING) ← 5 | Twilight into evening |
+| 23 | 6 → 7 | Late night |
+
+### Misty/interior variant (`*misty-palette-interp-table*`)
+Uses only `snapshot1 = 1` (MORNING) for all 24 hours. The morph weight oscillates as a sine-like curve peaking at noon (~0.99 at hour 11–12) and dipping at midnight (~0.04 at hour 0). Effectively: always show slot 1, but vary its blend weight for a subtle brightness cycle. Used by misty, swamp, sunken — levels that don't need full 8-slot ToD.
+
+### Firecanyon variant
+Uses slots 1, 2, 3 only (MORNING/NOON/AFTERNOON). No night slots — firecanyon is perpetually daytime/orange-sky.
+
+### Village2 sky texture table
+Uses slots 1, 4, 5, 6, 7 — a different mapping than the palette table, giving the cloudy-sky look unique to that area at night.
+
+### Writing a custom interp table
+```goal
+(define *mylevel-palette-interp-table*
+  (new 'static 'sky-color-day
+    :hour (new 'static 'inline-array sky-color-hour 24
+      ; hour 0 (midnight): 100% slot 6 (EVENING)
+      (new 'static 'sky-color-hour :snapshot1 6 :morph-start 1.0 :morph-end 1.0)
+      ; ... repeat 24 entries total
+      ; hour 12 (noon): blend from slot 2 (NOON) to slot 3 (AFTERNOON)
+      (new 'static 'sky-color-hour :snapshot1 2 :snapshot2 3 :morph-start 0.0 :morph-end 0.5)
+      )))
+```
+Simplest approach for a custom level: copy `*default-interp-table*` and adjust slot assignments and morph curves. Or use `*misty-palette-interp-table*` if you only want 1–2 distinct looks with smooth brightness variation.
+
+---
+
+## Weather Particle System
+
+`weather-part.gc` defines particle groups for weather and sky effects. These are spawned by the ToD process, not the mood callback.
+
+### Rain
+`update-rain` — called from gameplay code per frame when rain is active. Spawns `defpart 37/38` (streak particles, screen-relative) around the player. Splash rings/drops triggered by `check-drop-level-rain` when drops hit water level. Speed/direction modulated by camera angle (looking down = more vertical rain). Camera drip overlay triggered via `send-event *camera* 'part-water-drip`.
+
+### Snow
+`update-snow` — similar per-frame call. Snow count and spawn angle driven by player horizontal velocity. Particles 33/34. Toggle via `*weather-off*` global — when true, snow mood function (`update-mood-snow`) gradually removes it via `s5-1.interp` ramp.
+
+### Stars
+`group-stars` (id 34) — 3 particle emitters using `hotdot` texture at 5000m radius. Spawned/killed by `time-of-day-update` when hour >= 19 or <= 5. Count controlled by `*time-of-day-context*.num-stars` (set by mood, e.g. village1 = 85.0).
+
+### Sun disc
+`group-sun` (id 35) — 3 particles: a round disc (`middot`) + 2 cross-flare rotators (`starflash2`). Uses `sparticle-track-sun` callback to position itself relative to camera at `*sky-parms*.upload-data.sun[0].pos * 4096`. Color driven by `*time-of-day-context*.current-sun.sun-color`. Alpha driven by `sun-fade`. Spawned when 6.25 <= hour < 18.75.
+
+### Green sun / moon
+`group-green-sun` (id 36) — same structure as sun but green `(0, 255, 0)` and smaller. Appears when hour >= 21.75 or <= 10.25. Uses `sparticle-track-sun` with user indices 4–6, pointing to `*sky-parms*.upload-data.sun[1]`.
+
+### Key globals for weather spawning
+Weather/sky particles are launched from `time-of-day-proc` via stored `sparticle-launch-control` handles — `self.stars`, `self.sun`, `self.green-sun`, `self.moon`. These are created at init with `create-launch-control group-XXXX self`.
+
+---
+
+## Light Conversion — `light-group` → `vu-lights`
+
+`vu-lights<-light-group!` (defined in `bones-h.gc` as extern, implemented in VU/mips2c) converts a `light-group` to the `vu-lights` format used by the renderer. This is called per-draw-call for each actor.
+
+The `light-group` holds 4 lights (dir0, dir1, dir2, ambi). The VU format packs them as transposed arrays: `direction[3]`, `color[3]`, `ambient[1]`. Only dir0/dir1/dir2 contribute directions — ambi only contributes its color.
+
+**`light-slerp`** — spherically interpolates between two lights (direction slerp, color lerp, intensity lerp). Clamped alpha.
+
+**`light-group-slerp`** — applies `light-slerp` to all 4 lights in a group. Useful for smooth zone transitions if you need more control than the target-interp approach.
+
+**`vu-lights-default!`** — sets a neutral default: ambient 0.3 grey, dir0 white `(1,1,1)` from `(1,0,0)`, dir1 `(0.2,0.2,0.2)` from `(0,1,0)`, dir2 black.
+
+---
+
+## Reference Data — Village1 Tables
+
+Useful as a copy-paste base for custom levels.
+
+### Fog table (village1) — all 8 slots
+Fog color in 0–255 range. Fog distances in game units (262144 = ~64m).
+
+| Slot | Time | Fog color (R,G,B) | Fog start | Fog end | Notes |
+|---|---|---|---|---|---|
+| 0 | SUNRISE | 160, 150, 200 | 262144 | 6717440 | Purple-blue dawn |
+| 1 | MORNING | 150, 165, 220 | 262144 | 6717440 | Cool blue |
+| 2 | NOON | 128, 180, 243 | 262144 | 6717440 | Bright sky blue |
+| 3 | AFTERNOON | 150, 165, 220 | 262144 | 6717440 | Same as morning |
+| 4 | SUNSET | 160, 150, 200 | 262144 | 6717440 | Purple |
+| 5 | TWILIGHT | 16, 32, 100 | 262144 | 6717440 | Deep blue-purple |
+| 6 | EVENING | 0, 0, 0 | 262144 | 4984832 | Black night, shorter draw |
+| 7 | GREENSUN | 0, 80, 64 | 262144 | 3690496 | Teal-green, shortest draw |
+
+All erase-colors are `(0,0,0,128)` — black sky background.
+
+### Lights table (village1) — all 8 slots
+`direction` is a normalized vector pointing FROM the light source (Y up = overhead sun).
+
+| Slot | Light direction (x,y,z) | Light color (R,G,B) | Ambient (R,G,B) | Character |
+|---|---|---|---|---|
+| 0 | -0.067, 0.25, 0.966 | 1.558, 1.454, 0.228 | 0.4, 0.266, 0.6 | Golden dawn from NE |
+| 1 | -0.183, 0.683, 0.707 | 1.632, 1.586, 1.428 | 0.387, 0.387, 0.475 | Bright morning |
+| 2 | -0.259, 0.966, 0 | 1.644, 1.598, 1.438 | 0.362, 0.362, 0.425 | High noon overhead |
+| 3 | -0.183, 0.683, -0.707 | 1.632, 1.586, 1.428 | 0.387, 0.387, 0.475 | Afternoon mirror |
+| 4 | -0.067, 0.25, -0.966 | 1.646, 1.118, 0 | 0.32, 0.35, 0.6 | Orange-red sunset |
+| 5 | 0, 1, 0 | 0.25, 0.5, 1.0 | 0.31, 0.29, 0.35 | Blue twilight from above |
+| 6 | 0.837, 0.483, 0.259 | 0.192, 0.256, 0.961 | 0.383, 0.439, 0.7 | Blue-night from E |
+| 7 | 0.354, 0.866, 0.354 | 0.05, 0.621, 0.326 | 0.25, 0.439, 0.7 | Green moonlight |
+
+Note: `lgt-color` values > 1.0 are valid — they overbright the main directional. Village1 noon hits ~1.65 intensity.
+Note: `prt-color` is `(0,0,0,1)` for all village1 slots, meaning particles fall back to `update-mood-prt-color` derived from ambient+directional blend.
+Note: `shadow` direction is auto-computed from `direction` by `update-mood-shadow-direction` — don't set it manually in static data, let the function compute it.
+
+### Sun table (village1) — all 8 slots
+Colors in 0–255 range.
+
+| Slot | sun-color (R,G,B,A) | env-color (R,G,B,A) | Character |
+|---|---|---|---|
+| 0 | 255, 128, 0, 128 | 255, 225, 96, 255 | Golden sunrise |
+| 1 | 255, 225, 96, 128 | 255, 255, 255, 255 | White morning |
+| 2 | 255, 225, 96, 128 | 255, 255, 255, 255 | White noon |
+| 3 | 255, 225, 96, 128 | 255, 255, 255, 255 | White afternoon |
+| 4 | 255, 128, 0, 128 | 255, 196, 64, 255 | Orange sunset |
+| 5 | 255, 225, 96, 128 | 96, 96, 196, 255 | Blue twilight sky |
+| 6 | 255, 225, 96, 128 | 64, 64, 150, 255 | Deep blue night sky |
+| 7 | 255, 225, 96, 128 | 64, 150, 196, 255 | Teal green-sun sky |
+
+Note: `env-color` is the sky/environment reflection color. It's multiplied by 0.502 in `update-time-of-day` before use. The values in the table are pre-halving, so white `(255,255,255)` → applied as ~`(128,128,128)`.
+
+---
+
+## Addon Hardcoding — What Needs Changing
+
+The OpenGOAL tools addon (`opengoal_tools_v9.py`) currently writes fixed values into every custom level's `level-load-info` block:
+
+```python
+f"       :mood '*village1-mood*\n"
+f"       :mood-func 'update-mood-village1\n"
+f"       :sky #t\n"
+f"       :sun-fade 1.0\n"
+```
+
+To support custom lighting, the addon needs to expose these as configurable properties on the Blender level object (or a level settings panel), and substitute them into the generated GOAL code. The simplest first step is adding a dropdown for `mood-func` and a float for `sun-fade`. Custom mood tables would require generating new GOAL code blocks into `mood-tables.gc` and `mood.gc`.
+
+Until then, a workaround is to manually edit the generated level-info after export and patch `*village1-mood*` references to a custom mood global.
+
+---
+
 ## Open Questions / Research Gaps
-- ⚠ How `time-of-day-interp-colors` (mips2c) packs/unpacks palette data internally — exact VU1 program not fully traced.
-- ⚠ How `make-sky-textures` builds the sky texture from `sky-times` — sky-tng.gc is long and complex.
-- ⚠ Relationship between `*sky-parms*` orbit data and actual sun/moon particle positions — partially implemented in old sky renderer code.
-- ⚠ How `palette-interp` vs `fog-interp` schedules interact with `sky-texture-interp` — they can use different schedules for the same level, but exact visual effect of mismatching them is unclear.
-- ⚠ `prt-color` field: confirmed it drives particle color, but exact which particle systems respect it is not fully traced.
-- ⚠ Whether a custom level can safely define entirely new fog/light/sun table values without impacting other levels using the same pointers — tables should be independent per-level globals, but needs testing.
+- ⚠ `time-of-day-interp-colors` internals — VU1 mips2c, not traced. It processes `times`/`itimes` and writes interpolated vertex color palettes into DMA buffers for TIE/TFRAG. Implementation approach known, exact bit manipulation not needed for most work.
+- ⚠ `make-sky-textures` / `sky-tng.gc` — sky renderer texture generation. The sky renderer reads `sky-times[8]` from the mood context and blends sky textures. Not needed for basic lighting implementation.
+- ⚠ `update-mood-erase-color` / `update-mood-erase-color2` — helpers that compute the erase color from ambient + directional + ocean far-color. These are used in some levels (not village1) to derive erase-color procedurally rather than using static table values. The `*ocean-map-village2*.far-color` dependency means they only look correct near water.
