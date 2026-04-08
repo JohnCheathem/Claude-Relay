@@ -483,3 +483,220 @@ The `checkpt` boundary type is the cleanest way to auto-assign checkpoints as th
 | `engine/common-obs/basebutton.gc` | `warp-gate` actor, `*warp-info*` string array |
 | `levels/common/launcherdoor.gc` | `launcherdoor` — uses `continue-name` lump |
 | `levels/jungle/jungle-elevator.gc` | `jungle-elevator` — uses `continue-name` lump + `alt-load-commands` |
+
+---
+
+## 13. Save/Load System — Custom Level Safety
+
+**Key finding: saves are 100% safe for custom levels.**
+
+### What gets serialized
+`save-game!` writes only the **continue-point name string** to disk (tag type `game-save-elt continue`). It does NOT serialize:
+- The continue-point struct itself
+- `lev0`/`lev1`/`vis-nick`/`trans`/`quat`
+- The load-commands list
+
+### What happens on load
+```lisp
+(((game-save-elt continue))
+ (format (clear *temp-string*) "~G" (&+ (the-as pointer data) 16))
+ (set-continue! this *temp-string*))
+```
+`load-game!` calls `set-continue!` with the saved name string. `set-continue!` calls `get-continue-by-name` which walks `*level-load-list*`. **If the name is not found, `set-continue!` falls back to `*default-continue*` (debug camera position) with no crash or corruption.**
+
+### Implication
+- Custom continue-point names work fine in saves
+- If a custom level is later removed, old saves degrade gracefully to the debug default
+- The `level-index` field in the save header (used for progress menu display) is `(lookup-level-info level-name).index` — if slightly wrong it only affects the menu icon, not gameplay
+
+### Title-start special case
+```lisp
+(when (string= (-> this current-continue name) "title-start")
+  (set! (-> arg0 new-game) 1)
+  (set! (-> arg0 level-index) (-> (lookup-level-info 'training) index))
+  ...)
+```
+If saving on the title screen, the save records index for training instead and sets `new-game = 1`. On load, this triggers `(set-continue! this "game-start")`. Custom levels should avoid naming continues `"title-start"`.
+
+---
+
+## 14. Complete JSONC Actor Format Reference
+
+### Actor entry structure
+```jsonc
+{
+  "trans": [x, y, z],           // metres, converted to game units (×4096)
+  "etype": "launcherdoor",       // GOAL type name string
+  "game_task": "(game-task none)", // enum string OR integer
+  "quat": [x, y, z, w],         // quaternion, raw floats
+  "bsphere": [x, y, z, radius],  // metres for all 4 values
+  "aid": 105,                    // optional: explicit actor ID (default: base_id + index)
+  "vis_id": 0,                   // optional: visibility ID
+  "lump": {
+    "name": "my-actor-1",        // required for entity-by-name lookups
+    // ... lump keys
+  }
+}
+```
+
+### `trans` and `bsphere` — coordinate system
+- JSONC uses **metres** (same as Blender metres)
+- Compiler multiplies by `METER_LENGTH = 4096.0` automatically via `vectorm3_from_json` / `vectorm4_from_json`
+- `bsphere` radius is also in metres, converted to game units
+
+### `game_task` field
+- Accepts enum string: `"(game-task none)"` or `"(game-task training-gimmie)"`
+- Accepts raw integer: `0`
+- `(game-task none) = 0` — use for actors with no associated power cell task
+
+### Lump value format rules
+```jsonc
+"lump": {
+  // Bare string → ResString (continue-name reads this back with res-lump-struct)
+  "continue-name": "my-level-start",
+
+  // Bare string starting with ' → ResSymbol (symbol lump)
+  "crate-type": "'steel",
+
+  // Array with type tag → typed lump
+  "spring-height": ["meters", 2.5],
+  "rotoffset": ["degrees", -45.0],
+  "options": ["enum-int32", "(fact-options large)"],
+  "eco-info": ["eco-info", "(pickup-type money)", 10],
+  "eco-info": ["cell-info", "(game-task training-gimmie)"],
+  "eco-info": ["buzzer-info", "(game-task training-buzzer)", 3],
+  "water-height": ["water-height", 25.0, 0.5, 2.0, "(water-flags wt08 wt03)"],
+  "nav-mesh-sphere": ["vector3m", [x, y, z]]  // xyz in metres, w=1.0
+}
+```
+
+### Complete lump type string reference
+
+| Type string | Output type | Format | Notes |
+|---|---|---|---|
+| `"int32"` | ResInt32 | `["int32", n, ...]` | Raw signed ints |
+| `"uint32"` | ResUint32 | `["uint32", n, ...]` | Raw unsigned ints |
+| `"enum-int32"` | ResInt32 | `["enum-int32", "(enum-type value)"]` | Enum → int32 |
+| `"enum-uint32"` | ResUint32 | `["enum-uint32", "(enum-type value)"]` | Enum → uint32 |
+| `"float"` | ResFloat | `["float", f, ...]` | Raw floats |
+| `"meters"` | ResFloat | `["meters", m, ...]` | Float × 4096.0 |
+| `"degrees"` | ResFloat | `["degrees", d, ...]` | Float × 182.044 |
+| `"vector"` | ResVector | `["vector", [x,y,z,w]]` | Raw 4 floats |
+| `"vector4m"` | ResVector | `["vector4m", [x,y,z,w]]` | All 4 × 4096 |
+| `"vector3m"` | ResVector | `["vector3m", [x,y,z]]` | xyz × 4096, w=1.0 |
+| `"vector-vol"` | ResVector | `["vector-vol", [x,y,z,w]]` | xyz raw, w × 4096 |
+| `"movie-pos"` | ResVector | `["movie-pos", [x,y,z,deg]]` | xyz × 4096, w = degrees×182 |
+| `"symbol"` | ResSymbol | `["symbol", "name1", ...]` | GOAL symbols |
+| `"type"` | ResType | `["type", "typename"]` | Type tag |
+| `"string"` | ResString | `["string", "str1", ...]` | GOAL strings |
+| `"eco-info"` | ResInt32 | `["eco-info", "(pickup-type X)", amount]` | Pickup lump |
+| `"cell-info"` | ResInt32 | `["cell-info", "(game-task X)"]` | Power cell lump |
+| `"buzzer-info"` | ResInt32 | `["buzzer-info", "(game-task X)", index]` | Scout fly lump |
+| `"water-height"` | ResFloat | `["water-height", h, wade, swim, "(water-flags ...)", [bottom]]` | Water lump |
+
+**Constants:** `METER_LENGTH = 4096.0`, `DEGREES_LENGTH = 65536/360 ≈ 182.044`, `DEFAULT_RES_TIME = -1000000000.0`
+
+### The `continue-name` lump — exact format
+```jsonc
+{
+  "trans": [x, y, z],
+  "etype": "launcherdoor",
+  "game_task": 0,
+  "quat": [0, 0, 0, 1],
+  "bsphere": [x, y, z, 4.0],
+  "lump": {
+    "name": "my-door-1",
+    "continue-name": "my-level-start"   // plain string → ResString
+  }
+}
+```
+Runtime code reads it with `(res-lump-struct entity 'continue-name structure)` which returns a pointer to the string data. The bare string (no `'` prefix) is correct here — it becomes a ResString, not a ResSymbol.
+
+---
+
+## 15. Build System — Registering a Custom Level
+
+Three things required in `game.gp`:
+
+```lisp
+;; 1. Compile the JSONC → .go geometry/entity file
+(build-custom-level "my-level")
+
+;; 2. Package the DGO
+(custom-level-cgo "MYL.DGO" "my-level/myl.gd")
+
+;; 3. Register the GOAL source file for the level's actors/code
+(goal-src "levels/my-level/my-level-obs.gc" "process-drawable")
+```
+
+The `.gd` file format (e.g. `myl.gd`):
+```lisp
+("MYL.DGO"
+ ("my-level-obs.o"      ; compiled GOAL actor code
+  "tpage-401.go"        ; sky texture (village1 sky example)
+  "my-level.go"         ; compiled level geometry/entities from JSONC
+  ))
+```
+
+The `level-info.gc` entry needs `:run-packages '("common")` at minimum. If sharing art groups with a vanilla level, add that package too (e.g. `'("common" "village1")`).
+
+---
+
+## 16. Task System — What Custom Levels Need to Know
+
+### `game-task` enum (key values)
+- `(game-task none) = 0` — no task, safe for decorative actors
+- `(game-task complete) = 1` — always marked complete at game start
+- Tasks 2–115 are vanilla game tasks
+- `(game-task max) = 116` — total slot count
+
+**Custom levels should use `(game-task none)` for most actors.** The task system is 116 fixed slots — there are no "custom task" slots available without modifying `game-task-h.gc`.
+
+### `task-status` enum (progression)
+```
+invalid(0) → unknown(1) → need-hint(2) → need-introduction(3)
+→ need-reminder-a(4) → need-reminder(5) → need-reward-speech(6)
+→ need-resolution(7)
+```
+Higher value = further along. `task-complete?` checks for the `real-complete` flag separately (set when power cell is physically collected).
+
+### Key task functions
+```lisp
+(task-complete? *game-info* (game-task jungle-tower))   ; bool: power cell collected?
+(get-task-status (game-task jungle-tower))               ; → task-status enum value
+(task-closed? task status)                               ; bool: at or past given status?
+(close-specific-task! task status)                       ; advance task to status
+(open-specific-task! task status)                        ; roll back task to status
+(get-task-control task)                                  ; → task-control object
+```
+
+### `process-taskable` — the NPC/interactive object base
+Used for sages, oracle pedestals, warp gates, and similar objects that have task-gated behaviour. The key method `should-display?` defaults to `#t` — override to hide the actor when the task is complete. The `give-cell` state handles handing out the power cell via `cell-for-task`.
+
+For simple custom level objects that don't need task gating, extend `process-drawable` directly (as `test-actor` does) rather than `process-taskable`.
+
+---
+
+## 17. Death Plane (`bottom-height`)
+
+`bottom-height` in `level-load-info` is the Y coordinate below which the player gets an `endlessfall` death.
+
+**How it works:**
+```lisp
+; In logic-target, runs every frame:
+(if (and (time-elapsed? ... (seconds 2))     ; 2-second grace period after spawn
+         v1-146                               ; current-level exists
+         (< (-> self control trans y)         ; player Y <
+            (-> v1-146 info bottom-height)))  ; level's bottom-height
+  (send-event self 'attack-invinc #f
+    (static-attack-info ((mode 'endlessfall)))))
+```
+
+- The 2-second grace period prevents instant death on level transitions
+- `endlessfall` mode plays the endless fall death animation and triggers `target-death`
+- This uses `current-level` (the level the player is considered inside), so the active level's `bottom-height` applies
+- Default in vanilla levels: `(meters -20)` for most outdoor areas, lower for pits/caves
+
+**For custom levels:** Set `:bottom-height (meters -X)` where X is how far below the level floor the kill plane should sit. `(meters -20)` is the standard. For indoor/cave levels with deep drops, use `(meters -60)` or lower.
+
+The `endlessfall` collision pat type is separate — it's a collision surface property assigned in the BSP that also triggers the same death, used for invisible kill volumes in the geometry itself.

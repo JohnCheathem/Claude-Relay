@@ -88,3 +88,36 @@ Good template reference.
 - Load boundary export from Blender (polygon drawn in 3D → XZ points + top/bot)
 - `execute-command` command builder for continue-point load-commands
 - Research how custom continues interact with save/load (game-save.gc)
+
+---
+
+## Second Research Session (April 2026)
+
+### Additional files read:
+- `engine/game/game-save.gc` — full save/load implementation
+- `goalc/build_level/common/Entity.cpp` — full JSONC actor compiler
+- `goalc/build_level/common/ResLump.cpp` — all lump type implementations
+- `goalc/build_level/jak1/Entity.cpp` — jak1-specific add_actors_from_json
+- `common/goal_constants.h` — METER_LENGTH=4096, DEGREES_LENGTH=182.044, DEFAULT_RES_TIME=-1e9
+- `custom_assets/jak1/levels/test-zone/test-zone.jsonc` — canonical custom level example
+- `custom_assets/jak1/levels/test-zone/testzone.gd` — DGO definition format
+- `goal_src/jak1/game.gp` — build-custom-level macro, registration pattern
+- `goal_src/jak1/levels/test-zone/test-zone-obs.gc` — full custom actor example
+- `goal_src/jak1/engine/game/task/task-control-h.gc` — task-status enum, process-taskable
+- `goal_src/jak1/engine/game/task/game-task-h.gc` — full game-task enum (116 slots)
+- `goal_src/jak1/engine/target/logic-target.gc` — bottom-height death check
+
+### New sections added to knowledge-base:
+- §13: Save/Load safety analysis (continue name only serialized, graceful fallback)
+- §14: Complete JSONC actor format with full lump type table
+- §15: Build system registration (game.gp + .gd format)
+- §16: Task system — what custom levels need (use game-task none, 116 fixed slots)
+- §17: Death plane (bottom-height mechanics, grace period, recommended values)
+
+### Key findings from second session:
+- Saves store ONLY the continue-point name string. Custom continues are save-safe.
+- `continue-name` lump must be a bare string (no `'`), becomes ResString not ResSymbol
+- All 18 JSONC lump type strings documented with exact formats
+- Custom levels need 3 things in game.gp: build-custom-level, custom-level-cgo, goal-src
+- Task system has 116 fixed slots — custom levels should use `(game-task none)` throughout
+- `bottom-height` is checked every frame against player Y with 2s grace period
