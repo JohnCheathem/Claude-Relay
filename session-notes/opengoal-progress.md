@@ -61,4 +61,9 @@ measured actual r2, found game was reading conjugate. All previous attempts were
 - What does the compiler output when a chunk is overbudget?
 - Could the addon warn the user about dense geometry regions?
 
+**Research needed (cont.):**
+- Is there an overall level geometry budget (DGO heap) separate from per-chunk limits?
+- We know tpages are limited to 2 groups to avoid heap OOM — geometry likely has a similar ceiling
+- What are the actual numbers for both budgets?
+
 **Not urgent** — hit this when a real level hits performance issues or compile errors.
