@@ -3864,15 +3864,12 @@ class OG_OT_NudgeLevelProp(Operator):
 
 
 class OG_OT_DeleteLevel(Operator):
-    """Delete a level collection and all its contents."""
+    """Remove a collection from the level list (does not delete the collection)."""
     bl_idname   = "og.delete_level"
-    bl_label    = "Delete Level"
+    bl_label    = "Remove Level"
     bl_options  = {"REGISTER", "UNDO"}
 
     col_name: StringProperty(name="Collection Name")
-
-    def invoke(self, ctx, event):
-        return ctx.window_manager.invoke_confirm(self, event)
 
     def execute(self, ctx):
         target = None
@@ -3886,16 +3883,14 @@ class OG_OT_DeleteLevel(Operator):
 
         lname = target.get("og_level_name", target.name)
 
-        # Recursively remove all objects in the collection tree
-        def _remove_col(col):
-            for child in list(col.children):
-                _remove_col(child)
-            for obj in list(col.objects):
-                bpy.data.objects.remove(obj, do_unlink=True)
-            bpy.data.collections.remove(col)
+        # Just remove the level marker — collection stays intact
+        if "og_is_level" in target:
+            del target["og_is_level"]
+        for key in list(target.keys()):
+            if key.startswith("og_"):
+                del target[key]
 
-        _remove_col(target)
-        self.report({"INFO"}, f"Deleted level '{lname}'")
+        self.report({"INFO"}, f"Removed '{lname}' from levels (collection preserved)")
         return {"FINISHED"}
 
 
@@ -5859,31 +5854,23 @@ class OG_PT_Level(Panel):
 
         # ── No levels exist → show Add Level button only ─────────────────
         if not levels:
-            box = layout.box()
-            box.label(text="No levels in this file", icon="INFO")
-            row = box.row(align=True)
+            layout.label(text="No levels in this file", icon="INFO")
+            row = layout.row(align=True)
             row.operator("og.create_level", text="Add Level", icon="ADD")
             row.operator("og.assign_collection_as_level", text="Assign Existing", icon="OUTLINER_COLLECTION")
             return
 
-        # ── Level selector dropdown (always shown when levels exist) ──────
-        layout.prop(props, "active_level", text="")
+        # ── Level selector dropdown + edit button ────────────────────────
+        row = layout.row(align=True)
+        row.prop(props, "active_level", text="")
+        row.operator("og.edit_level", text="", icon="GREASEPENCIL")
 
         if level_col is None:
             return
 
-        # ── Level settings (read/write from collection custom props) ─────
+        # ── Level info (compact) ──────────────────────────────────────────
         name = str(level_col.get("og_level_name", ""))
         base_id = int(level_col.get("og_base_id", 10000))
-
-        col = layout.column(align=True)
-
-        # Name + Base ID row with edit button
-        row = col.row(align=True)
-        row.label(text=name if name else "(unnamed)", icon="SCENE_DATA")
-        row.label(text=f"ID: {base_id}")
-        row.operator("og.edit_level", text="", icon="GREASEPENCIL")
-
         if name:
             name_clean = name.lower().replace(" ", "-")
             if len(name_clean) > 10:
@@ -5893,14 +5880,13 @@ class OG_PT_Level(Panel):
             else:
                 row = layout.row()
                 row.enabled = False
-                row.label(text=f"ISO: {_iso(name)}   Nick: {_nick(name)}", icon="INFO")
+                row.label(text=f"ID: {base_id}   ISO: {_iso(name)}   Nick: {_nick(name)}")
 
         layout.separator(factor=0.4)
-        col2 = layout.column(align=True)
 
         # Death plane
         bh = float(level_col.get("og_bottom_height", -20.0))
-        row_bh = col2.row(align=True)
+        row_bh = layout.row(align=True)
         row_bh.label(text=f"Death Plane: {bh:.1f}m")
         op = row_bh.operator("og.nudge_level_prop", text="-")
         op.prop_name = "og_bottom_height"; op.delta = -5.0; op.val_min = -500.0; op.val_max = -1.0
@@ -5909,7 +5895,7 @@ class OG_PT_Level(Panel):
 
         # Vis nick override
         vnick = str(level_col.get("og_vis_nick_override", ""))
-        row_vn = col2.row(align=True)
+        row_vn = layout.row(align=True)
         row_vn.enabled = False
         row_vn.label(text=f"Vis Nick Override: {vnick if vnick else '(auto)'}")
 
@@ -6062,39 +6048,19 @@ class OG_PT_LevelManagerSub(Panel):
         active = _active_level_col(scene)
 
         if not levels:
-            layout.label(text="No levels in this file", icon="INFO")
-            row = layout.row(align=True)
-            row.operator("og.create_level", text="Add Level", icon="ADD")
-            row.operator("og.assign_collection_as_level", text="Assign Existing", icon="OUTLINER_COLLECTION")
-            return
+            layout.label(text="No levels in this file")
 
         for col in levels:
             lname   = col.get("og_level_name", col.name)
-            base_id = int(col.get("og_base_id", 10000))
             is_active = (active is not None and col.name == active.name)
 
-            box = layout.box()
-            row = box.row(align=True)
-
-            if is_active:
-                row.label(text=f"▶ {lname}", icon="SCENE_DATA")
-            else:
-                op = row.operator("og.set_active_level", text=lname, icon="SCENE_DATA")
-                op.col_name = col.name
-
-            sub = row.row(align=True)
-            sub.alignment = "RIGHT"
-            sub.label(text=f"ID:{base_id}")
-            op = row.operator("og.delete_level", text="", icon="TRASH")
+            row = layout.row(align=True)
+            op = row.operator("og.set_active_level", text=lname,
+                              icon="RADIOBUT_ON" if is_active else "RADIOBUT_OFF",
+                              depress=is_active)
             op.col_name = col.name
-
-            if is_active:
-                # Show child collection count
-                n_children = len([c for c in col.children])
-                n_objects  = len(_recursive_col_objects(col, exclude_no_export=False))
-                info_row = box.row()
-                info_row.enabled = False
-                info_row.label(text=f"{n_children} sub-collections  ·  {n_objects} objects")
+            op = row.operator("og.delete_level", text="", icon="X")
+            op.col_name = col.name
 
         layout.separator(factor=0.4)
         row = layout.row(align=True)
