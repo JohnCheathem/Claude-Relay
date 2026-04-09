@@ -1039,7 +1039,7 @@ def write_gc(name, has_triggers=False, has_checkpoints=False):
             "   (ymax      float   :offset-assert 204)",
             "   (zmin      float   :offset-assert 208)",
             "   (zmax      float   :offset-assert 212))",
-            "  :heap-base #x68",
+            "  :heap-base #x70",
             "  :size-assert #xd8",
             "  (:states checkpoint-trigger-active))",
             "",
