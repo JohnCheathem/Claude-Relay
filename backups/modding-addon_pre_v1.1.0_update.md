@@ -94,38 +94,6 @@ The Spawn panel has separate sub-panels per category, each with its own filtered
 
 Each enemy dropdown entry shows `[TpageGroup] Label [nav]` to remind about navmesh/OOM requirements. Clicking **Add Entity** spawns the type selected in whichever sub-panel you used and syncs `entity_type` for export.
 
-### Addon Panel Layout (v1.1.0)
-
-The N-panel tab "OpenGOAL" has this hierarchy:
-
-| Panel | Type | Purpose |
-|---|---|---|
-| ⚙ Level | parent, always open | Level name, base ID, death plane |
-| └ 🗺 Level Flow | sub, collapsed | Spawns, checkpoints, bsphere |
-| └ 🗂 Level Manager | sub, collapsed | Discovered levels list |
-| └ 💡 Light Baking | sub, collapsed | Samples + bake button |
-| └ 🎵 Music | sub, collapsed | Music bank, sound banks |
-| ➕ Spawn Objects | parent, collapsed | (content in sub-panels) |
-| └ ⚔ Enemies | sub, collapsed | Per-category dropdown, Add Entity |
-| └ 🟦 Platforms | sub, collapsed | Platform type, Add Platform |
-| └ 📦 Props & Objects | sub, collapsed | Per-category dropdown, Add Entity |
-| └ 🧍 NPCs | sub, collapsed | Per-category dropdown, Add Entity |
-| └ ⭐ Pickups | sub, collapsed | Per-category dropdown, Add Entity |
-| └ 🔊 Sound Emitters | sub, collapsed | Pick sound, Add Emitter |
-| 🔍 Selected Object | standalone, poll-gated | Context-aware settings for active object |
-| 〰 Waypoints | standalone, poll-gated | Waypoint list + add/delete |
-| 🔗 Triggers | standalone, always visible | Volume linking, volume list |
-| 📷 Camera | standalone, collapsed | Camera list, mode/blend/FOV per camera |
-| ▶ Build & Play | standalone, always visible | Export, Build, Play buttons |
-| 🔧 Developer Tools | standalone, collapsed | Quick open, reload addon |
-| Collision | standalone, poll-gated | Per-object collision/visibility flags |
-
-**Selected Object panel** is the primary edit hub — select any OG-managed object
-and it shows all relevant settings (navmesh link/unlink, platform sync, waypoints,
-camera mode/blend/FOV/look-at, volume linking, collision, light baking, navmesh
-tagging). Spawn sub-panels are for *placing* new objects; Selected Object is for
-*editing* placed objects.
-
 ### Bsphere radius
 - Enemies and Bosses: **120 meters** — required so `draw-status was-drawn` gets set, enabling AI logic
 - Everything else: **10 meters**
