@@ -141,3 +141,96 @@ since the heavy link/unlink instructions now live in the Enemies sub-panel.
 - [ ] Collision: still appears on mesh objects
 - [ ] EXPORT: place entities, export, build, verify .jsonc output correct
 - [ ] EXPORT: place nav-enemy with linked mesh, export, verify entity.gc patched
+
+---
+
+## Next Session: Selected Object Panel (new feature)
+
+### Design Decision
+Standalone top-level panel (not a sub-panel under Spawn).
+Rationale: applies to ALL placed objects, not just spawn workflow.
+Can be expanded later for any object-level settings.
+
+### Panel spec
+```
+🔍 Selected Object    OG_PT_SelectedObject   (standalone, poll-gated)
+   - poll(): returns True when active object is any OG-managed object
+             (ACTOR_, SPAWN_, CHECKPOINT_, AMBIENT_, VOL_, CAMERA_, NAVMESH_)
+   - No DEFAULT_CLOSED — always open when it has content
+   - Position: between Spawn and Waypoints in registration order
+```
+
+### What it shows per object type
+
+**Nav-enemy actor** (ACTOR_ where _actor_uses_navmesh):
+- Entity label + type
+- NavMesh link status: "✓ meshname [X]" or "No mesh linked"
+- Link/unlink buttons
+- Nav radius setting
+
+**Process-drawable enemy** (ACTOR_ where nav_safe=True, not prop):
+- Entity label + type
+- Path requirements warning (needs_path / needs_pathb)
+
+**Platform actor** (ACTOR_ where _actor_is_platform):
+- Platform type label
+- All platform settings (speed, pause, wrap, sync, etc.)
+- Currently these live in SpawnPlatforms — move them here
+
+**Prop actor** (ACTOR_ where is_prop):
+- Entity label
+- "Prop — idle animation only" info
+
+**Sound emitter** (AMBIENT_):
+- Sound name, mode, radius
+- Edit fields for sound properties
+
+**Spawn point** (SPAWN_):
+- Camera status (exists / missing + add button)
+
+**Checkpoint** (CHECKPOINT_):
+- Camera status
+- Volume link status + link/unlink
+
+**Trigger volume** (VOL_):
+- Linked target name
+- Unlink button
+
+**Camera anchor** (*_CAM):
+- Parent object name
+
+**Navmesh mesh** (object with og_navmesh_link pointing to it):
+- Which actor(s) reference this mesh
+- Triangle count
+
+### Impact on existing panels
+
+- **SpawnPlatforms**: remove platform settings section from draw().
+  Keep only: type dropdown, Add Platform button, platform list.
+  Settings move to Selected Object panel.
+- **SpawnEnemies / _draw_entity_sub**: remove entire inline navmesh section.
+  Keep only: dropdown, wiki preview, spawn requirements info, Add Entity button.
+  NavMesh management moves to Selected Object panel.
+- **LevelFlow**: spawn/checkpoint camera + volume info could stay there
+  (it's a listing view) but Selected Object becomes the edit point.
+- **Waypoints panel**: unchanged — it's already context-sensitive and
+  complementary (manages the waypoint *list*, not individual settings).
+
+### Implementation approach
+
+1. Create OG_PT_SelectedObject with poll()
+2. In draw(), dispatch based on object name prefix / custom props
+3. Move platform settings draw code from SpawnPlatforms
+4. Move navmesh inline code from _draw_entity_sub
+5. Add new sections for AMBIENT_, SPAWN_, CHECKPOINT_, VOL_
+6. Test that Spawn sub-panels still work for placement-only workflow
+7. Remove dead code from old locations
+
+### Registration order
+```
+OG_PT_Spawn (and sub-panels)
+OG_PT_SelectedObject          ← NEW, here
+OG_PT_Waypoints
+OG_PT_Triggers
+...
+```
