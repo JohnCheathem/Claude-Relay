@@ -937,10 +937,10 @@ def collect_cameras(scene):
     return camera_actors, trigger_actors
 
 
-def write_gc(name, has_triggers=False):
+def write_gc(name, has_triggers=False, has_checkpoints=False):
     """Write obs.gc: always emits camera-marker type; if has_triggers also
-    emits camera-trigger type that births automatically on level load.
-    No nREPL call needed -- both types birth via entity-actor.birth!
+    emits camera-trigger type; if has_checkpoints emits checkpoint-trigger type.
+    All types birth automatically via entity-actor.birth! — no nREPL needed.
     """
     d = _goal_src() / "levels" / name
     d.mkdir(parents=True, exist_ok=True)
@@ -1020,6 +1020,48 @@ def write_gc(name, has_triggers=False):
             "",
         ]
         log(f"  [write_gc] camera-trigger type embedded")
+
+    if has_checkpoints:
+        lines += [
+            ";; checkpoint-trigger: invisible sphere that calls set-continue! when",
+            ";; Jak enters it. One-shot — fires once, latches, never fires again.",
+            ";; Reads 'continue-name' lump (string) and 'radius' lump (metres).",
+            "(deftype checkpoint-trigger (process-drawable)",
+            "  ((cp-name   string  :offset-assert 176)",
+            "   (radius    float   :offset-assert 180)",
+            "   (triggered symbol  :offset-assert 184))",
+            "  :heap-base #x40",
+            "  :size-assert #xbc",
+            "  (:states checkpoint-trigger-active))",
+            "",
+            "(defstate checkpoint-trigger-active (checkpoint-trigger)",
+            "  :code",
+            "  (behavior ()",
+            "    (loop",
+            "      (when (and *target* (not (-> self triggered)))",
+            "        (let* ((pos   (-> *target* control trans))",
+            "               (dx    (- (-> pos x) (-> self root trans x)))",
+            "               (dy    (- (-> pos y) (-> self root trans y)))",
+            "               (dz    (- (-> pos z) (-> self root trans z)))",
+            "               (dist2 (+ (* dx dx) (* dy dy) (* dz dz)))",
+            "               (r     (-> self radius))",
+            "               (r2    (* r r)))",
+            "          (when (< dist2 r2)",
+            "            (set! (-> self triggered) #t)",
+            "            (set-continue! *game-info* (-> self cp-name)))))",
+            "      (suspend))))",
+            "",
+            "(defmethod init-from-entity! ((this checkpoint-trigger) (arg0 entity-actor))",
+            "  (set! (-> this root) (new (quote process) (quote trsqv)))",
+            "  (process-drawable-from-entity! this arg0)",
+            "  (set! (-> this cp-name) (res-lump-struct arg0 (quote continue-name) string))",
+            "  (set! (-> this radius) (res-lump-float arg0 (quote radius) :default 12288.0))",
+            "  (set! (-> this triggered) #f)",
+            "  (go checkpoint-trigger-active)",
+            "  (none))",
+            "",
+        ]
+        log(f"  [write_gc] checkpoint-trigger type embedded")
 
     new_text = "\n".join(lines)
     if p.exists() and p.read_text() == new_text:
@@ -2639,6 +2681,46 @@ def collect_actors(scene):
             "bsphere":   [gx, gy, gz, bsph_r],
             "lump":      lump,
         })
+
+    # ── Checkpoint trigger actors ─────────────────────────────────────────────
+    # CHECKPOINT_ empties export as two things:
+    #   1. A continue-point record in level-info.gc (via collect_spawns) — the
+    #      spawn data the engine uses on respawn.
+    #   2. A checkpoint-trigger actor in the JSONC (here) — an invisible sphere
+    #      that calls set-continue! when Jak enters it.
+    # Both are needed: the actor does the triggering, the continue-point holds
+    # the spawn position. The actor's continue-name lump must match the
+    # continue-point name exactly: "{level_name}-{uid}".
+    level_name_for_cp = scene.og_props.level_name.strip().lower().replace(" ", "-")
+    for o in sorted(scene.objects, key=lambda o: o.name):
+        if not (o.name.startswith("CHECKPOINT_") and o.type == "EMPTY"):
+            continue
+        if o.name.endswith("_CAM"):
+            continue
+        uid = o.name[11:] or "cp0"
+        l   = o.location
+        gx  = round(l.x,  4)
+        gy  = round(l.z,  4)
+        gz  = round(-l.y, 4)
+        r   = float(o.get("og_checkpoint_radius", 3.0))
+        # continue-name must be a bare string → ResString (not a symbol)
+        cp_name = f"{level_name_for_cp}-{uid}"
+        lump = {
+            "name":          f"checkpoint-trigger-{uid}",
+            "continue-name": cp_name,
+            "radius":        ["meters", r],
+        }
+        out.append({
+            "trans":     [gx, gy, gz],
+            "etype":     "checkpoint-trigger",
+            "game_task": "(game-task none)",
+            "quat":      [0, 0, 0, 1],
+            "vis_id":    0,
+            "bsphere":   [gx, gy, gz, max(r, 3.0)],
+            "lump":      lump,
+        })
+        log(f"  [checkpoint] {o.name} → '{cp_name}'  r={r}m")
+
     return out
 
 def collect_ambients(scene):
@@ -3200,6 +3282,7 @@ class OG_OT_SpawnCheckpoint(Operator):
         o = ctx.active_object
         o.name = f"CHECKPOINT_{uid}"; o.show_name = True
         o.empty_display_size = 1.2; o.color = (1.0, 0.85, 0.0, 1.0)
+        o["og_checkpoint_radius"] = 3.0
         self.report({"INFO"}, f"Added {o.name}")
         return {"FINISHED"}
 
@@ -3493,7 +3576,7 @@ def _bg_build(name, scene):
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
-        write_gc(name, has_triggers=bool(trigger_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -3865,7 +3948,7 @@ def _bg_geo_rebuild(name, scene):
         base_id = scene.og_props.base_id
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
-        write_gc(name, has_triggers=bool(trigger_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
         patch_level_info(name, spawns, scene)  # update spawn continue-points if moved
 
         # Run (mi) — re-extracts GLB, repacks DGO, skips unchanged .gc files
@@ -3983,7 +4066,7 @@ def _bg_build_and_play(name, scene):
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
-        write_gc(name, has_triggers=bool(trigger_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -4351,6 +4434,8 @@ class OG_PT_Scene(Panel):
                 for o in sorted(checkpoints, key=lambda x: x.name):
                     row = box.row(align=True)
                     row.label(text=o.name, icon="EMPTY_SINGLE_ARROW")
+                    r = float(o.get("og_checkpoint_radius", 3.0))
+                    row.label(text=f"r={r:.1f}m")
                     cam_obj = scene.objects.get(o.name + "_CAM")
                     if cam_obj:
                         row.label(text="📷", icon="NONE")
