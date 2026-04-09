@@ -1023,15 +1023,24 @@ def write_gc(name, has_triggers=False, has_checkpoints=False):
 
     if has_checkpoints:
         lines += [
-            ";; checkpoint-trigger: invisible sphere that calls set-continue! when",
-            ";; Jak enters it. One-shot — fires once, latches, never fires again.",
-            ";; Reads 'continue-name' lump (string) and 'radius' lump (metres).",
+            ";; checkpoint-trigger: invisible entity that calls set-continue! when Jak enters.",
+            ";; Two modes depending on lumps present:",
+            ";;   Sphere mode (default): polls distance against 'radius lump.",
+            ";;   AABB mode (when has-volume lump = 1): polls against 6 bound-* lumps.",
+            ";; One-shot — triggered flag latches, never fires again this session.",
             "(deftype checkpoint-trigger (process-drawable)",
             "  ((cp-name   string  :offset-assert 176)",
             "   (radius    float   :offset-assert 180)",
-            "   (triggered symbol  :offset-assert 184))",
-            "  :heap-base #x50",
-            "  :size-assert #xbc",
+            "   (triggered symbol  :offset-assert 184)",
+            "   (use-vol   symbol  :offset-assert 188)",
+            "   (xmin      float   :offset-assert 192)",
+            "   (xmax      float   :offset-assert 196)",
+            "   (ymin      float   :offset-assert 200)",
+            "   (ymax      float   :offset-assert 204)",
+            "   (zmin      float   :offset-assert 208)",
+            "   (zmax      float   :offset-assert 212))",
+            "  :heap-base #x68",
+            "  :size-assert #xd8",
             "  (:states checkpoint-trigger-active))",
             "",
             "(defstate checkpoint-trigger-active (checkpoint-trigger)",
@@ -1039,14 +1048,18 @@ def write_gc(name, has_triggers=False, has_checkpoints=False):
             "  (behavior ()",
             "    (loop",
             "      (when (and *target* (not (-> self triggered)))",
-            "        (let* ((pos   (-> *target* control trans))",
-            "               (dx    (- (-> pos x) (-> self root trans x)))",
-            "               (dy    (- (-> pos y) (-> self root trans y)))",
-            "               (dz    (- (-> pos z) (-> self root trans z)))",
-            "               (dist2 (+ (* dx dx) (* dy dy) (* dz dz)))",
-            "               (r     (-> self radius))",
-            "               (r2    (* r r)))",
-            "          (when (< dist2 r2)",
+            "        (let* ((pos (-> *target* control trans))",
+            "               (inside (if (-> self use-vol)",
+            "                 (and",
+            "                   (< (-> self xmin) (-> pos x)) (< (-> pos x) (-> self xmax))",
+            "                   (< (-> self ymin) (-> pos y)) (< (-> pos y) (-> self ymax))",
+            "                   (< (-> self zmin) (-> pos z)) (< (-> pos z) (-> self zmax)))",
+            "                 (let* ((dx (- (-> pos x) (-> self root trans x)))",
+            "                        (dy (- (-> pos y) (-> self root trans y)))",
+            "                        (dz (- (-> pos z) (-> self root trans z)))",
+            "                        (r  (-> self radius)))",
+            "                   (< (+ (* dx dx) (* dy dy) (* dz dz)) (* r r))))))",
+            "          (when inside",
             "            (set! (-> self triggered) #t)",
             "            (set-continue! *game-info* (-> self cp-name)))))",
             "      (suspend))))",
@@ -1054,9 +1067,16 @@ def write_gc(name, has_triggers=False, has_checkpoints=False):
             "(defmethod init-from-entity! ((this checkpoint-trigger) (arg0 entity-actor))",
             "  (set! (-> this root) (new (quote process) (quote trsqv)))",
             "  (process-drawable-from-entity! this arg0)",
-            "  (set! (-> this cp-name) (res-lump-struct arg0 (quote continue-name) string))",
-            "  (set! (-> this radius) (res-lump-float arg0 (quote radius) :default 12288.0))",
+            "  (set! (-> this cp-name)   (res-lump-struct arg0 (quote continue-name) string))",
+            "  (set! (-> this radius)    (res-lump-float  arg0 (quote radius)     :default 12288.0))",
             "  (set! (-> this triggered) #f)",
+            "  (set! (-> this use-vol)   (!= 0 (the int (res-lump-value arg0 (quote has-volume) uint128))))",
+            "  (set! (-> this xmin)      (res-lump-float arg0 (quote bound-xmin)))",
+            "  (set! (-> this xmax)      (res-lump-float arg0 (quote bound-xmax)))",
+            "  (set! (-> this ymin)      (res-lump-float arg0 (quote bound-ymin)))",
+            "  (set! (-> this ymax)      (res-lump-float arg0 (quote bound-ymax)))",
+            "  (set! (-> this zmin)      (res-lump-float arg0 (quote bound-zmin)))",
+            "  (set! (-> this zmax)      (res-lump-float arg0 (quote bound-zmax)))",
             "  (go checkpoint-trigger-active)",
             "  (none))",
             "",
@@ -2686,12 +2706,25 @@ def collect_actors(scene):
     # CHECKPOINT_ empties export as two things:
     #   1. A continue-point record in level-info.gc (via collect_spawns) — the
     #      spawn data the engine uses on respawn.
-    #   2. A checkpoint-trigger actor in the JSONC (here) — an invisible sphere
+    #   2. A checkpoint-trigger actor in the JSONC (here) — an invisible entity
     #      that calls set-continue! when Jak enters it.
     # Both are needed: the actor does the triggering, the continue-point holds
     # the spawn position. The actor's continue-name lump must match the
     # continue-point name exactly: "{level_name}-{uid}".
+    #
+    # Volume mode: if a CPVOL_ mesh is linked (og_cp_link = checkpoint name),
+    # the actor uses AABB bounds instead of sphere radius. The GOAL code reads
+    # a 'has-volume' lump (uint32 1) to choose AABB vs sphere.
     level_name_for_cp = scene.og_props.level_name.strip().lower().replace(" ", "-")
+
+    # Build cp_name → vol_obj map from linked CPVOL_ meshes
+    vol_by_cp = {}
+    for o in scene.objects:
+        if o.type == "MESH" and o.name.startswith("CPVOL_"):
+            link = o.get("og_cp_link", "")
+            if link:
+                vol_by_cp[link] = o
+
     for o in sorted(scene.objects, key=lambda o: o.name):
         if not (o.name.startswith("CHECKPOINT_") and o.type == "EMPTY"):
             continue
@@ -2703,23 +2736,52 @@ def collect_actors(scene):
         gy  = round(l.z,  4)
         gz  = round(-l.y, 4)
         r   = float(o.get("og_checkpoint_radius", 3.0))
-        # continue-name must be a bare string → ResString (not a symbol)
         cp_name = f"{level_name_for_cp}-{uid}"
         lump = {
             "name":          f"checkpoint-trigger-{uid}",
             "continue-name": cp_name,
-            "radius":        ["meters", r],
         }
-        out.append({
-            "trans":     [gx, gy, gz],
-            "etype":     "checkpoint-trigger",
-            "game_task": "(game-task none)",
-            "quat":      [0, 0, 0, 1],
-            "vis_id":    0,
-            "bsphere":   [gx, gy, gz, max(r, 3.0)],
-            "lump":      lump,
-        })
-        log(f"  [checkpoint] {o.name} → '{cp_name}'  r={r}m")
+
+        vol_obj = vol_by_cp.get(o.name)
+        if vol_obj:
+            # AABB mode — derive bounds from volume mesh world-space verts
+            corners = [vol_obj.matrix_world @ v.co for v in vol_obj.data.vertices]
+            gc = [(c.x, c.z, -c.y) for c in corners]  # bl→game remap
+            xs = [c[0] for c in gc]; ys = [c[1] for c in gc]; zs = [c[2] for c in gc]
+            cx = round((min(xs)+max(xs))/2, 4)
+            cy = round((min(ys)+max(ys))/2, 4)
+            cz = round((min(zs)+max(zs))/2, 4)
+            rad = round(max(max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs))/2 + 2.0, 2)
+            lump["has-volume"]  = ["uint32", 1]
+            lump["bound-xmin"]  = ["meters", round(min(xs), 4)]
+            lump["bound-xmax"]  = ["meters", round(max(xs), 4)]
+            lump["bound-ymin"]  = ["meters", round(min(ys), 4)]
+            lump["bound-ymax"]  = ["meters", round(max(ys), 4)]
+            lump["bound-zmin"]  = ["meters", round(min(zs), 4)]
+            lump["bound-zmax"]  = ["meters", round(max(zs), 4)]
+            out.append({
+                "trans":     [cx, cy, cz],
+                "etype":     "checkpoint-trigger",
+                "game_task": "(game-task none)",
+                "quat":      [0, 0, 0, 1],
+                "vis_id":    0,
+                "bsphere":   [cx, cy, cz, rad],
+                "lump":      lump,
+            })
+            log(f"  [checkpoint] {o.name} → '{cp_name}'  AABB vol={vol_obj.name}")
+        else:
+            # Sphere mode — use og_checkpoint_radius
+            lump["radius"] = ["meters", r]
+            out.append({
+                "trans":     [gx, gy, gz],
+                "etype":     "checkpoint-trigger",
+                "game_task": "(game-task none)",
+                "quat":      [0, 0, 0, 1],
+                "vis_id":    0,
+                "bsphere":   [gx, gy, gz, max(r, 3.0)],
+                "lump":      lump,
+            })
+            log(f"  [checkpoint] {o.name} → '{cp_name}'  sphere r={r}m")
 
     return out
 
@@ -3322,9 +3384,81 @@ class OG_OT_SpawnCamAnchor(Operator):
         self.report({"INFO"}, f"Added {cam_name}")
         return {"FINISHED"}
 
-class OG_OT_SpawnEntity(Operator):
-    bl_idname = "og.spawn_entity"
-    bl_label  = "Add Entity"
+class OG_OT_SpawnCpVolume(Operator):
+    bl_idname = "og.spawn_cp_volume"
+    bl_label  = "Add Checkpoint Volume"
+    bl_description = (
+        "Add a box mesh trigger volume for a checkpoint. "
+        "Resize and position it, then use 'Link to Checkpoint' to connect it."
+    )
+    def execute(self, ctx):
+        n = len([o for o in ctx.scene.objects
+                 if o.name.startswith("CPVOL_") and o.type == "MESH"])
+        bpy.ops.mesh.primitive_cube_add(size=4.0, location=ctx.scene.cursor.location)
+        vol = ctx.active_object
+        vol.name = f"CPVOL_{n}"
+        vol.show_name = True
+        vol.display_type = "WIRE"
+        vol.color = (1.0, 0.85, 0.0, 0.4)
+        vol.set_invisible = True
+        vol.set_collision = True
+        vol.ignore        = True
+        self.report({"INFO"}, f"Added {vol.name}  —  resize, then Link to Checkpoint")
+        return {"FINISHED"}
+
+
+class OG_OT_LinkCpVolume(Operator):
+    """Link a CPVOL_ mesh to a CHECKPOINT_ empty.
+    Select the CPVOL mesh + the CHECKPOINT_ empty (any order, shift-click both), then click."""
+    bl_idname   = "og.link_cp_volume"
+    bl_label    = "Link to Checkpoint"
+    bl_description = (
+        "Select the checkpoint volume mesh + the CHECKPOINT_ empty (shift-click both), then click.\n"
+        "When Jak enters the volume the checkpoint will be set."
+    )
+
+    def execute(self, ctx):
+        selected = ctx.selected_objects
+        cps  = [o for o in selected if o.type == "EMPTY"
+                and o.name.startswith("CHECKPOINT_") and not o.name.endswith("_CAM")]
+        vols = [o for o in selected if o.type == "MESH"
+                and o.name.startswith("CPVOL_")]
+
+        if not vols:
+            self.report({"ERROR"}, "No CPVOL_ mesh in selection — add a checkpoint volume first")
+            return {"CANCELLED"}
+        if len(vols) > 1:
+            self.report({"ERROR"}, "Multiple volumes selected — select exactly one")
+            return {"CANCELLED"}
+        if not cps:
+            self.report({"ERROR"}, "No CHECKPOINT_ empty in selection — select the checkpoint too")
+            return {"CANCELLED"}
+        if len(cps) > 1:
+            self.report({"ERROR"}, "Multiple checkpoints selected — select exactly one")
+            return {"CANCELLED"}
+
+        vol = vols[0]; cp = cps[0]
+        vol["og_cp_link"] = cp.name
+        self.report({"INFO"}, f"Linked {vol.name} → {cp.name}")
+        return {"FINISHED"}
+
+
+class OG_OT_UnlinkCpVolume(Operator):
+    """Remove the checkpoint link from the selected CPVOL_ mesh."""
+    bl_idname   = "og.unlink_cp_volume"
+    bl_label    = "Unlink Checkpoint Volume"
+    bl_description = "Remove the checkpoint link from the selected volume mesh"
+
+    def execute(self, ctx):
+        count = 0
+        for o in ctx.selected_objects:
+            if "og_cp_link" in o:
+                del o["og_cp_link"]
+                count += 1
+        self.report({"INFO"}, f"Unlinked {count} volume(s)")
+        return {"FINISHED"}
+
+
     bl_description = "Place selected entity at the 3D cursor"
     def execute(self, ctx):
         etype = ctx.scene.og_props.entity_type
@@ -4431,26 +4565,61 @@ class OG_PT_Scene(Panel):
             if checkpoints:
                 box.separator(factor=0.3)
                 box.label(text=f"Checkpoints ({len(checkpoints)})", icon="KEYFRAME_HLT")
+                # Build vol_by_cp map for display
+                vol_by_cp_panel = {}
+                for o in scene.objects:
+                    if o.type == "MESH" and o.name.startswith("CPVOL_"):
+                        link = o.get("og_cp_link", "")
+                        if link:
+                            vol_by_cp_panel[link] = o
                 for o in sorted(checkpoints, key=lambda x: x.name):
                     row = box.row(align=True)
                     row.label(text=o.name, icon="EMPTY_SINGLE_ARROW")
-                    r = float(o.get("og_checkpoint_radius", 3.0))
-                    row.label(text=f"r={r:.1f}m")
+                    vol = vol_by_cp_panel.get(o.name)
+                    if vol:
+                        row.label(text=f"📦 {vol.name}")
+                    else:
+                        r = float(o.get("og_checkpoint_radius", 3.0))
+                        sub = row.row()
+                        sub.alert = True
+                        sub.label(text=f"r={r:.1f}m")
                     cam_obj = scene.objects.get(o.name + "_CAM")
                     if cam_obj:
                         row.label(text="📷", icon="NONE")
 
-            # ── Camera anchor helper ──────────────────────────────────────────
+            # ── Camera anchor + volume helpers (context-sensitive) ────────────
             sel = ctx.active_object
-            if sel and sel.type == "EMPTY" and (sel.name.startswith("SPAWN_") or sel.name.startswith("CHECKPOINT_")):
-                cam_exists = bool(scene.objects.get(sel.name + "_CAM"))
+            if sel and sel.type == "EMPTY" and (sel.name.startswith("SPAWN_") or sel.name.startswith("CHECKPOINT_")) and not sel.name.endswith("_CAM"):
+                is_cp = sel.name.startswith("CHECKPOINT_")
                 layout.separator(factor=0.3)
+                sub = layout.column(align=True)
+
+                # Camera anchor
+                cam_exists = bool(scene.objects.get(sel.name + "_CAM"))
                 if not cam_exists:
-                    layout.operator("og.spawn_cam_anchor", text=f"Add Camera for {sel.name}", icon="CAMERA_DATA")
+                    sub.operator("og.spawn_cam_anchor", text=f"Add Camera for {sel.name}", icon="CAMERA_DATA")
                 else:
-                    row = layout.row()
+                    row = sub.row()
                     row.enabled = False
                     row.label(text=f"{sel.name}_CAM exists ✓", icon="CHECKMARK")
+
+                # Volume (checkpoints only)
+                if is_cp:
+                    vol_by_cp_sel = {}
+                    for o in scene.objects:
+                        if o.type == "MESH" and o.name.startswith("CPVOL_"):
+                            lnk = o.get("og_cp_link", "")
+                            if lnk:
+                                vol_by_cp_sel[lnk] = o
+                    vol_linked = vol_by_cp_sel.get(sel.name)
+                    if vol_linked:
+                        row = sub.row()
+                        row.enabled = False
+                        row.label(text=f"{vol_linked.name} linked ✓", icon="MESH_CUBE")
+                        sub.operator("og.unlink_cp_volume", text="Unlink Volume", icon="X")
+                    else:
+                        sub.operator("og.spawn_cp_volume", text="Add Trigger Volume", icon="MESH_CUBE")
+                        sub.label(text="Then shift-select vol + CP → Link", icon="INFO")
 
         # ── Level flow settings ───────────────────────────────────────────────
         layout.separator(factor=0.5)
@@ -5522,7 +5691,9 @@ class OG_PT_LevelManager(Panel):
 
 classes = (
     OGPreferences, OGProperties,
-    OG_OT_SpawnPlayer, OG_OT_SpawnCheckpoint, OG_OT_SpawnCamAnchor, OG_OT_SpawnEntity,
+    OG_OT_SpawnPlayer, OG_OT_SpawnCheckpoint, OG_OT_SpawnCamAnchor,
+    OG_OT_SpawnCpVolume, OG_OT_LinkCpVolume, OG_OT_UnlinkCpVolume,
+    OG_OT_SpawnEntity,
     OG_OT_SpawnCamera, OG_OT_SpawnCamVolume, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
     OG_OT_SpawnCamLookAt,
     OG_OT_LinkCamVolume, OG_OT_UnlinkCamVolume,
