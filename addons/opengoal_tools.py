@@ -4408,103 +4408,127 @@ class OG_OT_AddSoundEmitter(Operator):
         return {"FINISHED"}
 
 
-class OG_PT_Audio(Panel):
-    bl_label       = "🔊  Audio / Ambience"
-    bl_idname      = "OG_PT_audio"
-    bl_space_type  = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category    = "OpenGOAL"
-    bl_options     = {"DEFAULT_CLOSED"}
-
-    def draw(self, ctx):
-        layout = self.layout
-        props  = ctx.scene.og_props
-        b1     = props.sound_bank_1
-        b2     = props.sound_bank_2
-
-        # ── Level Music ──────────────────────────────────────────────────
-        box = layout.box()
-        box.label(text="Level Music", icon="PLAY")
-        box.prop(props, "music_bank", text="Music Bank")
-
-        # ── Sound Banks ──────────────────────────────────────────────────
-        box2 = layout.box()
-        box2.label(text="Sound Banks  (max 2)", icon="SPEAKER")
-        col2 = box2.column(align=True)
-        col2.prop(props, "sound_bank_1", text="Bank 1")
-        col2.prop(props, "sound_bank_2", text="Bank 2")
-        if b1 != "none" and b1 == b2:
-            box2.label(text="⚠ Bank 1 and Bank 2 are the same", icon="ERROR")
-        n_common = len(SBK_SOUNDS.get("common", []))
-        n_level  = len(set(SBK_SOUNDS.get(b1, [])) | set(SBK_SOUNDS.get(b2, [])))
-        box2.label(text=f"{n_common} common  +  {n_level} level  =  {n_common + n_level} available", icon="INFO")
-
-        layout.separator(factor=0.4)
-
-        # ── Sound Emitters ───────────────────────────────────────────────
-        box3 = layout.box()
-        box3.label(text="Sound Emitters", icon="OUTLINER_OB_SPEAKER")
-        col3 = box3.column(align=True)
-        col3.prop(props, "ambient_default_radius", text="Default Radius (m)")
-        col3.separator(factor=0.4)
-
-        # Sound picker — full width button, shows selected sound name
-        snd_display = props.sfx_sound.split("__")[0] if "__" in props.sfx_sound else props.sfx_sound
-        pick_row = col3.row(align=True)
-        pick_row.scale_y = 1.2
-        pick_row.operator("og.pick_sound", text=f"🔊  {snd_display}", icon="VIEWZOOM")
-
-        col3.separator(factor=0.4)
-        row2 = col3.row()
-        row2.scale_y = 1.4
-        row2.operator("og.add_sound_emitter", text="Add Emitter at Cursor", icon="ADD")
-
-        # List existing emitters
-        emitters = [o for o in ctx.scene.objects
-                    if o.name.startswith("AMBIENT_") and o.type == "EMPTY"
-                    and o.get("og_sound_name")]
-        if emitters:
-            layout.separator(factor=0.3)
-            sub = layout.box()
-            sub.label(text=f"{len(emitters)} emitter(s) in scene:", icon="OUTLINER_OB_EMPTY")
-            for o in emitters[:8]:
-                row = sub.row(align=True)
-                snd  = o.get("og_sound_name", "?")
-                mode = o.get("og_sound_mode", "loop")
-                icon = "PREVIEW_RANGE" if mode == "loop" else "PLAYER"
-                row.label(text=f"{o.name}  →  {snd}  [{mode}]", icon=icon)
-            if len(emitters) > 8:
-                sub.label(text=f"… and {len(emitters) - 8} more")
-        else:
-            layout.label(text="No emitters placed yet", icon="INFO")
-
-
+# ===========================================================================
+# PANELS — Restructured UI
 # ---------------------------------------------------------------------------
-# PANELS
-# ---------------------------------------------------------------------------
-# Panel hierarchy (all under "OpenGOAL" N-panel tab):
+# Tab: OpenGOAL (N-panel)
 #
-#  OG_PT_LevelSettings   — Level name, base ID
-#  OG_PT_Scene           — Level Flow: spawns, checkpoints, death plane, bsphere
-#  OG_PT_PlaceObjects    — Entity picker + Add Entity
-#  OG_PT_Waypoints       — Waypoint management (context-sensitive, collapsible)
-#  OG_PT_NavMesh         — NavMesh linking via object picker
-#  OG_PT_BuildPlay       — Big ▶ Export, Build & Play button
-#  OG_PT_DevTools        — Expert options + Quick Open (collapsed)
-#  OG_PT_Collision       — Per-object collision (separate, object-context)
-# ---------------------------------------------------------------------------
+#  📁 Level              OG_PT_Level          (parent, always open)
+#    🗺 Level Flow        OG_PT_LevelFlow      (sub, DEFAULT_CLOSED)
+#    🗂 Level Manager     OG_PT_LevelManagerSub (sub, DEFAULT_CLOSED)
+#    💡 Light Baking      OG_PT_LightBakingSub  (sub, DEFAULT_CLOSED)
+#    🎵 Music             OG_PT_Music           (sub, DEFAULT_CLOSED)
+#
+#  📁 Spawn              OG_PT_Spawn          (parent, DEFAULT_CLOSED)
+#    ⚔ Enemies           OG_PT_SpawnEnemies   (sub, DEFAULT_CLOSED)
+#    🟦 Platforms         OG_PT_SpawnPlatforms (sub, DEFAULT_CLOSED)
+#    📦 Props & Objects   OG_PT_SpawnProps     (sub, DEFAULT_CLOSED)
+#    🧍 NPCs              OG_PT_SpawnNPCs      (sub, DEFAULT_CLOSED)
+#    ⭐ Pickups           OG_PT_SpawnPickups   (sub, DEFAULT_CLOSED)
+#    🔊 Sound Emitters    OG_PT_SpawnSounds    (sub, DEFAULT_CLOSED)
+#
+#  〰 Waypoints          OG_PT_Waypoints      (context, poll-gated)
+#  🔗 Triggers           OG_PT_Triggers       (always visible)
+#  📷 Camera             OG_PT_Camera         (DEFAULT_CLOSED)
+#  ▶  Build & Play       OG_PT_BuildPlay      (always visible)
+#  🔧 Developer Tools    OG_PT_DevTools       (DEFAULT_CLOSED)
+#  OpenGOAL Collision    OG_PT_Collision      (object context)
+# ===========================================================================
 
-# Shared header style helper
 def _header_sep(layout):
-    """A subtle separator line used between sub-sections inside a panel."""
     layout.separator(factor=0.4)
 
+# ---------------------------------------------------------------------------
+# Helpers — shared entity draw helpers
+# ---------------------------------------------------------------------------
 
-# ── Level Settings ───────────────────────────────────────────────────────────
+_ENEMY_CATS  = {"Enemies", "Bosses"}
+_PROP_CATS   = {"Props", "Objects", "Debug"}
+_NPC_CATS    = {"NPCs"}
+_PICKUP_CATS = {"Pickups"}
 
-class OG_PT_LevelSettings(Panel):
-    bl_label       = "⚙  Level Settings"
-    bl_idname      = "OG_PT_level_settings"
+def _entity_enum_for_cats(cats):
+    """Return enum items filtered to the given category set, in display order."""
+    return [
+        (ek, ei["label"], ei.get("label",""), i)
+        for i, (ek, ei) in enumerate(
+            (k, v) for k, v in ENTITY_DEFS.items() if v.get("cat") in cats
+        )
+    ]
+
+def _draw_entity_sub(layout, ctx, cats, nav_inline=False):
+    """Shared draw logic for entity sub-panels.
+    cats: set of category strings to include.
+    nav_inline: if True, show navmesh status/link inline when the selected entity needs it.
+    """
+    props = ctx.scene.og_props
+    etype = props.entity_type
+    einfo = ENTITY_DEFS.get(etype, {})
+    ecat  = einfo.get("cat", "")
+
+    # Entity picker — only show types relevant to this sub-panel
+    valid_types = [k for k, v in ENTITY_DEFS.items() if v.get("cat") in cats]
+
+    layout.prop(props, "entity_type", text="")
+
+    # If selected type is outside this sub-panel's scope, show a hint
+    if etype not in valid_types:
+        layout.label(text="Select a type from this category", icon="INFO")
+        return
+
+    if etype == "crate":
+        layout.prop(props, "crate_type", text="Crate Type")
+
+    _draw_wiki_preview(layout, etype, ctx)
+
+    # ── Spawn requirements info ──────────────────────────────────────────
+    if einfo.get("is_prop"):
+        box = layout.box()
+        box.label(text="Prop — idle animation only", icon="INFO")
+        box.label(text="No AI or combat")
+    elif nav_inline and etype in NAV_UNSAFE_TYPES:
+        box = layout.box()
+        box.label(text="Nav-enemy — needs navmesh", icon="ERROR")
+        box.prop(props, "nav_radius", text="Sphere Radius (m)")
+
+        # ── Inline navmesh link status ───────────────────────────────────
+        sel = ctx.active_object
+        if sel and sel.name.startswith("ACTOR_") and "_wp_" not in sel.name:
+            parts = sel.name.split("_", 2)
+            if len(parts) >= 3 and parts[1] == etype:
+                nm_name = sel.get("og_navmesh_link", "")
+                nm_obj  = bpy.data.objects.get(nm_name) if nm_name else None
+                layout.separator(factor=0.3)
+                layout.label(text="NavMesh", icon="MOD_MESHDEFORM")
+                row = layout.row(align=True)
+                if nm_obj:
+                    row.label(text=f"✓ {nm_obj.name}", icon="CHECKMARK")
+                    row.operator("og.unlink_navmesh", text="", icon="X")
+                else:
+                    row.label(text="No mesh linked", icon="ERROR")
+                    box2 = layout.box()
+                    box2.label(text="Shift-select enemy + navmesh quad,", icon="INFO")
+                    box2.label(text="then click Link below.")
+                    box2.operator("og.link_navmesh", text="Link NavMesh", icon="LINKED")
+    elif einfo.get("needs_pathb"):
+        box = layout.box()
+        box.label(text="Needs 2 path sets", icon="INFO")
+        box.label(text="Waypoints: _wp_00... and _wpb_00...")
+    elif einfo.get("needs_path"):
+        box = layout.box()
+        box.label(text="Needs waypoints to patrol", icon="INFO")
+
+    layout.separator(factor=0.3)
+    layout.operator("og.spawn_entity", text="Add Entity", icon="ADD")
+
+
+# ===========================================================================
+# LEVEL PANEL (parent)
+# ===========================================================================
+
+class OG_PT_Level(Panel):
+    bl_label       = "⚙  Level"
+    bl_idname      = "OG_PT_level"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
     bl_category    = "OpenGOAL"
@@ -4535,14 +4559,17 @@ class OG_PT_LevelSettings(Panel):
         col2.prop(props, "vis_nick_override", text="Vis Nick Override")
 
 
-# ── Scene Setup / Level Flow ──────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Level > Level Flow  (sub-panel)
+# ---------------------------------------------------------------------------
 
-class OG_PT_Scene(Panel):
+class OG_PT_LevelFlow(Panel):
     bl_label       = "🗺  Level Flow"
-    bl_idname      = "OG_PT_scene"
+    bl_idname      = "OG_PT_level_flow"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
     bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_level"
     bl_options     = {"DEFAULT_CLOSED"}
 
     def draw(self, ctx):
@@ -4550,7 +4577,6 @@ class OG_PT_Scene(Panel):
         props  = ctx.scene.og_props
         scene  = ctx.scene
 
-        # ── Spawn points ──────────────────────────────────────────────────────
         layout.label(text="Spawn Points", icon="ARMATURE_DATA")
         col = layout.column(align=True)
         col.operator("og.spawn_player",     text="Add Player Spawn",  icon="ADD")
@@ -4563,7 +4589,6 @@ class OG_PT_Scene(Panel):
             layout.separator(factor=0.4)
 
             if spawns:
-                # Collapsible spawns
                 row = layout.row()
                 icon = "TRIA_DOWN" if props.show_spawn_list else "TRIA_RIGHT"
                 row.prop(props, "show_spawn_list",
@@ -4586,13 +4611,11 @@ class OG_PT_Scene(Panel):
                         op.obj_name = o.name
 
             if checkpoints:
-                # Collapsible checkpoints
                 row = layout.row()
                 icon = "TRIA_DOWN" if props.show_checkpoint_list else "TRIA_RIGHT"
                 row.prop(props, "show_checkpoint_list",
                          text=f"Checkpoints ({len(checkpoints)})", icon=icon, emboss=False)
                 if props.show_checkpoint_list:
-                    # Build vol_by_cp map for display
                     vol_by_cp_panel = {}
                     for o in scene.objects:
                         if o.type == "MESH" and o.name.startswith("VOL_"):
@@ -4619,14 +4642,11 @@ class OG_PT_Scene(Panel):
                         op = row.operator("og.delete_object", text="", icon="TRASH")
                         op.obj_name = o.name
 
-            # ── Camera anchor + volume helpers (context-sensitive) ────────────
             sel = ctx.active_object
             if sel and sel.type == "EMPTY" and (sel.name.startswith("SPAWN_") or sel.name.startswith("CHECKPOINT_")) and not sel.name.endswith("_CAM"):
                 is_cp = sel.name.startswith("CHECKPOINT_")
                 layout.separator(factor=0.3)
                 sub = layout.column(align=True)
-
-                # Camera anchor
                 cam_exists = bool(scene.objects.get(sel.name + "_CAM"))
                 if not cam_exists:
                     sub.operator("og.spawn_cam_anchor", text=f"Add Camera for {sel.name}", icon="CAMERA_DATA")
@@ -4634,8 +4654,6 @@ class OG_PT_Scene(Panel):
                     row = sub.row()
                     row.enabled = False
                     row.label(text=f"{sel.name}_CAM exists ✓", icon="CHECKMARK")
-
-                # Volume (checkpoints only)
                 if is_cp:
                     vol_by_cp_sel = {}
                     for o in scene.objects:
@@ -4654,7 +4672,6 @@ class OG_PT_Scene(Panel):
                         op.target_name = sel.name
                         sub.label(text="Or use Triggers panel to link existing", icon="INFO")
 
-        # Bsphere preview
         if spawns or checkpoints:
             all_pts = spawns + checkpoints
             xs = [o.location.x for o in all_pts]
@@ -4670,52 +4687,357 @@ class OG_PT_Scene(Panel):
             info_row.label(text=f"Bsphere: r≈{r:.0f}m  centre ({cx:.1f}, {cy:.1f}, {cz:.1f})", icon="SPHERE")
 
 
-# ── Place Objects ─────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Level > Level Manager  (sub-panel)
+# ---------------------------------------------------------------------------
 
-class OG_PT_PlaceObjects(Panel):
-    bl_label       = "➕  Place Objects"
-    bl_idname      = "OG_PT_place_objects"
+class OG_PT_LevelManagerSub(Panel):
+    bl_label       = "🗂  Level Manager"
+    bl_idname      = "OG_PT_level_manager_sub"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_level"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        layout = self.layout
+
+        try:
+            levels = discover_custom_levels()
+        except Exception as e:
+            layout.label(text=f"Error scanning levels: {e}", icon="ERROR")
+            return
+
+        if not levels:
+            layout.label(text="No custom levels found", icon="INFO")
+            layout.label(text="Set data path in addon preferences")
+            return
+
+        for info in levels:
+            box  = layout.box()
+            row  = box.row()
+            if info["conflict"]:
+                row.alert = True
+                row.label(text=f"⚠ {info['name']}", icon="ERROR")
+            elif len(info["name"]) > 10:
+                row.alert = True
+                row.label(text=f"⚠ {info['name']} (name too long!)", icon="ERROR")
+            else:
+                row.label(text=info["name"], icon="SCENE_DATA")
+            op = row.operator("og.remove_level", text="", icon="TRASH")
+            op.level_name = info["name"]
+            srow = box.row(align=True)
+            srow.enabled = False
+            srow.label(text=f"glb:{'✓' if info['has_glb'] else '✗'}  "
+                           f"jsonc:{'✓' if info['has_jsonc'] else '✗'}  "
+                           f"obs:{'✓' if info['has_obs'] else '✗'}  "
+                           f"gp:{'✓' if info['has_gp'] else '✗'}  "
+                           f"DGO:{info['dgo']}")
+            if info["conflict"]:
+                box.label(text="DGO name conflict — rename this level!", icon="ERROR")
+            if not info["has_gp"] and (info["has_glb"] or info["has_obs"]):
+                box.label(text="Not registered in game.gp — re-export to fix", icon="ERROR")
+
+        layout.separator()
+        layout.operator("og.refresh_levels", text="Refresh List", icon="FILE_REFRESH")
+
+
+# ---------------------------------------------------------------------------
+# Level > Light Baking  (sub-panel)
+# ---------------------------------------------------------------------------
+
+class OG_PT_LightBakingSub(Panel):
+    bl_label       = "💡  Light Baking"
+    bl_idname      = "OG_PT_lightbaking_sub"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_level"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        layout = self.layout
+        props  = ctx.scene.og_props
+
+        col = layout.column(align=True)
+        col.label(text="Cycles Bake Settings:", icon="LIGHT")
+        col.prop(props, "lightbake_samples")
+
+        layout.separator(factor=0.5)
+
+        targets = [o for o in ctx.selected_objects if o.type == "MESH"]
+        if targets:
+            box = layout.box()
+            box.label(text=f"{len(targets)} mesh(es) selected:", icon="OBJECT_DATA")
+            for o in targets[:6]:
+                box.label(text=f"  • {o.name}")
+            if len(targets) > 6:
+                box.label(text=f"  … and {len(targets) - 6} more")
+        else:
+            layout.label(text="Select mesh object(s) to bake", icon="INFO")
+
+        layout.separator(factor=0.5)
+        row = layout.row()
+        row.enabled = len(targets) > 0
+        row.scale_y = 1.6
+        row.operator("og.bake_lighting", text="Bake Lighting → Vertex Color", icon="RENDER_STILL")
+        layout.separator(factor=0.3)
+        layout.label(text="Result stored in 'BakedLight' layer", icon="GROUP_VCOL")
+
+
+# ---------------------------------------------------------------------------
+# Level > Music  (sub-panel)
+# ---------------------------------------------------------------------------
+
+class OG_PT_Music(Panel):
+    bl_label       = "🎵  Music"
+    bl_idname      = "OG_PT_music"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_level"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        layout = self.layout
+        props  = ctx.scene.og_props
+
+        box = layout.box()
+        box.label(text="Level Music", icon="PLAY")
+        box.prop(props, "music_bank", text="Music Bank")
+
+        box2 = layout.box()
+        box2.label(text="Sound Banks  (max 2)", icon="SPEAKER")
+        b1 = props.sound_bank_1
+        b2 = props.sound_bank_2
+        col2 = box2.column(align=True)
+        col2.prop(props, "sound_bank_1", text="Bank 1")
+        col2.prop(props, "sound_bank_2", text="Bank 2")
+        if b1 != "none" and b1 == b2:
+            box2.label(text="⚠ Bank 1 and Bank 2 are the same", icon="ERROR")
+        n_common = len(SBK_SOUNDS.get("common", []))
+        n_level  = len(set(SBK_SOUNDS.get(b1, [])) | set(SBK_SOUNDS.get(b2, [])))
+        box2.label(text=f"{n_common} common  +  {n_level} level  =  {n_common + n_level} available", icon="INFO")
+
+
+# ===========================================================================
+# SPAWN PANEL (parent)
+# ===========================================================================
+
+class OG_PT_Spawn(Panel):
+    bl_label       = "➕  Spawn Objects"
+    bl_idname      = "OG_PT_spawn"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
     bl_category    = "OpenGOAL"
     bl_options     = {"DEFAULT_CLOSED"}
 
     def draw(self, ctx):
+        # Parent header only — content lives in sub-panels
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Spawn > Enemies  (sub-panel, with inline navmesh)
+# ---------------------------------------------------------------------------
+
+class OG_PT_SpawnEnemies(Panel):
+    bl_label       = "⚔  Enemies"
+    bl_idname      = "OG_PT_spawn_enemies"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        _draw_entity_sub(self.layout, ctx, _ENEMY_CATS, nav_inline=True)
+
+
+# ---------------------------------------------------------------------------
+# Spawn > Platforms  (sub-panel)
+# ---------------------------------------------------------------------------
+
+class OG_PT_SpawnPlatforms(Panel):
+    bl_label       = "🟦  Platforms"
+    bl_idname      = "OG_PT_spawn_platforms"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
         layout = self.layout
         props  = ctx.scene.og_props
-        etype  = props.entity_type
-        einfo  = ENTITY_DEFS.get(etype, {})
+        scene  = ctx.scene
 
-        layout.prop(props, "entity_type", text="")
+        # Spawn
+        layout.label(text="Spawn", icon="ADD")
+        layout.prop(props, "platform_type", text="")
+        layout.operator("og.spawn_platform", text="Add Platform at Cursor", icon="ADD")
+        layout.separator(factor=0.5)
 
-        if etype == "crate":
-            layout.prop(props, "crate_type", text="Crate Type")
+        # Active platform settings
+        sel = ctx.active_object
+        is_platform_selected = (
+            sel is not None
+            and sel.name.startswith("ACTOR_")
+            and "_wp_" not in sel.name
+            and len(sel.name.split("_", 2)) >= 3
+            and _actor_is_platform(sel.name.split("_", 2)[1])
+        )
+        if is_platform_selected:
+            layout.label(text="Selected Platform Settings", icon="SETTINGS")
+            _draw_platform_settings(layout, sel, scene)
+            layout.separator(factor=0.5)
 
-        # ── Wiki image + description preview ──────────────────────────────
-        _draw_wiki_preview(layout, etype, ctx)
+        # Scene platform list
+        plats = sorted(
+            [o for o in scene.objects
+             if o.name.startswith("ACTOR_")
+             and "_wp_" not in o.name
+             and o.type == "EMPTY"
+             and len(o.name.split("_", 2)) >= 3
+             and _actor_is_platform(o.name.split("_", 2)[1])],
+            key=lambda o: o.name
+        )
 
-        # ── Spawn requirements info box ───────────────────────────────────
-        if einfo.get("is_prop"):
+        if not plats:
             box = layout.box()
-            box.label(text="Prop — idle animation only", icon="INFO")
-            box.label(text="No AI or combat")
-        elif etype in NAV_UNSAFE_TYPES:
-            box = layout.box()
-            box.label(text="Nav-enemy — needs navmesh", icon="ERROR")
-            box.prop(props, "nav_radius", text="Sphere Radius (m)")
-        elif einfo.get("needs_pathb"):
-            box = layout.box()
-            box.label(text="Needs 2 path sets", icon="INFO")
-            box.label(text="Waypoints: _wp_00... and _wpb_00...")
-        elif einfo.get("needs_path"):
-            box = layout.box()
-            box.label(text="Needs waypoints to patrol", icon="INFO")
+            box.label(text="No platforms in scene", icon="INFO")
+            return
 
-        layout.separator(factor=0.3)
-        layout.operator("og.spawn_entity", text="Add Entity", icon="ADD")
+        row = layout.row()
+        icon = "TRIA_DOWN" if props.show_platform_list else "TRIA_RIGHT"
+        row.prop(props, "show_platform_list",
+                 text=f"Platforms ({len(plats)})", icon=icon, emboss=False)
+        if not props.show_platform_list:
+            return
+
+        box = layout.box()
+        for p in plats:
+            etype = p.name.split("_", 2)[1]
+            einfo = ENTITY_DEFS.get(etype, {})
+            label = einfo.get("label", etype)
+            is_active = (sel is not None and sel == p)
+            row = box.row(align=True)
+            if is_active:
+                row.label(text=f"▶ {label}", icon="CUBE")
+            else:
+                row.label(text=label, icon="CUBE")
+            row.label(text=p.name.split("_", 2)[2])
+            op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+            op.obj_name = p.name
+            op = row.operator("og.delete_object", text="", icon="TRASH")
+            op.obj_name = p.name
 
 
-# ── Waypoints ─────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Spawn > Props & Objects  (sub-panel)
+# ---------------------------------------------------------------------------
+
+class OG_PT_SpawnProps(Panel):
+    bl_label       = "📦  Props & Objects"
+    bl_idname      = "OG_PT_spawn_props"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        _draw_entity_sub(self.layout, ctx, _PROP_CATS)
+
+
+# ---------------------------------------------------------------------------
+# Spawn > NPCs  (sub-panel)
+# ---------------------------------------------------------------------------
+
+class OG_PT_SpawnNPCs(Panel):
+    bl_label       = "🧍  NPCs"
+    bl_idname      = "OG_PT_spawn_npcs"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        _draw_entity_sub(self.layout, ctx, _NPC_CATS)
+
+
+# ---------------------------------------------------------------------------
+# Spawn > Pickups  (sub-panel)
+# ---------------------------------------------------------------------------
+
+class OG_PT_SpawnPickups(Panel):
+    bl_label       = "⭐  Pickups"
+    bl_idname      = "OG_PT_spawn_pickups"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        _draw_entity_sub(self.layout, ctx, _PICKUP_CATS)
+
+
+# ---------------------------------------------------------------------------
+# Spawn > Sound Emitters  (sub-panel)
+# ---------------------------------------------------------------------------
+
+class OG_PT_SpawnSounds(Panel):
+    bl_label       = "🔊  Sound Emitters"
+    bl_idname      = "OG_PT_spawn_sounds"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        layout = self.layout
+        props  = ctx.scene.og_props
+
+        col = layout.column(align=True)
+        col.prop(props, "ambient_default_radius", text="Default Radius (m)")
+        col.separator(factor=0.4)
+
+        snd_display = props.sfx_sound.split("__")[0] if "__" in props.sfx_sound else props.sfx_sound
+        pick_row = col.row(align=True)
+        pick_row.scale_y = 1.2
+        pick_row.operator("og.pick_sound", text=f"🔊  {snd_display}", icon="VIEWZOOM")
+
+        col.separator(factor=0.4)
+        row2 = col.row()
+        row2.scale_y = 1.4
+        row2.operator("og.add_sound_emitter", text="Add Emitter at Cursor", icon="ADD")
+
+        emitters = [o for o in ctx.scene.objects
+                    if o.name.startswith("AMBIENT_") and o.type == "EMPTY"
+                    and o.get("og_sound_name")]
+        if emitters:
+            layout.separator(factor=0.3)
+            sub = layout.box()
+            sub.label(text=f"{len(emitters)} emitter(s) in scene:", icon="OUTLINER_OB_EMPTY")
+            for o in emitters[:8]:
+                row = sub.row(align=True)
+                snd  = o.get("og_sound_name", "?")
+                mode = o.get("og_sound_mode", "loop")
+                icon = "PREVIEW_RANGE" if mode == "loop" else "PLAYER"
+                row.label(text=f"{o.name}  →  {snd}  [{mode}]", icon=icon)
+            if len(emitters) > 8:
+                sub.label(text=f"… and {len(emitters) - 8} more")
+        else:
+            layout.label(text="No emitters placed yet", icon="INFO")
+
+
+# ===========================================================================
+# WAYPOINTS (context-sensitive, unchanged)
+# ===========================================================================
 
 class OG_PT_Waypoints(Panel):
     bl_label       = "〰  Waypoints"
@@ -4727,7 +5049,6 @@ class OG_PT_Waypoints(Panel):
 
     @classmethod
     def poll(cls, ctx):
-        """Only show panel when an actor that can use waypoints is selected."""
         sel = ctx.active_object
         if not sel or not sel.name.startswith("ACTOR_") or "_wp_" in sel.name:
             return False
@@ -4742,7 +5063,6 @@ class OG_PT_Waypoints(Panel):
         etype  = sel.name.split("_", 2)[1]
         einfo  = ENTITY_DEFS.get(etype, {})
 
-        # ── Primary path ─────────────────────────────────────────────────────
         prefix = sel.name + "_wp_"
         wps = sorted(
             [o for o in bpy.data.objects if o.name.startswith(prefix) and o.type == "EMPTY"],
@@ -4768,7 +5088,6 @@ class OG_PT_Waypoints(Panel):
         if einfo.get("needs_path") and len(wps) < 1:
             layout.label(text="⚠ Needs ≥ 1 waypoint or will crash", icon="ERROR")
 
-        # ── Secondary path (swamp-bat only) ──────────────────────────────────
         if einfo.get("needs_pathb"):
             _header_sep(layout)
             prefixb = sel.name + "_wpb_"
@@ -4795,575 +5114,9 @@ class OG_PT_Waypoints(Panel):
                 layout.label(text="⚠ swamp-bat crashes without Path B", icon="ERROR")
 
 
-# ── NavMesh ───────────────────────────────────────────────────────────────────
-
-
-class OG_OT_SpawnCamera(Operator):
-    bl_idname = "og.spawn_camera"
-    bl_label  = "Add Camera"
-    bl_description = (
-        "Place a Blender camera at the 3D cursor.\n"
-        "Named CAMERA_0, CAMERA_1 etc.\n"
-        "Look through it with Numpad-0 to preview the game view.\n"
-        "Link a trigger volume mesh with 'Link Trigger Volume'."
-    )
-    def execute(self, ctx):
-        n = len([o for o in ctx.scene.objects
-                 if o.name.startswith("CAMERA_") and o.type == "CAMERA"])
-        cam_name = f"CAMERA_{n}"
-        bpy.ops.object.camera_add(location=ctx.scene.cursor.location)
-        o = ctx.active_object
-        # Set name twice: Blender resolves duplicate data-block names after the
-        # first assignment, so the second set lands the exact name we want.
-        o.name      = cam_name
-        o.name      = cam_name
-        o.data.name = cam_name
-        o.show_name = True
-        o.color = (0.0, 0.8, 0.9, 1.0)
-        # Default custom properties
-        o["og_cam_mode"]   = "fixed"
-        o["og_cam_interp"] = 1.0
-        o["og_cam_fov"]    = 0.0
-        o["og_cam_look_at"] = ""
-        self.report({"INFO"}, f"Added {o.name}  |  Numpad-0 to look through it")
-        return {"FINISHED"}
-
-
-
-class OG_OT_SpawnVolume(Operator):
-    """Spawn a generic trigger volume (VOL_N wireframe cube).
-    If the active object is a linkable target (CAMERA_, SPAWN_, CHECKPOINT_),
-    the volume is auto-linked to it immediately on spawn."""
-    bl_idname = "og.spawn_volume"
-    bl_label  = "Add Trigger Volume"
-    bl_description = (
-        "Add a box mesh trigger volume at the 3D cursor. "
-        "If a camera, spawn, or checkpoint is selected, it auto-links."
-    )
-    def execute(self, ctx):
-        n = len([o for o in ctx.scene.objects
-                 if o.type == "MESH" and o.name.startswith("VOL_")])
-        bpy.ops.mesh.primitive_cube_add(size=4.0, location=ctx.scene.cursor.location)
-        vol = ctx.active_object
-        vol.name = f"VOL_{n}"
-        vol["og_vol_id"] = n          # remember original number for unlink rename
-        vol.show_name = True
-        vol.display_type = "WIRE"
-        vol.color = (0.0, 0.9, 0.3, 0.4)
-        vol.set_invisible = True
-        vol.set_collision = True
-        vol.ignore        = True
-
-        # Auto-link if the previously active object is a valid target
-        prev = ctx.scene.objects.get(getattr(ctx, "_prev_active_name", ""))
-        # Re-read: before empty_add the active was our target
-        # We stored it in the scene temp prop via the operator invoke
-        target_name = vol.get("_auto_link_target", "")
-        if target_name:
-            target = ctx.scene.objects.get(target_name)
-            if target and not _vol_for_target(ctx.scene, target_name):
-                vol["og_vol_link"] = target_name
-                vol.name = f"VOL_{target_name}"
-                del vol["_auto_link_target"]
-                self.report({"INFO"}, f"Added and linked {vol.name} → {target_name}")
-                return {"FINISHED"}
-
-        self.report({"INFO"}, f"Added {vol.name}  —  select volume + target → Link in Triggers panel")
-        return {"FINISHED"}
-
-    def invoke(self, ctx, event):
-        # Store active object name before adding geometry changes active
-        sel = ctx.active_object
-        if sel and _is_linkable(sel):
-            # Check not already linked
-            existing = _vol_for_target(ctx.scene, sel.name)
-            if existing:
-                self.report({"WARNING"}, f"{sel.name} already has {existing.name} linked — unlink first")
-                return {"CANCELLED"}
-            # Temporarily stamp target onto the new vol via a scene prop
-            # We use a scene-level string prop as a handoff since active changes after add
-            ctx.scene["_pending_vol_target"] = sel.name
-        else:
-            ctx.scene["_pending_vol_target"] = ""
-        return self.execute(ctx)
-
-
-def _is_linkable(obj):
-    """True if this object type can accept a trigger volume."""
-    return (obj.type == "CAMERA" and obj.name.startswith("CAMERA_")) or            (obj.type == "EMPTY"  and (obj.name.startswith("SPAWN_") or obj.name.startswith("CHECKPOINT_")) and not obj.name.endswith("_CAM"))
-
-
-def _vol_for_target(scene, target_name):
-    """Return the VOL_ mesh linked to target_name, or None."""
-    for o in scene.objects:
-        if o.type == "MESH" and o.name.startswith("VOL_") and o.get("og_vol_link") == target_name:
-            return o
-    return None
-
-
-def _clean_orphaned_vol_links(scene):
-    """Remove og_vol_link from any VOL_ mesh whose target no longer exists.
-    Called at export time and available as a panel button.
-    Returns list of volume names that were cleaned."""
-    cleaned = []
-    for o in scene.objects:
-        if o.type == "MESH" and o.name.startswith("VOL_"):
-            link = o.get("og_vol_link", "")
-            if link and not scene.objects.get(link):
-                orig_id = o.get("og_vol_id", 0)
-                del o["og_vol_link"]
-                o.name = f"VOL_{orig_id}"
-                cleaned.append(link)
-                log(f"  [vol] cleaned orphaned link → '{link}' (target deleted)")
-    return cleaned
-
-
-class OG_OT_SpawnVolumeAutoLink(Operator):
-    """Internal: spawn a volume and auto-link to the given target."""
-    bl_idname = "og.spawn_volume_autolink"
-    bl_label  = "Add & Link Trigger Volume"
-    bl_description = "Spawn a trigger volume and immediately link it to the active object"
-
-    target_name: bpy.props.StringProperty()
-
-    def execute(self, ctx):
-        target = ctx.scene.objects.get(self.target_name)
-        if not target:
-            self.report({"ERROR"}, f"Target {self.target_name} not found")
-            return {"CANCELLED"}
-        existing = _vol_for_target(ctx.scene, self.target_name)
-        if existing:
-            self.report({"WARNING"}, f"{self.target_name} already linked to {existing.name} — unlink first")
-            return {"CANCELLED"}
-        n = len([o for o in ctx.scene.objects if o.type == "MESH" and o.name.startswith("VOL_")])
-        # Place at target location
-        bpy.ops.mesh.primitive_cube_add(size=4.0, location=target.location)
-        vol = ctx.active_object
-        vol["og_vol_id"] = n
-        vol.show_name = True
-        vol.display_type = "WIRE"
-        vol.set_invisible = True
-        vol.set_collision = True
-        vol.ignore        = True
-        if target.type == "CAMERA":
-            vol.color = (0.0, 0.9, 0.3, 0.4)
-        else:
-            vol.color = (1.0, 0.85, 0.0, 0.4)
-        vol["og_vol_link"] = self.target_name
-        vol.name = f"VOL_{self.target_name}"
-        self.report({"INFO"}, f"Added {vol.name} → {self.target_name}")
-        return {"FINISHED"}
-
-
-class OG_OT_LinkVolume(Operator):
-    """Link a VOL_ mesh to a camera, spawn, or checkpoint.
-    Select the VOL_ mesh first, then shift-click the target, then click Link."""
-    bl_idname   = "og.link_volume"
-    bl_label    = "Link Volume"
-    bl_description = "Select VOL_ mesh first, then shift-click the target (camera/spawn/checkpoint), then click"
-
-    def execute(self, ctx):
-        selected = ctx.selected_objects
-        vols    = [o for o in selected if o.type == "MESH" and o.name.startswith("VOL_")]
-        targets = [o for o in selected if _is_linkable(o)]
-
-        if not vols:
-            self.report({"ERROR"}, "No VOL_ mesh in selection")
-            return {"CANCELLED"}
-        if len(vols) > 1:
-            self.report({"ERROR"}, "Multiple volumes selected — select exactly one")
-            return {"CANCELLED"}
-        if not targets:
-            self.report({"ERROR"}, "No linkable target (CAMERA_/SPAWN_/CHECKPOINT_) in selection")
-            return {"CANCELLED"}
-        if len(targets) > 1:
-            self.report({"ERROR"}, "Multiple targets selected — select exactly one")
-            return {"CANCELLED"}
-
-        vol    = vols[0]
-        target = targets[0]
-
-        # Check vol not already linked
-        existing_link = vol.get("og_vol_link", "")
-        if existing_link:
-            if existing_link == target.name:
-                self.report({"WARNING"}, f"{vol.name} is already linked to {target.name}")
-            else:
-                self.report({"WARNING"}, f"{vol.name} is already linked to {existing_link} — unlink first")
-            return {"CANCELLED"}
-
-        # Check target not already has a vol
-        existing_vol = _vol_for_target(ctx.scene, target.name)
-        if existing_vol:
-            self.report({"WARNING"}, f"{target.name} already has {existing_vol.name} linked — unlink first")
-            return {"CANCELLED"}
-
-        vol["og_vol_link"] = target.name
-        if "og_vol_id" not in vol:
-            vol["og_vol_id"] = int(vol.name.replace("VOL_", "") if vol.name[4:].isdigit() else 0)
-        vol.name = f"VOL_{target.name}"
-        self.report({"INFO"}, f"Linked {vol.name} → {target.name}")
-        return {"FINISHED"}
-
-
-class OG_OT_UnlinkVolume(Operator):
-    """Unlink a VOL_ mesh from its target. Works on selected VOL_ meshes."""
-    bl_idname   = "og.unlink_volume"
-    bl_label    = "Unlink Volume"
-    bl_description = "Remove the link from the selected VOL_ mesh and restore its generic name"
-
-    def execute(self, ctx):
-        count = 0
-        for o in ctx.selected_objects:
-            if o.type == "MESH" and o.name.startswith("VOL_") and "og_vol_link" in o:
-                orig_id = o.get("og_vol_id", 0)
-                del o["og_vol_link"]
-                o.name = f"VOL_{orig_id}"
-                count += 1
-        if count:
-            self.report({"INFO"}, f"Unlinked {count} volume(s)")
-        else:
-            self.report({"WARNING"}, "No linked VOL_ meshes in selection")
-        return {"FINISHED"}
-
-
-class OG_OT_SelectAndFrame(Operator):
-    """Make an object active, select it, and frame it in the viewport."""
-    bl_idname = "og.select_and_frame"
-    bl_label  = "View"
-    bl_description = "Select this object and frame it in the viewport"
-
-    obj_name: bpy.props.StringProperty()
-
-    def execute(self, ctx):
-        obj = ctx.scene.objects.get(self.obj_name)
-        if not obj:
-            self.report({"ERROR"}, f"Object '{self.obj_name}' not found")
-            return {"CANCELLED"}
-        # Deselect all, select and make active
-        bpy.ops.object.select_all(action="DESELECT")
-        obj.select_set(True)
-        ctx.view_layer.objects.active = obj
-        # Frame in viewport
-        bpy.ops.view3d.view_selected()
-        return {"FINISHED"}
-
-
-class OG_OT_DeleteObject(Operator):
-    """Delete an object by name, also cleaning up any linked volumes."""
-    bl_idname = "og.delete_object"
-    bl_label  = "Delete"
-    bl_description = "Delete this object (volumes linked to it will be unlinked)"
-
-    obj_name: bpy.props.StringProperty()
-
-    def execute(self, ctx):
-        obj = ctx.scene.objects.get(self.obj_name)
-        if not obj:
-            self.report({"ERROR"}, f"Object '{self.obj_name}' not found")
-            return {"CANCELLED"}
-        # Clean any volumes linked to this object before deleting
-        for o in ctx.scene.objects:
-            if o.type == "MESH" and o.name.startswith("VOL_"):
-                if o.get("og_vol_link") == self.obj_name:
-                    orig_id = o.get("og_vol_id", 0)
-                    del o["og_vol_link"]
-                    o.name = f"VOL_{orig_id}"
-        # Also delete associated _CAM, _ALIGN, _PIVOT, _LOOK_AT empties for cameras
-        suffixes = ["_CAM", "_ALIGN", "_PIVOT", "_LOOK_AT"]
-        for suf in suffixes:
-            associated = ctx.scene.objects.get(self.obj_name + suf)
-            if associated:
-                bpy.data.objects.remove(associated, do_unlink=True)
-        # Delete the object itself
-        bpy.data.objects.remove(obj, do_unlink=True)
-        self.report({"INFO"}, f"Deleted '{self.obj_name}'")
-        return {"FINISHED"}
-
-
-class OG_OT_CleanOrphanedLinks(Operator):
-    """Remove og_vol_link from any VOL_ whose target object has been deleted."""
-    bl_idname   = "og.clean_orphaned_links"
-    bl_label    = "Clean Orphaned Links"
-    bl_description = "Remove links from volumes whose target (camera/spawn/checkpoint) has been deleted"
-
-    def execute(self, ctx):
-        cleaned = _clean_orphaned_vol_links(ctx.scene)
-        if cleaned:
-            self.report({"INFO"}, f"Cleaned {len(cleaned)} orphaned link(s): {', '.join(cleaned)}")
-        else:
-            self.report({"INFO"}, "No orphaned links found")
-        return {"FINISHED"}
-
-
-# ── Entity placement ──────────────────────────────────────────────────────────
-
-
-
-
-def validate_ambients(ambients):
-    errors = []
-    for i, a in enumerate(ambients):
-        t = a.get("trans", [])
-        b = a.get("bsphere", [])
-        name = a.get("lump", {}).get("name", f"ambient[{i}]")
-        if len(t) != 4:
-            errors.append(f"{name}: ambient trans has {len(t)} elements, expected 4  (value={t})")
-        if len(b) != 4:
-            errors.append(f"{name}: ambient bsphere has {len(b)} elements, expected 4  (value={b})")
-    return errors
-
-
-
-
-# ---------------------------------------------------------------------------
-# OPERATORS — NavMesh linking
-# ---------------------------------------------------------------------------
-
-
-
-
-# ---------------------------------------------------------------------------
-# OPERATOR — Export & Build
-# ---------------------------------------------------------------------------
-
-_BUILD_STATE = {"done":False, "status":"", "error":None, "ok":False}
-
-
-def patch_entity_gc(navmesh_actors):
-    """
-    Patch engine/entity/entity.gc to add custom-nav-mesh-check-and-setup.
-
-    navmesh_actors: list of (actor_aid, mesh_data) tuples.
-
-    Adds/replaces:
-      1. A (defun custom-nav-mesh-check-and-setup ...) with one case per actor.
-      2. A call to it at the top of (defmethod birth! entity-actor ...).
-
-    Safe to call repeatedly — old injected code is stripped before re-injecting.
-    """
-    p = _entity_gc()
-    if not p.exists():
-        log(f"WARNING: entity.gc not found at {p}")
-        return
-
-    raw  = p.read_bytes()
-    crlf = b"\r\n" in raw
-    txt  = raw.decode("utf-8").replace("\r\n", "\n")
-
-    # ── Strip any previously injected block ──────────────────────────────────
-    import re
-    txt = re.sub(
-        r"\n;; \[OpenGOAL Tools\] BEGIN custom-nav-mesh.*?;; \[OpenGOAL Tools\] END custom-nav-mesh\n",
-        "",
-        txt,
-        flags=re.DOTALL,
-    )
-    # Strip old birth! injection line
-    txt = re.sub(r"  \(custom-nav-mesh-check-and-setup this\)\n", "", txt)
-
-    if not navmesh_actors:
-        # Nothing to inject — just clean file
-        out = txt.replace("\n", "\r\n") if crlf else txt
-        p.write_bytes(out.encode("utf-8"))
-        log("entity.gc: cleaned (no navmesh actors)")
-        return
-
-    # ── Build the defun block ─────────────────────────────────────────────────
-    lines = [
-        "",
-        ";; [OpenGOAL Tools] BEGIN custom-nav-mesh",
-
-        "(defun custom-nav-mesh-check-and-setup ((this entity-actor))",
-        "  (case (-> this aid)",
-    ]
-    for aid, mesh in navmesh_actors:
-        lines.append(_navmesh_to_goal(mesh, aid))
-    lines += [
-        "  )",
-        "  ;; Manually init the nav-mesh without calling entity-nav-login.",
-        "  ;; entity-nav-login calls update-route-table which writes back to the route",
-        "  ;; array — but our mesh is 'static (read-only GAME.CGO memory), so that",
-        "  ;; write would segfault. Instead we just set up the user-list engine.",
-        "  (when (nonzero? (-> this nav-mesh))",
-        "    (when (zero? (-> (-> this nav-mesh) user-list))",
-        "      (set! (-> (-> this nav-mesh) user-list)",
-        "            (new 'loading-level 'engine 'nav-engine 32))",
-        "    )",
-        "  )",
-        "  (none)",
-        ")",
-        ";; [OpenGOAL Tools] END custom-nav-mesh",
-        "",
-    ]
-    inject_block = "\n".join(lines)
-
-    # Insert before (defmethod birth! ((this entity-actor))
-    BIRTH_MARKER = "(defmethod birth! ((this entity-actor))"
-    if BIRTH_MARKER not in txt:
-        log("WARNING: entity.gc birth! marker not found — cannot inject nav-mesh")
-        return
-    txt = txt.replace(BIRTH_MARKER, inject_block + "\n" + BIRTH_MARKER, 1)
-
-    # ── Inject call at top of birth! body ────────────────────────────────────
-    # Find the body start — line after "Create a process for this entity..."
-    # We look for the first (let* ... after the birth! marker
-    CALL_MARKER = "  (let* ((entity-type (-> this etype))"
-    txt = txt.replace(
-        CALL_MARKER,
-        "  (custom-nav-mesh-check-and-setup this)\n" + CALL_MARKER,
-        1,
-    )
-
-    out = txt.replace("\n", "\r\n") if crlf else txt
-    p.write_bytes(out.encode("utf-8"))
-    log(f"Patched entity.gc with {len(navmesh_actors)} nav-mesh actor(s)")
-
-
-
-
-
-
-
-
-# ---------------------------------------------------------------------------
-# OPERATOR + PANEL — Audio / Ambience
-# ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-# ---------------------------------------------------------------------------
-# PANELS
-# ---------------------------------------------------------------------------
-# Panel hierarchy (all under "OpenGOAL" N-panel tab):
-#
-#  OG_PT_LevelSettings   — Level name, base ID
-#  OG_PT_Scene           — Level Flow: spawns, checkpoints, death plane, bsphere
-#  OG_PT_PlaceObjects    — Entity picker + Add Entity
-#  OG_PT_Waypoints       — Waypoint management (context-sensitive, collapsible)
-#  OG_PT_NavMesh         — NavMesh linking via object picker
-#  OG_PT_BuildPlay       — Big ▶ Export, Build & Play button
-#  OG_PT_DevTools        — Expert options + Quick Open (collapsed)
-#  OG_PT_Collision       — Per-object collision (separate, object-context)
-# ---------------------------------------------------------------------------
-
-# Shared header style helper
-def _header_sep(layout):
-    """A subtle separator line used between sub-sections inside a panel."""
-    layout.separator(factor=0.4)
-
-
-# ── Level Settings ───────────────────────────────────────────────────────────
-
-
-
-# ── Scene Setup / Level Flow ──────────────────────────────────────────────────
-
-
-
-# ── Place Objects ─────────────────────────────────────────────────────────────
-
-
-
-# ── Waypoints ─────────────────────────────────────────────────────────────────
-
-
-
-# ── NavMesh ───────────────────────────────────────────────────────────────────
-
-
-
-
-
-
-
-
-
-
-class OG_OT_SpawnCamAlign(Operator):
-    bl_idname = "og.spawn_cam_align"
-    bl_label  = "Add Player Anchor"
-    bl_description = (
-        "Add a CAMERA_N_ALIGN empty for standoff (side-scroller) mode.\n"
-        "Place this at the player position the camera tracks.\n"
-        "The camera stays at a fixed offset from this anchor."
-    )
-    def execute(self, ctx):
-        sel = ctx.active_object
-        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "CAMERA":
-            self.report({"ERROR"}, "Select a CAMERA_N camera first")
-            return {"CANCELLED"}
-        align_name = sel.name + "_ALIGN"
-        if ctx.scene.objects.get(align_name):
-            self.report({"WARNING"}, f"{align_name} already exists")
-            return {"CANCELLED"}
-        bpy.ops.object.empty_add(type="PLAIN_AXES", location=ctx.scene.cursor.location)
-        o = ctx.active_object
-        o.name = align_name
-        o.show_name = True
-        o.empty_display_size = 0.5
-        o.color = (1.0, 0.6, 0.0, 1.0)
-        self.report({"INFO"}, f"Added {align_name}  —  place at player anchor position")
-        return {"FINISHED"}
-
-
-class OG_OT_SpawnCamPivot(Operator):
-    bl_idname = "og.spawn_cam_pivot"
-    bl_label  = "Add Orbit Pivot"
-    bl_description = (
-        "Add a CAMERA_N_PIVOT empty for orbit mode.\n"
-        "The camera orbits around this world position following the player angle."
-    )
-    def execute(self, ctx):
-        sel = ctx.active_object
-        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "CAMERA":
-            self.report({"ERROR"}, "Select a CAMERA_N camera first")
-            return {"CANCELLED"}
-        pivot_name = sel.name + "_PIVOT"
-        if ctx.scene.objects.get(pivot_name):
-            self.report({"WARNING"}, f"{pivot_name} already exists")
-            return {"CANCELLED"}
-        bpy.ops.object.empty_add(type="SPHERE", location=ctx.scene.cursor.location)
-        o = ctx.active_object
-        o.name = pivot_name
-        o.show_name = True
-        o.empty_display_size = 0.5
-        o.color = (1.0, 0.2, 0.8, 1.0)
-        self.report({"INFO"}, f"Added {pivot_name}  —  place at orbit center point")
-        return {"FINISHED"}
-
-
-
-
-class OG_OT_SpawnCamLookAt(Operator):
-    bl_idname = "og.spawn_cam_look_at"
-    bl_label  = "Add Look-At Target"
-    bl_description = (
-        "Add an empty that the camera will always face.\n"
-        "Bypasses quaternion export — just point the camera at a world position.\n"
-        "Place the empty on the object / area you want the camera to look at."
-    )
-    def execute(self, ctx):
-        sel = ctx.active_object
-        if not sel or not sel.name.startswith("CAMERA_") or sel.type != "CAMERA":
-            self.report({"ERROR"}, "Select a CAMERA_N camera first")
-            return {"CANCELLED"}
-        look_name = sel.name + "_LOOKAT"
-        bpy.ops.object.empty_add(type="ARROWS", location=ctx.scene.cursor.location)
-        o = ctx.active_object
-        o.name = look_name
-        o.show_name = True
-        o.empty_display_size = 0.4
-        o.color = (1.0, 0.8, 0.0, 1.0)
-        sel["og_cam_look_at"] = look_name
-        self.report({"INFO"}, f"Added {look_name}  —  move it to where the camera should look")
-        return {"FINISHED"}
-
-# ── Triggers ─────────────────────────────────────────────────────────────────
+# ===========================================================================
+# TRIGGERS (always visible, unchanged)
+# ===========================================================================
 
 class OG_PT_Triggers(Panel):
     bl_label       = "🔗  Triggers"
@@ -5371,20 +5124,15 @@ class OG_PT_Triggers(Panel):
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
     bl_category    = "OpenGOAL"
-    bl_options     = {"DEFAULT_CLOSED"}
 
     def draw(self, ctx):
         layout = self.layout
         scene  = ctx.scene
         sel    = ctx.active_object
 
-        # ── Spawn generic volume ──────────────────────────────────────────
         layout.operator("og.spawn_volume", text="Add Trigger Volume", icon="MESH_CUBE")
         layout.separator(factor=0.3)
 
-        # ── Context: link UI ─────────────────────────────────────────────
-        # Works regardless of which object is active — we look at the full
-        # selection for a VOL_ + linkable target pair.
         sel_vols    = [o for o in ctx.selected_objects if o.type == "MESH" and o.name.startswith("VOL_")]
         sel_targets = [o for o in ctx.selected_objects if _is_linkable(o)]
         active_vol  = sel if (sel and sel.type == "MESH" and sel.name.startswith("VOL_")) else (sel_vols[0] if sel_vols else None)
@@ -5405,20 +5153,17 @@ class OG_PT_Triggers(Panel):
                         row.alert = True
                         row.label(text=f"{tgt.name} already linked to {existing.name}", icon="ERROR")
                     else:
-                        box.operator("og.link_volume",
-                                     text=f"Link → {tgt.name}", icon="LINKED")
+                        box.operator("og.link_volume", text=f"Link → {tgt.name}", icon="LINKED")
                 else:
                     box.label(text="Not linked", icon="ERROR")
                     box.label(text="Shift-select a target to link", icon="INFO")
             layout.separator(factor=0.3)
         elif sel_targets and not sel_vols:
-            # Target selected but no vol — show hint
             box = layout.box()
             box.label(text=f"{sel_targets[0].name} selected", icon="INFO")
             box.label(text="Also select a VOL_ to link", icon="INFO")
             layout.separator(factor=0.3)
 
-        # ── All volumes list ──────────────────────────────────────────────
         vols = sorted([o for o in scene.objects
                        if o.type == "MESH" and o.name.startswith("VOL_")],
                       key=lambda o: o.name)
@@ -5427,7 +5172,6 @@ class OG_PT_Triggers(Panel):
             box.label(text="No trigger volumes in scene", icon="INFO")
             return
 
-        # Collapsible header
         row = layout.row()
         icon = "TRIA_DOWN" if ctx.scene.og_props.show_volume_list else "TRIA_RIGHT"
         row.prop(ctx.scene.og_props, "show_volume_list",
@@ -5457,7 +5201,6 @@ class OG_PT_Triggers(Panel):
             op = row.operator("og.delete_object", text="", icon="TRASH")
             op.obj_name = v.name
 
-        # Orphan cleanup button — only show if any orphans exist
         orphans = [o for o in vols if o.get("og_vol_link") and not scene.objects.get(o.get("og_vol_link", ""))]
         if orphans:
             layout.separator(factor=0.3)
@@ -5465,6 +5208,10 @@ class OG_PT_Triggers(Panel):
             row.alert = True
             row.operator("og.clean_orphaned_links", text=f"Clean {len(orphans)} Orphaned Link(s)", icon="ERROR")
 
+
+# ===========================================================================
+# CAMERA (unchanged)
+# ===========================================================================
 
 class OG_PT_Camera(Panel):
     bl_label       = "📷  Camera"
@@ -5482,10 +5229,8 @@ class OG_PT_Camera(Panel):
         scene  = ctx.scene
         sel    = ctx.active_object
 
-        # ── Top-level add buttons ─────────────────────────────────────────
         row = layout.row(align=True)
         row.operator("og.spawn_camera", text="Add Camera", icon="CAMERA_DATA")
-        # If a camera is active, auto-link the new volume to it
         if sel and sel.type == "CAMERA" and sel.name.startswith("CAMERA_"):
             op = row.operator("og.spawn_volume_autolink", text="Add Volume", icon="CUBE")
             op.target_name = sel.name
@@ -5494,8 +5239,6 @@ class OG_PT_Camera(Panel):
 
         layout.separator()
 
-        # ── Selected-object context section ──────────────────────────────
-        # Show context-sensitive controls when a relevant object is active
         if sel and sel.type == "CAMERA" and sel.name.startswith("CAMERA_"):
             self._draw_camera_props(layout, sel, scene)
         elif sel and sel.type == "MESH" and sel.name.startswith("VOL_"):
@@ -5503,10 +5246,8 @@ class OG_PT_Camera(Panel):
 
         layout.separator()
 
-        # ── Full camera list ──────────────────────────────────────────────
         cam_objects = sorted(
-            [o for o in scene.objects
-             if o.name.startswith("CAMERA_") and o.type == "CAMERA"],
+            [o for o in scene.objects if o.name.startswith("CAMERA_") and o.type == "CAMERA"],
             key=lambda o: o.name,
         )
         if not cam_objects:
@@ -5514,7 +5255,6 @@ class OG_PT_Camera(Panel):
             box.label(text="No cameras placed yet", icon="INFO")
             return
 
-        # Collapsible header
         row = layout.row()
         icon = "TRIA_DOWN" if ctx.scene.og_props.show_camera_list else "TRIA_RIGHT"
         row.prop(ctx.scene.og_props, "show_camera_list",
@@ -5522,7 +5262,6 @@ class OG_PT_Camera(Panel):
         if not ctx.scene.og_props.show_camera_list:
             return
 
-        # Build reverse map: cam_name -> list of linked vol names
         vol_map = {}
         for o in scene.objects:
             if o.type == "MESH" and o.name.startswith("VOL_"):
@@ -5543,14 +5282,12 @@ class OG_PT_Camera(Panel):
             interp = float(cam_obj.get("og_cam_interp", 1.0))
             fov    = float(cam_obj.get("og_cam_fov",    0.0))
 
-            # Mode
             mrow = box.row(align=True)
             mrow.label(text="Mode:")
             for m, lbl in (("fixed","Fixed"),("standoff","Side-Scroll"),("orbit","Orbit")):
                 op = mrow.operator("og.set_cam_prop", text=lbl, depress=(mode == m))
                 op.cam_name = cam_obj.name; op.prop_name = "og_cam_mode"; op.str_val = m
 
-            # Blend + FOV
             brow = box.row(align=True)
             brow.label(text=f"Blend: {interp:.1f}s")
             op = brow.operator("og.nudge_cam_float", text="-"); op.cam_name=cam_obj.name; op.prop_name="og_cam_interp"; op.delta=-0.5
@@ -5560,7 +5297,6 @@ class OG_PT_Camera(Panel):
             op = frow.operator("og.nudge_cam_float", text="-"); op.cam_name=cam_obj.name; op.prop_name="og_cam_fov"; op.delta=-5.0
             op = frow.operator("og.nudge_cam_float", text="+"); op.cam_name=cam_obj.name; op.prop_name="og_cam_fov"; op.delta=5.0
 
-            # Mode helpers
             if mode == "standoff":
                 align_name = cam_obj.name + "_ALIGN"
                 has_align = bool(scene.objects.get(align_name))
@@ -5580,7 +5316,6 @@ class OG_PT_Camera(Panel):
                     prow.label(text="No pivot", icon="ERROR")
                     prow.operator("og.spawn_cam_pivot", text="Add Pivot")
 
-            # Linked volumes
             linked_vols = vol_map.get(cam_obj.name, [])
             vrow = box.row(align=True)
             if linked_vols:
@@ -5593,11 +5328,9 @@ class OG_PT_Camera(Panel):
                 op.target_name = cam_obj.name
 
     def _draw_camera_props(self, layout, cam, scene):
-        """Context panel when a CAMERA_ object is active."""
         box = layout.box()
         box.label(text=f"Selected: {cam.name}", icon="CAMERA_DATA")
         box.label(text="Numpad-0 to look through camera", icon="INFO")
-        # Show the actual world rotation quaternion so user can verify it's not identity
         try:
             q = cam.matrix_world.to_quaternion()
             row = box.row()
@@ -5607,13 +5340,11 @@ class OG_PT_Camera(Panel):
                 box.label(text="Rotate it to aim, then export.")
         except Exception:
             pass
-        # Mode-specific helpers
         mode = cam.get("og_cam_mode", "fixed")
         if mode == "standoff" and not scene.objects.get(cam.name + "_ALIGN"):
             box.operator("og.spawn_cam_align", text="Add Player Anchor")
         if mode == "orbit" and not scene.objects.get(cam.name + "_PIVOT"):
             box.operator("og.spawn_cam_pivot", text="Add Orbit Pivot")
-        # Look-at target UI
         look_at_name = cam.get("og_cam_look_at", "").strip()
         look_obj = scene.objects.get(look_at_name) if look_at_name else None
         lbox = layout.box()
@@ -5629,7 +5360,6 @@ class OG_PT_Camera(Panel):
             lbox.operator("og.spawn_cam_look_at", text="Add Look-At Target", icon="PIVOT_CURSOR")
 
     def _draw_volume_props(self, layout, vol, scene):
-        """Context panel when a VOL_ mesh is active in Camera panel."""
         box = layout.box()
         box.label(text=f"Selected: {vol.name}", icon="MESH_CUBE")
         link = vol.get("og_vol_link", "")
@@ -5640,433 +5370,6 @@ class OG_PT_Camera(Panel):
             box.label(text="Not linked to any camera", icon="ERROR")
             box.label(text="Use Triggers panel to link", icon="INFO")
 
-
-class OG_OT_SetCamProp(Operator):
-    """Set a string custom property on a CAMERA_ object."""
-    bl_idname   = "og.set_cam_prop"
-    bl_label    = "Set Camera Property"
-    bl_options  = {"REGISTER", "UNDO"}
-    cam_name:  bpy.props.StringProperty()
-    prop_name: bpy.props.StringProperty()
-    str_val:   bpy.props.StringProperty()
-    def execute(self, ctx):
-        o = ctx.scene.objects.get(self.cam_name)
-        if o:
-            o[self.prop_name] = self.str_val
-        return {"FINISHED"}
-
-
-class OG_OT_NudgeCamFloat(Operator):
-    """Nudge a float custom property on a CAMERA_ object."""
-    bl_idname   = "og.nudge_cam_float"
-    bl_label    = "Nudge Camera Float"
-    bl_options  = {"REGISTER", "UNDO"}
-    cam_name:  bpy.props.StringProperty()
-    prop_name: bpy.props.StringProperty()
-    delta:     bpy.props.FloatProperty()
-    def execute(self, ctx):
-        o = ctx.scene.objects.get(self.cam_name)
-        if o:
-            current = float(o.get(self.prop_name, 0.0))
-            o[self.prop_name] = round(max(0.0, current + self.delta), 2)
-        return {"FINISHED"}
-
-
-
-
-# ── Platform ──────────────────────────────────────────────────────────────────
-
-
-class OG_OT_NudgeFloatProp(Operator):
-    """Nudge a float custom property on the active object by a fixed delta."""
-    bl_idname  = "og.nudge_float_prop"
-    bl_label   = "Nudge Float Property"
-    bl_options = {"REGISTER", "UNDO"}
-
-    prop_name: bpy.props.StringProperty()
-    delta:     bpy.props.FloatProperty()
-    val_min:   bpy.props.FloatProperty(default=-1e9)
-    val_max:   bpy.props.FloatProperty(default=1e9)
-
-    def execute(self, ctx):
-        o = ctx.active_object
-        if o:
-            current = float(o.get(self.prop_name, 0.0))
-            o[self.prop_name] = round(max(self.val_min, min(self.val_max, current + self.delta)), 4)
-        return {"FINISHED"}
-
-
-class OG_OT_TogglePlatformWrap(Operator):
-    """Toggle wrap-phase (one-way loop vs ping-pong) on the selected platform."""
-    bl_idname = "og.toggle_platform_wrap"
-    bl_label  = "Toggle Wrap Phase"
-
-    def execute(self, ctx):
-        o = ctx.active_object
-        if not o:
-            return {"CANCELLED"}
-        o["og_sync_wrap"] = 0 if bool(o.get("og_sync_wrap", 0)) else 1
-        return {"FINISHED"}
-
-
-class OG_OT_SetPlatformDefaults(Operator):
-    """Reset sync values on the selected platform actor to defaults."""
-    bl_idname = "og.set_platform_defaults"
-    bl_label  = "Reset Sync Defaults"
-
-    def execute(self, ctx):
-        o = ctx.active_object
-        if not o:
-            return {"CANCELLED"}
-        o["og_sync_period"]   = 4.0
-        o["og_sync_phase"]    = 0.0
-        o["og_sync_ease_out"] = 0.15
-        o["og_sync_ease_in"]  = 0.15
-        o["og_sync_wrap"]     = 0
-        return {"FINISHED"}
-
-
-class OG_OT_SpawnPlatform(Operator):
-    """Place a platform actor empty at the 3D cursor."""
-    bl_idname     = "og.spawn_platform"
-    bl_label      = "Add Platform"
-    bl_description = "Place a platform actor at the 3D cursor"
-
-    def execute(self, ctx):
-        etype = ctx.scene.og_props.platform_type
-        einfo = ENTITY_DEFS.get(etype, {})
-
-        # Use count of existing same-type actors as uid, matching OG_OT_SpawnEntity pattern
-        n   = len([o for o in ctx.scene.objects if o.name.startswith(f"ACTOR_{etype}_")])
-        uid = f"{n:04d}"
-
-        bpy.ops.object.empty_add(type=einfo.get("shape", "CUBE"),
-                                 location=ctx.scene.cursor.location)
-        o = ctx.active_object
-        o.name               = f"ACTOR_{etype}_{uid}"
-        o.show_name          = True
-        o.empty_display_size = 0.5
-        o.color              = einfo.get("color", (0.5, 0.5, 0.8, 1.0))
-        if hasattr(o, "show_in_front"):
-            o.show_in_front = True
-        self.report({"INFO"}, f"Added {o.name}")
-        return {"FINISHED"}
-
-
-# ── Platforms panel ───────────────────────────────────────────────────────────
-
-
-def _draw_platform_settings(layout, sel, scene):
-    """Draw per-platform settings for the active platform actor."""
-    etype = sel.name.split("_", 2)[1]
-    einfo = ENTITY_DEFS.get(etype, {})
-
-    layout.label(text=einfo.get("label", etype), icon="CUBE")
-
-    # ── Sync controls (plat, plat-eco, side-to-side-plat) ────────────────────
-    if einfo.get("needs_sync"):
-        box = layout.box()
-        box.label(text="Sync (Path Timing)", icon="TIME")
-
-        wp_prefix = sel.name + "_wp_"
-        wp_count  = sum(1 for o in scene.objects
-                        if o.name.startswith(wp_prefix) and o.type == "EMPTY")
-
-        if wp_count < 2:
-            box.label(text="⚠ Add ≥2 waypoints to enable movement", icon="INFO")
-        else:
-            box.label(text=f"✓ {wp_count} waypoints — platform will move", icon="CHECKMARK")
-
-        col = box.column(align=True)
-
-        # Period
-        row = col.row(align=True)
-        row.label(text="Period (s):")
-        period = float(sel.get("og_sync_period", 4.0))
-        op = row.operator("og.nudge_float_prop", text="-0.5", icon="REMOVE")
-        op.prop_name = "og_sync_period"; op.delta = -0.5; op.val_min = 0.5
-        row.label(text=f"{period:.1f}s")
-        op = row.operator("og.nudge_float_prop", text="+0.5", icon="ADD")
-        op.prop_name = "og_sync_period"; op.delta = 0.5; op.val_max = 300.0
-
-        # Phase
-        row = col.row(align=True)
-        row.label(text="Phase (0–1):")
-        phase = float(sel.get("og_sync_phase", 0.0))
-        op = row.operator("og.nudge_float_prop", text="-0.1", icon="REMOVE")
-        op.prop_name = "og_sync_phase"; op.delta = -0.1; op.val_min = 0.0
-        row.label(text=f"{phase:.2f}")
-        op = row.operator("og.nudge_float_prop", text="+0.1", icon="ADD")
-        op.prop_name = "og_sync_phase"; op.delta = 0.1; op.val_max = 0.9
-
-        # Ease out
-        row = col.row(align=True)
-        row.label(text="Ease Out:")
-        ease_out = float(sel.get("og_sync_ease_out", 0.15))
-        op = row.operator("og.nudge_float_prop", text="-0.05", icon="REMOVE")
-        op.prop_name = "og_sync_ease_out"; op.delta = -0.05; op.val_min = 0.0
-        row.label(text=f"{ease_out:.2f}")
-        op = row.operator("og.nudge_float_prop", text="+0.05", icon="ADD")
-        op.prop_name = "og_sync_ease_out"; op.delta = 0.05; op.val_max = 0.5
-
-        # Ease in
-        row = col.row(align=True)
-        row.label(text="Ease In:")
-        ease_in = float(sel.get("og_sync_ease_in", 0.15))
-        op = row.operator("og.nudge_float_prop", text="-0.05", icon="REMOVE")
-        op.prop_name = "og_sync_ease_in"; op.delta = -0.05; op.val_min = 0.0
-        row.label(text=f"{ease_in:.2f}")
-        op = row.operator("og.nudge_float_prop", text="+0.05", icon="ADD")
-        op.prop_name = "og_sync_ease_in"; op.delta = 0.05; op.val_max = 0.5
-
-        # Wrap phase toggle
-        wrap = bool(sel.get("og_sync_wrap", 0))
-        row = box.row()
-        icon = "CHECKBOX_HLT" if wrap else "CHECKBOX_DEHLT"
-        label = "Loop (wrap-phase) ✓" if wrap else "Loop (wrap-phase)"
-        row.operator("og.toggle_platform_wrap", text=label, icon=icon)
-
-        box.operator("og.set_platform_defaults", text="Reset to Defaults", icon="LOOP_BACK")
-
-        if wp_count >= 2:
-            box.label(text="Tip: phase staggers multiple platforms", icon="INFO")
-
-    # ── plat-button path info ─────────────────────────────────────────────────
-    if einfo.get("needs_path") and not einfo.get("needs_sync"):
-        box = layout.box()
-        box.label(text="Path (Button Travel)", icon="ANIM")
-        wp_prefix = sel.name + "_wp_"
-        wp_count  = sum(1 for o in scene.objects
-                        if o.name.startswith(wp_prefix) and o.type == "EMPTY")
-        if wp_count < 2:
-            box.label(text="⚠ Needs ≥2 waypoints (start + end)", icon="ERROR")
-        else:
-            box.label(text=f"✓ {wp_count} waypoints", icon="CHECKMARK")
-        box.label(text="Use Waypoints panel to add points ↓", icon="INFO")
-
-    # ── notice-dist (plat-eco) ────────────────────────────────────────────────
-    if einfo.get("needs_notice_dist"):
-        box = layout.box()
-        box.label(text="Eco Notice Distance", icon="RADIOBUT_ON")
-        notice = float(sel.get("og_notice_dist", -1.0))
-        row = box.row(align=True)
-        op = row.operator("og.nudge_float_prop", text="-5m", icon="REMOVE")
-        op.prop_name = "og_notice_dist"; op.delta = -5.0; op.val_min = 0.0
-        if notice < 0:
-            row.label(text="∞ (always active)")
-        else:
-            row.label(text=f"{notice:.0f}m")
-        op = row.operator("og.nudge_float_prop", text="+5m", icon="ADD")
-        op.prop_name = "og_notice_dist"; op.delta = 5.0; op.val_max = 500.0
-        toggle_row = box.row()
-        if notice < 0:
-            toggle_row.label(text="Moves without eco — click +5m to set range", icon="INFO")
-        else:
-            op = toggle_row.operator("og.nudge_float_prop", text="Set Always Active", icon="RADIOBUT_ON")
-            op.prop_name = "og_notice_dist"; op.delta = -999.0; op.val_min = -1.0
-
-
-class OG_PT_Platforms(Panel):
-    bl_label       = "🟦  Platforms"
-    bl_idname      = "OG_PT_platforms"
-    bl_space_type  = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category    = "OpenGOAL"
-    bl_options     = {"DEFAULT_CLOSED"}
-
-    def draw(self, ctx):
-        layout = self.layout
-        props  = ctx.scene.og_props
-        scene  = ctx.scene
-
-        # ── Spawn section (always visible) ───────────────────────────────────
-        layout.label(text="Spawn", icon="ADD")
-        layout.prop(props, "platform_type", text="")
-        layout.operator("og.spawn_platform", text="Add Platform at Cursor", icon="ADD")
-
-        layout.separator(factor=0.5)
-
-        # ── Active platform settings (only when a platform actor is selected) ─
-        sel = ctx.active_object
-        is_platform_selected = (
-            sel is not None
-            and sel.name.startswith("ACTOR_")
-            and "_wp_" not in sel.name
-            and len(sel.name.split("_", 2)) >= 3
-            and _actor_is_platform(sel.name.split("_", 2)[1])
-        )
-
-        if is_platform_selected:
-            layout.separator(factor=0.2)
-            layout.label(text="Selected Platform Settings", icon="SETTINGS")
-            _draw_platform_settings(layout, sel, scene)
-            layout.separator(factor=0.5)
-
-        # ── Scene platform list (collapsible) ────────────────────────────────
-        plats = sorted(
-            [o for o in scene.objects
-             if o.name.startswith("ACTOR_")
-             and "_wp_" not in o.name
-             and o.type == "EMPTY"
-             and len(o.name.split("_", 2)) >= 3
-             and _actor_is_platform(o.name.split("_", 2)[1])],
-            key=lambda o: o.name
-        )
-
-        if not plats:
-            box = layout.box()
-            box.label(text="No platforms in scene", icon="INFO")
-            return
-
-        row = layout.row()
-        icon = "TRIA_DOWN" if props.show_platform_list else "TRIA_RIGHT"
-        row.prop(props, "show_platform_list",
-                 text=f"Platforms ({len(plats)})", icon=icon, emboss=False)
-
-        if not props.show_platform_list:
-            return
-
-        box = layout.box()
-        for p in plats:
-            etype = p.name.split("_", 2)[1]
-            einfo = ENTITY_DEFS.get(etype, {})
-            label = einfo.get("label", etype)
-            is_active = (sel is not None and sel == p)
-
-            row = box.row(align=True)
-            if is_active:
-                row.alert = False
-                row.label(text=f"▶ {label}", icon="CUBE")
-            else:
-                row.label(text=label, icon="CUBE")
-            row.label(text=p.name.split("_", 2)[2])  # uid portion
-
-            # Frame/select button — selecting naturally triggers settings above
-            op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
-            op.obj_name = p.name
-            op = row.operator("og.delete_object", text="", icon="TRASH")
-            op.obj_name = p.name
-
-
-class OG_PT_NavMesh(Panel):
-    bl_label       = "🕸  NavMesh"
-    bl_idname      = "OG_PT_navmesh"
-    bl_space_type  = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category    = "OpenGOAL"
-    bl_options     = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, ctx):
-        """Only show when a nav-enemy actor or a linked navmesh mesh is selected."""
-        sel = ctx.active_object
-        if not sel:
-            return False
-        # Actor selected — show only if it's a nav-enemy
-        if sel.name.startswith("ACTOR_") and "_wp_" not in sel.name:
-            parts = sel.name.split("_", 2)
-            if len(parts) >= 3:
-                return _actor_uses_navmesh(parts[1])
-            return False
-        # Mesh selected — show if it's tagged as a navmesh or linked to any actor
-        if sel.type == "MESH":
-            if sel.get("og_navmesh"):
-                return True
-            for o in bpy.data.objects:
-                if o.get("og_navmesh_link") in (sel.name,
-                        sel.name if sel.name.startswith("NAVMESH_")
-                        else "NAVMESH_" + sel.name):
-                    return True
-        return False
-
-    def draw(self, ctx):
-        layout = self.layout
-        sel    = ctx.active_object
-
-        # ── Actor selected ────────────────────────────────────────────────────
-        if sel and sel.name.startswith("ACTOR_") and "_wp_" not in sel.name:
-            parts = sel.name.split("_", 2)
-            etype = parts[1] if len(parts) >= 3 else ""
-            einfo = ENTITY_DEFS.get(etype, {})
-
-            if not _actor_uses_navmesh(etype):
-                box = layout.box()
-                box.label(text=f"{etype} doesn't use navmesh", icon="INFO")
-                ai = einfo.get("ai_type", "?")
-                box.label(text=f"AI type: {ai}")
-                return
-
-            layout.label(text=f"Enemy: {sel.name}", icon="OBJECT_DATA")
-
-            # Object picker stored as custom property og_navmesh_obj
-            nm_name = sel.get("og_navmesh_link", "")
-            nm_obj  = bpy.data.objects.get(nm_name) if nm_name else None
-
-            # Current link status
-            row = layout.row(align=True)
-            if nm_obj:
-                row.label(text=nm_obj.name, icon="MESH_DATA")
-                row.operator("og.unlink_navmesh", text="", icon="X")
-            else:
-                layout.label(text="No mesh linked", icon="ERROR")
-
-            # Link instruction + button
-            if nm_obj:
-                layout.operator("og.unlink_navmesh", text="Unlink NavMesh", icon="UNLINKED")
-            else:
-                box2 = layout.box()
-                box2.label(text="To link:", icon="INFO")
-                box2.label(text="1. Select enemy + navmesh quad")
-                box2.label(text="   (either order, shift-click both)")
-                box2.label(text="2. Click Link below")
-                box2.operator("og.link_navmesh", text="Link NavMesh", icon="LINKED")
-
-            # Status
-            if nm_obj:
-                try:
-                    nm_obj.data.calc_loop_triangles()
-                    pc = len(nm_obj.data.loop_triangles)
-                except Exception:
-                    pc = 0
-                box = layout.box()
-                box.label(text=f"✓ Linked: {nm_obj.name}", icon="CHECKMARK")
-                box.label(text=f"{pc} triangles")
-            else:
-                box = layout.box()
-                box.label(text="No navmesh linked!", icon="ERROR")
-                box.label(text="Enemy will use underground default")
-                box.label(text="→ never chases Jak")
-
-        # ── NavMesh mesh selected ─────────────────────────────────────────────
-        elif sel and sel.type == "MESH":
-            # Check both the current name and the NAVMESH_-prefixed version
-            # (link operator may have just renamed it)
-            linked = [o for o in bpy.data.objects
-                      if o.get("og_navmesh_link") in (sel.name,
-                         sel.name if sel.name.startswith("NAVMESH_")
-                         else "NAVMESH_" + sel.name)]
-            box = layout.box()
-            if sel.get("og_navmesh") or linked:
-                box.label(text=f"NavMesh: {sel.name}", icon="MOD_MESHDEFORM")
-                if linked:
-                    box.label(text=f"{len(linked)} actor(s) linked:")
-                    for o in linked:
-                        row = box.row(align=True)
-                        row.label(text=f"  {o.name}", icon="OBJECT_DATA")
-                else:
-                    box.label(text="No actors linked yet", icon="INFO")
-                    box.label(text="Select enemy + this mesh, click Link", icon="INFO")
-            else:
-                box.label(text="Not a navmesh object", icon="INFO")
-                box.label(text="Select enemy + this mesh, click Link", icon="INFO")
-
-        # ── Nothing useful selected ───────────────────────────────────────────
-        else:
-            layout.label(text="Select a nav-enemy actor", icon="INFO")
-            layout.label(text="to link a navmesh to it")
-
-
-# ── Build & Play ──────────────────────────────────────────────────────────────
 
 class OG_PT_BuildPlay(Panel):
     bl_label       = "▶  Build & Play"
@@ -6431,54 +5734,6 @@ class OG_OT_BakeLighting(Operator):
         return {"FINISHED"}
 
 
-# ---------------------------------------------------------------------------
-# PANEL — Light Baking
-# ---------------------------------------------------------------------------
-
-class OG_PT_LightBaking(Panel):
-    bl_label       = "OpenGOAL Light Baking"
-    bl_idname      = "OG_PT_lightbaking"
-    bl_space_type  = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category    = "OpenGOAL"
-    bl_options     = {"DEFAULT_CLOSED"}
-
-    def draw(self, ctx):
-        layout = self.layout
-        props  = ctx.scene.og_props
-
-        # Sample count input
-        col = layout.column(align=True)
-        col.label(text="Cycles Bake Settings:", icon="LIGHT")
-        col.prop(props, "lightbake_samples")
-
-        layout.separator(factor=0.5)
-
-        # Info about what will be baked
-        targets = [o for o in ctx.selected_objects if o.type == "MESH"]
-        if targets:
-            box = layout.box()
-            box.label(text=f"{len(targets)} mesh(es) selected:", icon="OBJECT_DATA")
-            for o in targets[:6]:
-                box.label(text=f"  • {o.name}")
-            if len(targets) > 6:
-                box.label(text=f"  … and {len(targets) - 6} more")
-        else:
-            layout.label(text="Select mesh object(s) to bake", icon="INFO")
-
-        layout.separator(factor=0.5)
-
-        # Bake button — disabled when nothing is selected
-        row = layout.row()
-        row.enabled = len(targets) > 0
-        row.scale_y = 1.6
-        row.operator("og.bake_lighting", text="Bake Lighting → Vertex Color", icon="RENDER_STILL")
-
-        layout.separator(factor=0.3)
-        layout.label(text="Result stored in 'BakedLight' layer", icon="GROUP_VCOL")
-
-
-
 class OG_OT_RemoveLevel(Operator):
     """Remove a custom level and all its files from the project."""
     bl_idname   = "og.remove_level"
@@ -6508,62 +5763,6 @@ class OG_OT_RefreshLevels(Operator):
         return {"FINISHED"}
 
 
-class OG_PT_LevelManager(Panel):
-    bl_label       = "🗂  Level Manager"
-    bl_idname      = "OG_PT_level_manager"
-    bl_space_type  = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category    = "OpenGOAL"
-    bl_options     = {"DEFAULT_CLOSED"}
-
-    def draw(self, ctx):
-        layout = self.layout
-
-        try:
-            levels = discover_custom_levels()
-        except Exception as e:
-            layout.label(text=f"Error scanning levels: {e}", icon="ERROR")
-            return
-
-        if not levels:
-            layout.label(text="No custom levels found", icon="INFO")
-            layout.label(text="Set data path in addon preferences")
-            return
-
-        for info in levels:
-            box  = layout.box()
-            row  = box.row()
-
-            # Name + conflict warning
-            if info["conflict"]:
-                row.alert = True
-                row.label(text=f"⚠ {info['name']}", icon="ERROR")
-            elif len(info["name"]) > 10:
-                row.alert = True
-                row.label(text=f"⚠ {info['name']} (name too long!)", icon="ERROR")
-            else:
-                row.label(text=info["name"], icon="SCENE_DATA")
-
-            # Remove button
-            op = row.operator("og.remove_level", text="", icon="TRASH")
-            op.level_name = info["name"]
-
-            # Status dots
-            srow = box.row(align=True)
-            srow.enabled = False
-            srow.label(text=f"glb:{'✓' if info['has_glb'] else '✗'}  "
-                           f"jsonc:{'✓' if info['has_jsonc'] else '✗'}  "
-                           f"obs:{'✓' if info['has_obs'] else '✗'}  "
-                           f"gp:{'✓' if info['has_gp'] else '✗'}  "
-                           f"DGO:{info['dgo']}")
-
-            if info["conflict"]:
-                box.label(text="DGO name conflict — rename this level!", icon="ERROR")
-            if not info["has_gp"] and (info["has_glb"] or info["has_obs"]):
-                box.label(text="Not registered in game.gp — re-export to fix", icon="ERROR")
-
-        layout.separator()
-        layout.operator("og.refresh_levels", text="Refresh List", icon="FILE_REFRESH")
 
 
 # ---------------------------------------------------------------------------
@@ -6579,7 +5778,6 @@ classes = (
     OG_OT_SpawnEntity,
     OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
     OG_OT_SpawnCamLookAt,
-    # OG_OT_LinkCamVolume, OG_OT_UnlinkCamVolume — replaced by generic OG_OT_LinkVolume
     OG_OT_SetCamProp, OG_OT_NudgeCamFloat,
     OG_OT_NudgeFloatProp,
     OG_OT_TogglePlatformWrap, OG_OT_SetPlatformDefaults, OG_OT_SpawnPlatform,
@@ -6593,22 +5791,30 @@ classes = (
     OG_OT_BakeLighting,
     OG_OT_PickSound,
     OG_OT_AddSoundEmitter,
-    OG_PT_LevelSettings,
-    OG_PT_LevelManager,
     OG_OT_RemoveLevel,
     OG_OT_RefreshLevels,
-    OG_PT_Scene,
-    OG_PT_PlaceObjects,
+    # ── Panels ──────────────────────────────────────────────────────────
+    # Level group
+    OG_PT_Level,
+    OG_PT_LevelFlow,
+    OG_PT_LevelManagerSub,
+    OG_PT_LightBakingSub,
+    OG_PT_Music,
+    # Spawn group
+    OG_PT_Spawn,
+    OG_PT_SpawnEnemies,
+    OG_PT_SpawnPlatforms,
+    OG_PT_SpawnProps,
+    OG_PT_SpawnNPCs,
+    OG_PT_SpawnPickups,
+    OG_PT_SpawnSounds,
+    # Standalone panels
     OG_PT_Waypoints,
-    OG_PT_Platforms,
     OG_PT_Triggers,
     OG_PT_Camera,
-    OG_PT_NavMesh,
     OG_PT_BuildPlay,
     OG_PT_DevTools,
     OG_PT_Collision,
-    OG_PT_LightBaking,
-    OG_PT_Audio,
 )
 
 def register():
