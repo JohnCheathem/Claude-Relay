@@ -4624,7 +4624,13 @@ class OG_PT_Scene(Panel):
                         sub.operator("og.unlink_cp_volume", text="Unlink Volume", icon="X")
                     else:
                         sub.operator("og.spawn_cp_volume", text="Add Trigger Volume", icon="MESH_CUBE")
-                        sub.label(text="Then shift-select vol + CP → Link", icon="INFO")
+                        # Show Link button if a CPVOL_ is also selected
+                        selected_vols = [o for o in ctx.selected_objects
+                                         if o.type == "MESH" and o.name.startswith("CPVOL_")]
+                        if selected_vols:
+                            sub.operator("og.link_cp_volume", text=f"Link {selected_vols[0].name} → {sel.name}", icon="LINKED")
+                        else:
+                            sub.label(text="Shift-select a CPVOL_ mesh → Link", icon="INFO")
 
         # ── Level flow settings ───────────────────────────────────────────────
         layout.separator(factor=0.5)
