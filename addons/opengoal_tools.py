@@ -4525,6 +4525,11 @@ class OG_PT_LevelSettings(Panel):
                 row.enabled = False
                 row.label(text=f"ISO: {_iso(name)}   Nick: {_nick(name)}", icon="INFO")
 
+        layout.separator(factor=0.4)
+        col2 = layout.column(align=True)
+        col2.prop(props, "bottom_height",    text="Death Plane (m)")
+        col2.prop(props, "vis_nick_override", text="Vis Nick Override")
+
 
 # ── Scene Setup / Level Flow ──────────────────────────────────────────────────
 
@@ -4631,14 +4636,6 @@ class OG_PT_Scene(Panel):
                             sub.operator("og.link_cp_volume", text=f"Link {selected_vols[0].name} → {sel.name}", icon="LINKED")
                         else:
                             sub.label(text="Shift-select a CPVOL_ mesh → Link", icon="INFO")
-
-        # ── Level flow settings ───────────────────────────────────────────────
-        layout.separator(factor=0.5)
-        layout.label(text="Level Settings", icon="SETTINGS")
-
-        col = layout.column(align=True)
-        col.prop(props, "bottom_height",     text="Death Plane (m)")
-        col.prop(props, "vis_nick_override",  text="Vis Nick")
 
         # Bsphere preview
         if spawns or checkpoints:
