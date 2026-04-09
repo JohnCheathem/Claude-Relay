@@ -5781,21 +5781,25 @@ class OG_PT_Triggers(Panel):
         layout.operator("og.spawn_volume", text="Add Trigger Volume", icon="MESH_CUBE")
         layout.separator(factor=0.3)
 
-        # ── Context: VOL_ selected ────────────────────────────────────────
-        if sel and sel.type == "MESH" and sel.name.startswith("VOL_"):
+        # ── Context: link UI ─────────────────────────────────────────────
+        # Works regardless of which object is active — we look at the full
+        # selection for a VOL_ + linkable target pair.
+        sel_vols    = [o for o in ctx.selected_objects if o.type == "MESH" and o.name.startswith("VOL_")]
+        sel_targets = [o for o in ctx.selected_objects if _is_linkable(o)]
+        active_vol  = sel if (sel and sel.type == "MESH" and sel.name.startswith("VOL_")) else (sel_vols[0] if sel_vols else None)
+
+        if active_vol:
             box = layout.box()
-            box.label(text=sel.name, icon="MESH_CUBE")
-            link = sel.get("og_vol_link", "")
+            box.label(text=active_vol.name, icon="MESH_CUBE")
+            link = active_vol.get("og_vol_link", "")
             if link:
                 box.label(text=f"Linked → {link}", icon="CHECKMARK")
                 box.operator("og.unlink_volume", text="Unlink", icon="X")
             else:
-                # Check if a linkable target is also selected
-                targets = [o for o in ctx.selected_objects if _is_linkable(o)]
-                if targets:
-                    tgt = targets[0]
+                if sel_targets:
+                    tgt = sel_targets[0]
                     existing = _vol_for_target(scene, tgt.name)
-                    if existing and existing is not sel:
+                    if existing and existing is not active_vol:
                         row = box.row()
                         row.alert = True
                         row.label(text=f"{tgt.name} already linked to {existing.name}", icon="ERROR")
@@ -5805,6 +5809,12 @@ class OG_PT_Triggers(Panel):
                 else:
                     box.label(text="Not linked", icon="ERROR")
                     box.label(text="Shift-select a target to link", icon="INFO")
+            layout.separator(factor=0.3)
+        elif sel_targets and not sel_vols:
+            # Target selected but no vol — show hint
+            box = layout.box()
+            box.label(text=f"{sel_targets[0].name} selected", icon="INFO")
+            box.label(text="Also select a VOL_ to link", icon="INFO")
             layout.separator(factor=0.3)
 
         # ── All volumes list ──────────────────────────────────────────────
