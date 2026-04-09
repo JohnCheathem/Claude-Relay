@@ -6126,7 +6126,10 @@ class OG_PT_LevelManagerSub(Panel):
 
 
 def _sync_col_list(props, level_col):
-    """Sync the UIList CollectionProperty with the level's actual children."""
+    """Sync the UIList CollectionProperty with the level's actual children.
+    Must NOT be called from draw() — Blender forbids writes there.
+    Called from depsgraph_update_post handler and from operators.
+    """
     children = sorted(level_col.children, key=lambda c: c.name)
     child_names = [c.name for c in children]
 
@@ -6145,6 +6148,22 @@ def _sync_col_list(props, level_col):
     # Clamp index
     if props.col_list_index >= len(props.col_list):
         props.col_list_index = max(0, len(props.col_list) - 1)
+
+
+def _on_depsgraph_update(scene, depsgraph):
+    """Depsgraph handler: sync collection list when scene structure changes."""
+    if not hasattr(scene, "og_props"):
+        return
+    props = scene.og_props
+    level_col = _active_level_col(scene)
+    if level_col is None:
+        return
+    # Only sync if the list is actually stale (cheap check)
+    children = sorted(level_col.children, key=lambda c: c.name)
+    child_names = [c.name for c in children]
+    list_names = [item.name for item in props.col_list]
+    if child_names != list_names:
+        _sync_col_list(props, level_col)
 
 
 class OG_PT_CollectionProperties(Panel):
@@ -6167,9 +6186,6 @@ class OG_PT_CollectionProperties(Panel):
         level_col = _active_level_col(scene)
         if level_col is None:
             return
-
-        # Sync list with actual children
-        _sync_col_list(props, level_col)
 
         # ── Native UIList ────────────────────────────────────────────────
         row = layout.row()
@@ -7824,8 +7840,14 @@ def register():
         description="When enabled, this collection and its contents are excluded from level export",
         default=False)
 
+    # Depsgraph handler for collection list sync
+    bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
+
 def unregister():
     _unload_previews()
+    # Remove depsgraph handler
+    if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
     bpy.types.MATERIAL_PT_custom_props.remove(_draw_mat)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
