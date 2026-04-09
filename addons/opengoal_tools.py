@@ -5683,12 +5683,8 @@ class OG_PT_Level(Panel):
             box.operator("og.create_level", text="Add Level", icon="ADD")
             return
 
-        # ── Level selector (when ≥2 levels exist, show dropdown) ─────────
-        if len(levels) > 1:
-            layout.prop(props, "active_level", text="")
-        elif level_col:
-            row = layout.row()
-            row.label(text=level_col.get("og_level_name", level_col.name), icon="SCENE_DATA")
+        # ── Level selector dropdown (always shown when levels exist) ──────
+        layout.prop(props, "active_level", text="")
 
         if level_col is None:
             return
