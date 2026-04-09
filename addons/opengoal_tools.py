@@ -5310,7 +5310,7 @@ class OG_PT_BuildPlay(Panel):
 
 # ── Developer Tools ───────────────────────────────────────────────────────────
 
-class OG_OT_ReloadAddon(bpy.types.Operator):
+class OG_OT_ReloadAddon(Operator):
     """Hot-reload the OpenGOAL addon from disk — clears all Python module caches.
     Use this after updating the .py file instead of restarting Blender."""
     bl_idname = "og.reload_addon"
