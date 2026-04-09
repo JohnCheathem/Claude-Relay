@@ -176,3 +176,55 @@ Knowledge base: `knowledge-base/opengoal/level-flow.md` (17 sections, fully comp
 ### Final status
 Branch is at 2c02baf. 5 bugs found and fixed across two review passes before any in-game testing.
 Ready for testing.
+
+---
+
+## Checkpoint Trigger System (this session)
+
+### Problem
+Passive auto-assign requires BSP `inside-boxes?` detection. Custom levels have no
+BSP, so `current-level` is never set, and the auto-assign loop never fires.
+Player always respawned at start spawn regardless of checkpoint proximity.
+
+### Solution: actor-based trigger
+`CHECKPOINT_` empties now export as TWO things:
+
+1. **continue-point record in level-info.gc** (was already working) — holds spawn
+   position, camera data, level slot. Required for `set-continue!` to find by name.
+
+2. **`checkpoint-trigger` actor in JSONC** (new) — invisible `process-drawable`,
+   no skeleton. Polls player distance every frame. Calls `set-continue!` on first
+   entry. One-shot (triggered flag latches, won't re-fire).
+
+### GOAL type
+```
+(deftype checkpoint-trigger (process-drawable)
+  ((cp-name   string  :offset-assert 176)
+   (radius    float   :offset-assert 180)
+   (triggered symbol  :offset-assert 184))
+  :heap-base #x40 :size-assert #xbc)
+```
+- Reads `continue-name` lump (bare string → ResString)
+- Reads `radius` lump (metres, default 3m = 12288 game units)
+- Calls `(set-continue! *game-info* (-> self cp-name))`
+- Born automatically via entity-actor.birth! when level loads
+
+### Files changed
+- `collect_actors`: appends checkpoint-trigger actors after ACTOR_ entities
+- `write_gc`: `has_checkpoints` flag, emits type when needed
+- All 3 build pipelines updated
+- `OG_OT_SpawnCheckpoint`: stamps `og_checkpoint_radius=3.0` custom prop
+- Level Flow panel: shows radius next to each checkpoint
+
+### Known risk
+`:heap-base #x40` may produce a GOALC assertion warning. Not a crash — just adjust
+to match what GOALC reports. Struct size #xbc (188) is verified correct.
+
+### Testing checklist (updated)
+- [ ] Export & Build with a CHECKPOINT_ empty in scene
+- [ ] Verify `checkpoint-trigger` type appears in obs.gc
+- [ ] Verify GOALC compiles without errors (watch for heap-base assertion)
+- [ ] Walk into checkpoint sphere in game
+- [ ] Die → verify respawn at checkpoint, not at start spawn
+- [ ] Walk into checkpoint a second time → verify it doesn't re-trigger
+- [ ] Verify start spawn still works as fallback if no checkpoint reached
