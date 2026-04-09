@@ -3898,6 +3898,46 @@ class OG_OT_SelectLevelCollection(Operator):
         return {"FINISHED"}
 
 
+class OG_OT_EditLevel(Operator):
+    """Edit the active level's name and base actor ID."""
+    bl_idname   = "og.edit_level"
+    bl_label    = "Edit Level Settings"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    level_name: StringProperty(name="Level Name", default="")
+    base_id:    IntProperty(name="Base Actor ID", default=10000, min=1000, max=60000)
+
+    def invoke(self, ctx, event):
+        col = _active_level_col(ctx.scene)
+        if col is None:
+            self.report({"ERROR"}, "No active level"); return {"CANCELLED"}
+        self.level_name = str(col.get("og_level_name", col.name))
+        self.base_id    = int(col.get("og_base_id", 10000))
+        return ctx.window_manager.invoke_props_dialog(self)
+
+    def execute(self, ctx):
+        col = _active_level_col(ctx.scene)
+        if col is None:
+            self.report({"ERROR"}, "No active level"); return {"CANCELLED"}
+        name = self.level_name.strip().lower().replace(" ", "-")
+        if not name:
+            self.report({"ERROR"}, "Level name cannot be empty"); return {"CANCELLED"}
+        if len(name) > 10:
+            self.report({"ERROR"}, f"Name '{name}' is {len(name)} chars — max 10"); return {"CANCELLED"}
+        # Check for duplicate names (excluding self)
+        for c in _all_level_collections(ctx.scene):
+            if c.name != col.name and c.get("og_level_name", "") == name:
+                self.report({"ERROR"}, f"A level named '{name}' already exists"); return {"CANCELLED"}
+        old_name = col.get("og_level_name", "")
+        col["og_level_name"] = name
+        col["og_base_id"]    = self.base_id
+        col.name = name  # Keep collection name in sync
+        # Update active_level reference since collection name changed
+        ctx.scene.og_props.active_level = col.name
+        self.report({"INFO"}, f"Level updated: '{name}' (ID {self.base_id})")
+        return {"FINISHED"}
+
+
 # ---------------------------------------------------------------------------
 # OPERATORS — Spawn / NavMesh
 # ---------------------------------------------------------------------------
@@ -5691,27 +5731,15 @@ class OG_PT_Level(Panel):
 
         # ── Level settings (read/write from collection custom props) ─────
         name = str(level_col.get("og_level_name", ""))
+        base_id = int(level_col.get("og_base_id", 10000))
 
-        # Name field — editable via a simple text row
-        # We use a row + prop for the collection custom prop
         col = layout.column(align=True)
 
-        # Name
+        # Name + Base ID row with edit button
         row = col.row(align=True)
-        row.label(text="Name:")
-        # We can't use layout.prop() on collection custom props with enum/type
-        # safety, so we show the name and provide an edit operator
-        sub = row.row(align=True)
-        sub.enabled = False
-        sub.label(text=name if name else "(unnamed)")
-
-        # Base ID
-        base_id = int(level_col.get("og_base_id", 10000))
-        row2 = col.row(align=True)
-        row2.label(text="Base Actor ID:")
-        sub2 = row2.row(align=True)
-        sub2.enabled = False
-        sub2.label(text=str(base_id))
+        row.label(text=name if name else "(unnamed)", icon="SCENE_DATA")
+        row.label(text=f"ID: {base_id}")
+        row.operator("og.edit_level", text="", icon="GREASEPENCIL")
 
         if name:
             name_clean = name.lower().replace(" ", "-")
@@ -7561,6 +7589,7 @@ classes = (
     OG_OT_DeleteLevel,
     OG_OT_AddCollectionToLevel, OG_OT_RemoveCollectionFromLevel,
     OG_OT_ToggleCollectionNoExport, OG_OT_SelectLevelCollection,
+    OG_OT_EditLevel,
     # ── Panels ──────────────────────────────────────────────────────────
     # Level group
     OG_PT_Level,
