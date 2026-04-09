@@ -67,3 +67,24 @@
 - [ ] Platform panel: frame button selects + frames the platform
 - [ ] Platform panel: delete button removes the platform
 - [ ] Waypoints panel still appears for sync platforms (plat, plat-eco)
+
+---
+
+## Code Review Log
+
+### Round 1 bugs fixed (commit eb3762a)
+1. `OG_OT_SpawnPlatform` used `base_id` for uid — corrupts level actor ID space. Fixed to count-based.
+2. `plat-button` hit enemy path block AND platform path block — double emit + double warn. Fixed by guarding enemy block with `cat != "Platforms"`.
+3. `_draw_platform_settings` used `bpy.data.objects` (all scenes) for wp_count. Fixed to `scene.objects`.
+
+### Round 2 — all clean
+- PLATFORM_ENUM_ITEMS: 13 types, sorted alphabetically, valid 4-tuple format ✓
+- SpawnPlatform uid prefix isolation: `plat` vs `plat-eco` not conflated ✓
+- DeleteObject does NOT clean wp_ waypoints on platform delete — pre-existing gap, same for enemies, out of scope
+- All None guards in panel draw verified ✓
+- Missing custom props handled via o.get(prop, default) everywhere ✓
+- Old OG_PT_Platform (singular) panel: zero remaining references ✓
+- og_sync_wrap: written as int 0/1, read via bool() — consistent ✓
+- og_notice_dist clamping: -5m button can't accidentally reach -1 (always-active requires explicit button) ✓
+- platforms flow through _canonical_actor_objects correctly ✓
+- No cross-panel regressions in Waypoints, Place Objects, or NavMesh panels ✓
