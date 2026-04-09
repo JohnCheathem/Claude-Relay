@@ -2,7 +2,7 @@
 
 **Research date:** April 2026  
 **Branch:** feature/level-flow  
-**Status:** Research complete. No code written yet.  
+**Status:** Research complete. Implementation shipped to main (commit 6be87e3).  
 **Sources:** Full source crawl of `goal_src/jak1/engine/level/`, `engine/game/game-info*.gc`, `engine/target/target-death.gc`, `engine/target/logic-target.gc`, `engine/common-obs/basebutton.gc`, `levels/common/launcherdoor.gc`, `levels/jungle/jungle-elevator.gc`
 
 ---
