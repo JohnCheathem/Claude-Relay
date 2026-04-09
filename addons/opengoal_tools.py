@@ -5343,6 +5343,48 @@ class OG_OT_ReloadAddon(Operator):
         return {"FINISHED"}
 
 
+class OG_OT_CleanLevelFiles(Operator):
+    """Delete generated files for the current level so the next build writes them fresh.
+    Removes: obs.gc, .jsonc, .glb, .gd — forces a clean compile without stale cached data."""
+    bl_idname = "og.clean_level_files"
+    bl_label  = "Clean Level Files"
+    bl_description = "Delete generated level files to force a clean rebuild (obs.gc, jsonc, glb, gd)"
+
+    def execute(self, ctx):
+        name = ctx.scene.og_props.level_name.strip().lower().replace(" ", "-")
+        if not name:
+            self.report({"ERROR"}, "No level name set")
+            return {"CANCELLED"}
+
+        deleted = []
+        skipped = []
+
+        # goal_src obs.gc — the one that causes stale compile errors
+        obs_gc = _goal_src() / "levels" / name / f"{name}-obs.gc"
+        # custom_assets files
+        assets = _ldir(name)
+        targets = [
+            obs_gc,
+            assets / f"{name}.jsonc",
+            assets / f"{name}.glb",
+            assets / f"{_nick(name)}.gd",
+        ]
+
+        for p in targets:
+            if p.exists():
+                p.unlink()
+                deleted.append(p.name)
+            else:
+                skipped.append(p.name)
+
+        if deleted:
+            self.report({"INFO"}, f"Deleted: {', '.join(deleted)}" +
+                        (f"  (not found: {', '.join(skipped)})" if skipped else ""))
+        else:
+            self.report({"WARNING"}, f"Nothing to delete — files not found for '{name}'")
+        return {"FINISHED"}
+
+
 class OG_PT_DevTools(Panel):
     bl_label       = "🔧  Developer Tools"
     bl_idname      = "OG_PT_dev_tools"
@@ -5354,10 +5396,11 @@ class OG_PT_DevTools(Panel):
     def draw(self, ctx):
         layout = self.layout
 
-        # ── Reload ───────────────────────────────────────────────────────────
-        row = layout.row()
+        # ── Reload / Clean ───────────────────────────────────────────────────
+        row = layout.row(align=True)
         row.scale_y = 1.4
-        row.operator("og.reload_addon", text="🔄  Reload Addon from Disk", icon="FILE_REFRESH")
+        row.operator("og.reload_addon",       text="🔄  Reload Addon", icon="FILE_REFRESH")
+        row.operator("og.clean_level_files",  text="🗑  Clean Files",  icon="TRASH")
         layout.separator(factor=0.5)
 
         # Paths
@@ -5741,7 +5784,7 @@ class OG_PT_LevelManager(Panel):
 
 classes = (
     OGPreferences, OGProperties,
-    OG_OT_ReloadAddon,
+    OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
     OG_OT_SpawnPlayer, OG_OT_SpawnCheckpoint, OG_OT_SpawnCamAnchor,
     OG_OT_SpawnCpVolume, OG_OT_LinkCpVolume, OG_OT_UnlinkCpVolume,
     OG_OT_SpawnEntity,
