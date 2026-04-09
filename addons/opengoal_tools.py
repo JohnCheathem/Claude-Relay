@@ -5343,7 +5343,7 @@ class OG_OT_ReloadAddon(bpy.types.Operator):
         return {"FINISHED"}
 
 
-
+class OG_PT_DevTools(Panel):
     bl_label       = "🔧  Developer Tools"
     bl_idname      = "OG_PT_dev_tools"
     bl_space_type  = "VIEW_3D"
