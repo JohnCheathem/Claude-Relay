@@ -747,16 +747,249 @@ def _navmesh_to_goal(mesh, actor_aid):
     return "\n".join(L)
 
 
-def _canonical_actor_objects(scene):
+# ---------------------------------------------------------------------------
+# COLLECTION SYSTEM — Level = Collection
+# ---------------------------------------------------------------------------
+# Each level lives in a top-level Blender collection with og_is_level=True.
+# Sub-collections organize objects by category (Geometry, Spawnables, etc.).
+# When no level collections exist, the addon falls back to v1.1.0 behaviour
+# (scene-wide scan, scene.og_props for settings).
+
+# Sub-collection path mapping: object type → tuple of collection names
+_COL_PATH_SPAWNABLE_ENEMIES   = ("Spawnables", "Enemies")
+_COL_PATH_SPAWNABLE_PLATFORMS = ("Spawnables", "Platforms")
+_COL_PATH_SPAWNABLE_PROPS     = ("Spawnables", "Props & Objects")
+_COL_PATH_SPAWNABLE_NPCS      = ("Spawnables", "NPCs")
+_COL_PATH_SPAWNABLE_PICKUPS   = ("Spawnables", "Pickups")
+_COL_PATH_TRIGGERS            = ("Triggers",)
+_COL_PATH_CAMERAS             = ("Cameras",)
+_COL_PATH_SPAWNS              = ("Spawns",)
+_COL_PATH_SOUND_EMITTERS      = ("Sound Emitters",)
+_COL_PATH_GEO_TERRAIN         = ("Geometry", "Terrain")
+_COL_PATH_GEO_COLLISION       = ("Geometry", "Collision Only")
+_COL_PATH_GEO_VISUAL          = ("Geometry", "Visual Only")
+_COL_PATH_GEO_REFERENCE       = ("Geometry", "Reference")
+
+# Entity category → sub-collection path
+_ENTITY_CAT_TO_COL_PATH = {
+    "Enemies":   _COL_PATH_SPAWNABLE_ENEMIES,
+    "Bosses":    _COL_PATH_SPAWNABLE_ENEMIES,
+    "Platforms":  _COL_PATH_SPAWNABLE_PLATFORMS,
+    "Props":     _COL_PATH_SPAWNABLE_PROPS,
+    "Objects":   _COL_PATH_SPAWNABLE_PROPS,
+    "Debug":     _COL_PATH_SPAWNABLE_PROPS,
+    "NPCs":      _COL_PATH_SPAWNABLE_NPCS,
+    "Pickups":   _COL_PATH_SPAWNABLE_PICKUPS,
+}
+
+# Default custom property values for level collections
+_LEVEL_COL_DEFAULTS = {
+    "og_is_level":          True,
+    "og_level_name":        "my-level",
+    "og_base_id":           10000,
+    "og_bottom_height":     -20.0,
+    "og_vis_nick_override": "",
+    "og_sound_bank_1":      "none",
+    "og_sound_bank_2":      "none",
+    "og_music_bank":        "none",
+}
+
+
+def _all_level_collections(scene):
+    """Return list of top-level collections marked as levels, sorted by name."""
+    result = []
+    for col in scene.collection.children:
+        if col.get("og_is_level", False):
+            result.append(col)
+    result.sort(key=lambda c: c.name)
+    return result
+
+
+def _active_level_col(scene):
+    """Return the active level collection, or None if not in collection mode.
+
+    If no collection has og_is_level=True, returns None → fallback to v1.1.0.
+    """
+    levels = _all_level_collections(scene)
+    if not levels:
+        return None
+    # Read the active_level identifier from scene props
+    active_name = scene.og_props.active_level if hasattr(scene, "og_props") else ""
+    for col in levels:
+        if col.name == active_name:
+            return col
+    # active_level doesn't match any existing collection → return first
+    return levels[0]
+
+
+def _col_is_no_export(col):
+    """Check if a collection is marked as no-export (Reference)."""
+    return bool(col.get("og_no_export", False))
+
+
+def _recursive_col_objects(col, exclude_no_export=True):
+    """Return all objects in a collection and its children, deduplicated.
+
+    If exclude_no_export=True, skips sub-collections with og_no_export=True.
+    """
+    seen = set()
+    result = []
+    def _walk(c):
+        if exclude_no_export and _col_is_no_export(c):
+            return
+        for o in c.objects:
+            if o.name not in seen:
+                seen.add(o.name)
+                result.append(o)
+        for child in c.children:
+            _walk(child)
+    _walk(col)
+    return result
+
+
+def _level_objects(scene, level_col=None, exclude_no_export=True):
+    """Return all objects belonging to the active level collection.
+
+    Falls back to scene.objects if not in collection mode (backward compat).
+    """
+    if level_col is None:
+        level_col = _active_level_col(scene)
+    if level_col is None:
+        # Fallback: v1.1.0 behaviour — all scene objects
+        return list(scene.objects)
+    return _recursive_col_objects(level_col, exclude_no_export=exclude_no_export)
+
+
+def _ensure_sub_collection(level_col, *path):
+    """Find or create nested sub-collections under a level collection.
+
+    Example: _ensure_sub_collection(level_col, "Spawnables", "Enemies")
+    creates level_col > Spawnables > Enemies if they don't exist.
+    Returns the innermost collection.
+    """
+    current = level_col
+    for name in path:
+        child = None
+        for c in current.children:
+            if c.name == name:
+                child = c
+                break
+        if child is None:
+            child = bpy.data.collections.new(name)
+            current.children.link(child)
+        current = child
+    return current
+
+
+def _link_object_to_sub_collection(scene, obj, *col_path):
+    """Link an object into the correct sub-collection of the active level.
+
+    If not in collection mode, does nothing (object stays wherever Blender put it).
+    Unlinks from Scene Collection root if linked there.
+    """
+    level_col = _active_level_col(scene)
+    if level_col is None:
+        return  # v1.1.0 fallback — no auto-organization
+    target = _ensure_sub_collection(level_col, *col_path)
+    # Link to target if not already there
+    if obj.name not in target.objects:
+        target.objects.link(obj)
+    # Unlink from scene root collection if present
+    if obj.name in scene.collection.objects:
+        scene.collection.objects.unlink(obj)
+    # Unlink from any other collections that aren't in our target path
+    # (Blender auto-links new objects to the active collection)
+    for col in bpy.data.collections:
+        if col == target:
+            continue
+        if obj.name in col.objects:
+            col.objects.unlink(obj)
+
+
+def _col_path_for_entity(etype):
+    """Return the sub-collection path tuple for a given entity type."""
+    info = ENTITY_DEFS.get(etype, {})
+    cat = info.get("cat", "")
+    return _ENTITY_CAT_TO_COL_PATH.get(cat, _COL_PATH_SPAWNABLE_PROPS)
+
+
+def _get_level_prop(scene, key, default=None):
+    """Read a level property — from active collection or scene.og_props fallback."""
+    col = _active_level_col(scene)
+    if col is not None:
+        return col.get(key, _LEVEL_COL_DEFAULTS.get(key, default))
+    # Fallback: read from scene.og_props
+    props = scene.og_props
+    # Map collection keys to OGProperties attribute names
+    _KEY_MAP = {
+        "og_level_name":        "level_name",
+        "og_base_id":           "base_id",
+        "og_bottom_height":     "bottom_height",
+        "og_vis_nick_override": "vis_nick_override",
+        "og_sound_bank_1":      "sound_bank_1",
+        "og_sound_bank_2":      "sound_bank_2",
+        "og_music_bank":        "music_bank",
+    }
+    attr = _KEY_MAP.get(key)
+    if attr and hasattr(props, attr):
+        return getattr(props, attr)
+    return default
+
+
+def _set_level_prop(scene, key, value):
+    """Write a level property — to active collection or scene.og_props fallback."""
+    col = _active_level_col(scene)
+    if col is not None:
+        col[key] = value
+        # Keep collection name in sync with level name
+        if key == "og_level_name":
+            col.name = str(value).strip().lower().replace(" ", "-") or "unnamed-level"
+        return
+    # Fallback: write to scene.og_props
+    props = scene.og_props
+    _KEY_MAP = {
+        "og_level_name":        "level_name",
+        "og_base_id":           "base_id",
+        "og_bottom_height":     "bottom_height",
+        "og_vis_nick_override": "vis_nick_override",
+        "og_sound_bank_1":      "sound_bank_1",
+        "og_sound_bank_2":      "sound_bank_2",
+        "og_music_bank":        "music_bank",
+    }
+    attr = _KEY_MAP.get(key)
+    if attr and hasattr(props, attr):
+        setattr(props, attr, value)
+
+
+# Dynamic enum callback for active_level selector
+def _active_level_items(self, context):
+    """Populate the active_level dropdown from level collections."""
+    scene = context.scene if context else None
+    if scene is None:
+        return [("NONE", "No Levels", "", 0)]
+    levels = _all_level_collections(scene)
+    if not levels:
+        return [("NONE", "No Levels", "", 0)]
+    items = []
+    for i, col in enumerate(levels):
+        lname = col.get("og_level_name", col.name)
+        items.append((col.name, lname, f"Switch to level '{lname}'", "SCENE_DATA", i))
+    return items
+
+
+def _canonical_actor_objects(scene, objects=None):
     """
     Single source of truth for actor ordering and AID assignment.
     Both collect_actors and _collect_navmesh_actors must use this so
     idx values — and therefore AIDs — are guaranteed to match.
     Sorted by name for full determinism regardless of Blender object order.
     Excludes waypoints (_wp_, _wpb_) and non-EMPTY objects.
+
+    If objects is provided, scans that list instead of scene.objects.
     """
+    source = objects if objects is not None else scene.objects
     actors = []
-    for o in scene.objects:
+    for o in source:
         if not (o.name.startswith("ACTOR_") and o.type == "EMPTY"):
             continue
         if "_wp_" in o.name or "_wpb_" in o.name:
@@ -1236,7 +1469,11 @@ def _game_gp():    return _goal_src() / "game.gp"
 def _ldir(name):   return _levels_dir() / name
 def _entity_gc():  return _goal_src() / "engine" / "entity" / "entity.gc" 
 
-def _lname(ctx):   return ctx.scene.og_props.level_name.strip().lower().replace(" ","-")
+def _lname(ctx):
+    col = _active_level_col(ctx.scene)
+    if col is not None:
+        return str(col.get("og_level_name", "")).strip().lower().replace(" ", "-")
+    return ctx.scene.og_props.level_name.strip().lower().replace(" ","-")
 def _nick(n):      return n.replace("-","")[:3].lower()
 def _iso(n):       return n.replace("-","").upper()[:8]
 def log(m):        print(f"[OpenGOAL] {m}")
@@ -2336,6 +2573,9 @@ ALL_SFX_ITEMS = [
 # ---------------------------------------------------------------------------
 
 class OGProperties(PropertyGroup):
+    # Collection-based level selection
+    active_level:   EnumProperty(name="Active Level", items=_active_level_items,
+                                 description="Select which level collection is active")
     level_name:  StringProperty(name="Name", description="Lowercase with dashes", default="my-level")
     entity_type:    EnumProperty(name="Entity Type",    items=ENTITY_ENUM_ITEMS)
     platform_type:  EnumProperty(name="Platform Type",  items=PLATFORM_ENUM_ITEMS)
@@ -2378,6 +2618,8 @@ class OGProperties(PropertyGroup):
     show_spawn_list:        BoolProperty(name="Show Spawn List",        default=True)
     show_checkpoint_list:   BoolProperty(name="Show Checkpoint List",   default=True)
     show_platform_list:     BoolProperty(name="Show Platform List",     default=True)
+    # Collection Properties panel — which sub-collection is selected
+    selected_collection:    StringProperty(name="Selected Collection", default="")
 
 # ---------------------------------------------------------------------------
 # PROCESS MANAGEMENT
@@ -3416,6 +3658,245 @@ def export_glb(ctx, name):
         export_yup=True, export_skins=False, export_animations=False,
         export_extras=True)
     log("Exported GLB")
+
+# ---------------------------------------------------------------------------
+# OPERATORS — Level Collection Management
+# ---------------------------------------------------------------------------
+
+class OG_OT_CreateLevel(Operator):
+    """Create a new level collection with default settings."""
+    bl_idname   = "og.create_level"
+    bl_label    = "Add Level"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    level_name: StringProperty(name="Level Name", default="my-level",
+                               description="Name for the new level (lowercase, dashes)")
+    base_id:    IntProperty(name="Base Actor ID", default=10000, min=1000, max=60000,
+                            description="Starting actor ID — must be unique per level")
+
+    def invoke(self, ctx, event):
+        # Auto-increment base_id if other levels exist
+        levels = _all_level_collections(ctx.scene)
+        if levels:
+            max_id = max(c.get("og_base_id", 10000) for c in levels)
+            self.base_id = max_id + 1000
+            self.level_name = "new-level"
+        return ctx.window_manager.invoke_props_dialog(self)
+
+    def execute(self, ctx):
+        name = self.level_name.strip().lower().replace(" ", "-")
+        if not name:
+            self.report({"ERROR"}, "Level name cannot be empty")
+            return {"CANCELLED"}
+        if len(name) > 10:
+            self.report({"ERROR"}, f"Level name '{name}' is {len(name)} chars — max 10")
+            return {"CANCELLED"}
+
+        # Check for duplicate names
+        for col in _all_level_collections(ctx.scene):
+            if col.get("og_level_name", "") == name:
+                self.report({"ERROR"}, f"A level named '{name}' already exists")
+                return {"CANCELLED"}
+
+        # Create the level collection
+        col = bpy.data.collections.new(name)
+        ctx.scene.collection.children.link(col)
+
+        # Set level properties
+        col["og_is_level"]          = True
+        col["og_level_name"]        = name
+        col["og_base_id"]           = self.base_id
+        col["og_bottom_height"]     = -20.0
+        col["og_vis_nick_override"] = ""
+        col["og_sound_bank_1"]      = "none"
+        col["og_sound_bank_2"]      = "none"
+        col["og_music_bank"]        = "none"
+
+        # Set as active level
+        ctx.scene.og_props.active_level = col.name
+
+        self.report({"INFO"}, f"Created level '{name}' (base ID {self.base_id})")
+        log(f"[collections] Created level collection '{name}' base_id={self.base_id}")
+        return {"FINISHED"}
+
+
+class OG_OT_SetActiveLevel(Operator):
+    """Set a level collection as the active level."""
+    bl_idname   = "og.set_active_level"
+    bl_label    = "Set Active Level"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    col_name: StringProperty(name="Collection Name")
+
+    def execute(self, ctx):
+        col = None
+        for c in _all_level_collections(ctx.scene):
+            if c.name == self.col_name:
+                col = c
+                break
+        if col is None:
+            self.report({"ERROR"}, f"Level collection '{self.col_name}' not found")
+            return {"CANCELLED"}
+        ctx.scene.og_props.active_level = col.name
+        lname = col.get("og_level_name", col.name)
+        self.report({"INFO"}, f"Active level: {lname}")
+        return {"FINISHED"}
+
+
+class OG_OT_NudgeLevelProp(Operator):
+    """Nudge a numeric property on the active level collection."""
+    bl_idname   = "og.nudge_level_prop"
+    bl_label    = "Nudge Level Property"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    prop_name: StringProperty()
+    delta:     FloatProperty()
+    val_min:   FloatProperty(default=-999999.0)
+    val_max:   FloatProperty(default=999999.0)
+
+    def execute(self, ctx):
+        col = _active_level_col(ctx.scene)
+        if col is None:
+            self.report({"ERROR"}, "No active level"); return {"CANCELLED"}
+        cur = float(col.get(self.prop_name, 0.0))
+        col[self.prop_name] = max(self.val_min, min(self.val_max, cur + self.delta))
+        return {"FINISHED"}
+
+
+class OG_OT_DeleteLevel(Operator):
+    """Delete a level collection and all its contents."""
+    bl_idname   = "og.delete_level"
+    bl_label    = "Delete Level"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    col_name: StringProperty(name="Collection Name")
+
+    def invoke(self, ctx, event):
+        return ctx.window_manager.invoke_confirm(self, event)
+
+    def execute(self, ctx):
+        target = None
+        for c in _all_level_collections(ctx.scene):
+            if c.name == self.col_name:
+                target = c
+                break
+        if target is None:
+            self.report({"ERROR"}, f"Level '{self.col_name}' not found")
+            return {"CANCELLED"}
+
+        lname = target.get("og_level_name", target.name)
+
+        # Recursively remove all objects in the collection tree
+        def _remove_col(col):
+            for child in list(col.children):
+                _remove_col(child)
+            for obj in list(col.objects):
+                bpy.data.objects.remove(obj, do_unlink=True)
+            bpy.data.collections.remove(col)
+
+        _remove_col(target)
+        self.report({"INFO"}, f"Deleted level '{lname}'")
+        return {"FINISHED"}
+
+
+class OG_OT_AddCollectionToLevel(Operator):
+    """Add an existing Blender collection to the active level."""
+    bl_idname   = "og.add_collection_to_level"
+    bl_label    = "Add Collection"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    col_name: StringProperty(name="Collection",
+                             description="Name of the collection to add to the level")
+
+    def invoke(self, ctx, event):
+        return ctx.window_manager.invoke_props_dialog(self)
+
+    def draw(self, ctx):
+        self.layout.prop_search(self, "col_name", bpy.data, "collections", text="Collection")
+
+    def execute(self, ctx):
+        level_col = _active_level_col(ctx.scene)
+        if level_col is None:
+            self.report({"ERROR"}, "No active level"); return {"CANCELLED"}
+        if not self.col_name:
+            self.report({"ERROR"}, "No collection selected"); return {"CANCELLED"}
+        col = bpy.data.collections.get(self.col_name)
+        if col is None:
+            self.report({"ERROR"}, f"Collection '{self.col_name}' not found"); return {"CANCELLED"}
+        if col == level_col:
+            self.report({"ERROR"}, "Cannot add a level collection to itself"); return {"CANCELLED"}
+        # Check if already a child
+        if col.name in [c.name for c in level_col.children]:
+            self.report({"WARNING"}, f"'{self.col_name}' is already in this level"); return {"CANCELLED"}
+        # Unlink from scene root if it's there (move it under the level)
+        if col.name in [c.name for c in ctx.scene.collection.children]:
+            ctx.scene.collection.children.unlink(col)
+        level_col.children.link(col)
+        self.report({"INFO"}, f"Added '{self.col_name}' to level")
+        return {"FINISHED"}
+
+
+class OG_OT_RemoveCollectionFromLevel(Operator):
+    """Remove a collection from the active level (moves it back to scene root)."""
+    bl_idname   = "og.remove_collection_from_level"
+    bl_label    = "Remove Collection"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    col_name: StringProperty(name="Collection Name")
+
+    def execute(self, ctx):
+        level_col = _active_level_col(ctx.scene)
+        if level_col is None:
+            self.report({"ERROR"}, "No active level"); return {"CANCELLED"}
+        col = None
+        for c in level_col.children:
+            if c.name == self.col_name:
+                col = c
+                break
+        if col is None:
+            self.report({"ERROR"}, f"Collection '{self.col_name}' not in this level"); return {"CANCELLED"}
+        level_col.children.unlink(col)
+        # Re-link to scene root so it doesn't vanish
+        ctx.scene.collection.children.link(col)
+        self.report({"INFO"}, f"Removed '{self.col_name}' from level")
+        return {"FINISHED"}
+
+
+class OG_OT_ToggleCollectionNoExport(Operator):
+    """Toggle the no-export flag on a collection."""
+    bl_idname   = "og.toggle_collection_no_export"
+    bl_label    = "Toggle Exclude from Export"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    col_name: StringProperty(name="Collection Name")
+
+    def execute(self, ctx):
+        col = bpy.data.collections.get(self.col_name)
+        if col is None:
+            self.report({"ERROR"}, f"Collection '{self.col_name}' not found"); return {"CANCELLED"}
+        cur = bool(col.get("og_no_export", False))
+        col["og_no_export"] = not cur
+        state = "excluded" if not cur else "included"
+        self.report({"INFO"}, f"'{self.col_name}' now {state} from export")
+        return {"FINISHED"}
+
+
+class OG_OT_SelectLevelCollection(Operator):
+    """Select a sub-collection in the Collection Properties panel."""
+    bl_idname   = "og.select_level_collection"
+    bl_label    = "Select Collection"
+
+    col_name: StringProperty(name="Collection Name")
+
+    def execute(self, ctx):
+        props = ctx.scene.og_props
+        # Toggle: clicking the already-selected collection deselects it
+        if props.selected_collection == self.col_name:
+            props.selected_collection = ""
+        else:
+            props.selected_collection = self.col_name
+        return {"FINISHED"}
+
 
 # ---------------------------------------------------------------------------
 # OPERATORS — Spawn / NavMesh
@@ -5071,6 +5552,7 @@ def _draw_platform_settings(layout, sel, scene):
 #  📁 Level              OG_PT_Level          (parent, always open)
 #    🗺 Level Flow        OG_PT_LevelFlow      (sub, DEFAULT_CLOSED)
 #    🗂 Level Manager     OG_PT_LevelManagerSub (sub, DEFAULT_CLOSED)
+#    📂 Collection Props  OG_PT_CollectionProperties (sub, DEFAULT_CLOSED, poll-gated)
 #    💡 Light Baking      OG_PT_LightBakingSub  (sub, DEFAULT_CLOSED)
 #    🎵 Music             OG_PT_Music           (sub, DEFAULT_CLOSED)
 #
@@ -5189,11 +5671,51 @@ class OG_PT_Level(Panel):
     def draw(self, ctx):
         layout = self.layout
         props  = ctx.scene.og_props
-        name   = props.level_name.strip()
+        scene  = ctx.scene
 
+        levels = _all_level_collections(scene)
+        level_col = _active_level_col(scene)
+
+        # ── No levels exist → show Add Level button only ─────────────────
+        if not levels:
+            box = layout.box()
+            box.label(text="No levels in this file", icon="INFO")
+            box.operator("og.create_level", text="Add Level", icon="ADD")
+            return
+
+        # ── Level selector (when ≥2 levels exist, show dropdown) ─────────
+        if len(levels) > 1:
+            layout.prop(props, "active_level", text="")
+        elif level_col:
+            row = layout.row()
+            row.label(text=level_col.get("og_level_name", level_col.name), icon="SCENE_DATA")
+
+        if level_col is None:
+            return
+
+        # ── Level settings (read/write from collection custom props) ─────
+        name = str(level_col.get("og_level_name", ""))
+
+        # Name field — editable via a simple text row
+        # We use a row + prop for the collection custom prop
         col = layout.column(align=True)
-        col.prop(props, "level_name", text="Name")
-        col.prop(props, "base_id",    text="Base Actor ID")
+
+        # Name
+        row = col.row(align=True)
+        row.label(text="Name:")
+        # We can't use layout.prop() on collection custom props with enum/type
+        # safety, so we show the name and provide an edit operator
+        sub = row.row(align=True)
+        sub.enabled = False
+        sub.label(text=name if name else "(unnamed)")
+
+        # Base ID
+        base_id = int(level_col.get("og_base_id", 10000))
+        row2 = col.row(align=True)
+        row2.label(text="Base Actor ID:")
+        sub2 = row2.row(align=True)
+        sub2.enabled = False
+        sub2.label(text=str(base_id))
 
         if name:
             name_clean = name.lower().replace(" ", "-")
@@ -5208,8 +5730,21 @@ class OG_PT_Level(Panel):
 
         layout.separator(factor=0.4)
         col2 = layout.column(align=True)
-        col2.prop(props, "bottom_height",    text="Death Plane (m)")
-        col2.prop(props, "vis_nick_override", text="Vis Nick Override")
+
+        # Death plane
+        bh = float(level_col.get("og_bottom_height", -20.0))
+        row_bh = col2.row(align=True)
+        row_bh.label(text=f"Death Plane: {bh:.1f}m")
+        op = row_bh.operator("og.nudge_level_prop", text="-")
+        op.prop_name = "og_bottom_height"; op.delta = -5.0; op.val_min = -500.0; op.val_max = -1.0
+        op = row_bh.operator("og.nudge_level_prop", text="+")
+        op.prop_name = "og_bottom_height"; op.delta = 5.0; op.val_min = -500.0; op.val_max = -1.0
+
+        # Vis nick override
+        vnick = str(level_col.get("og_vis_nick_override", ""))
+        row_vn = col2.row(align=True)
+        row_vn.enabled = False
+        row_vn.label(text=f"Vis Nick Override: {vnick if vnick else '(auto)'}")
 
 
 # ---------------------------------------------------------------------------
@@ -5355,45 +5890,111 @@ class OG_PT_LevelManagerSub(Panel):
 
     def draw(self, ctx):
         layout = self.layout
-
-        try:
-            levels = discover_custom_levels()
-        except Exception as e:
-            layout.label(text=f"Error scanning levels: {e}", icon="ERROR")
-            return
+        scene  = ctx.scene
+        levels = _all_level_collections(scene)
+        active = _active_level_col(scene)
 
         if not levels:
-            layout.label(text="No custom levels found", icon="INFO")
-            layout.label(text="Set data path in addon preferences")
+            layout.label(text="No levels in this file", icon="INFO")
+            layout.operator("og.create_level", text="Add Level", icon="ADD")
             return
 
-        for info in levels:
-            box  = layout.box()
-            row  = box.row()
-            if info["conflict"]:
-                row.alert = True
-                row.label(text=f"⚠ {info['name']}", icon="ERROR")
-            elif len(info["name"]) > 10:
-                row.alert = True
-                row.label(text=f"⚠ {info['name']} (name too long!)", icon="ERROR")
-            else:
-                row.label(text=info["name"], icon="SCENE_DATA")
-            op = row.operator("og.remove_level", text="", icon="TRASH")
-            op.level_name = info["name"]
-            srow = box.row(align=True)
-            srow.enabled = False
-            srow.label(text=f"glb:{'✓' if info['has_glb'] else '✗'}  "
-                           f"jsonc:{'✓' if info['has_jsonc'] else '✗'}  "
-                           f"obs:{'✓' if info['has_obs'] else '✗'}  "
-                           f"gp:{'✓' if info['has_gp'] else '✗'}  "
-                           f"DGO:{info['dgo']}")
-            if info["conflict"]:
-                box.label(text="DGO name conflict — rename this level!", icon="ERROR")
-            if not info["has_gp"] and (info["has_glb"] or info["has_obs"]):
-                box.label(text="Not registered in game.gp — re-export to fix", icon="ERROR")
+        for col in levels:
+            lname   = col.get("og_level_name", col.name)
+            base_id = int(col.get("og_base_id", 10000))
+            is_active = (active is not None and col.name == active.name)
 
-        layout.separator()
-        layout.operator("og.refresh_levels", text="Refresh List", icon="FILE_REFRESH")
+            box = layout.box()
+            row = box.row(align=True)
+
+            if is_active:
+                row.label(text=f"▶ {lname}", icon="SCENE_DATA")
+            else:
+                op = row.operator("og.set_active_level", text=lname, icon="SCENE_DATA")
+                op.col_name = col.name
+
+            sub = row.row(align=True)
+            sub.alignment = "RIGHT"
+            sub.label(text=f"ID:{base_id}")
+            op = row.operator("og.delete_level", text="", icon="TRASH")
+            op.col_name = col.name
+
+            if is_active:
+                # Show child collection count
+                n_children = len([c for c in col.children])
+                n_objects  = len(_recursive_col_objects(col, exclude_no_export=False))
+                info_row = box.row()
+                info_row.enabled = False
+                info_row.label(text=f"{n_children} sub-collections  ·  {n_objects} objects")
+
+        layout.separator(factor=0.4)
+        layout.operator("og.create_level", text="Add Level", icon="ADD")
+
+
+class OG_PT_CollectionProperties(Panel):
+    bl_label       = "📂  Collection Properties"
+    bl_idname      = "OG_PT_collection_props"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_level"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        return _active_level_col(ctx.scene) is not None
+
+    def draw(self, ctx):
+        layout = self.layout
+        scene  = ctx.scene
+        props  = scene.og_props
+        level_col = _active_level_col(scene)
+        if level_col is None:
+            return
+
+        # ── Add collection button ────────────────────────────────────────
+        layout.operator("og.add_collection_to_level", text="Add Collection", icon="ADD")
+        layout.separator(factor=0.4)
+
+        # ── List child collections ───────────────────────────────────────
+        children = sorted(level_col.children, key=lambda c: c.name)
+        if not children:
+            layout.label(text="No sub-collections", icon="INFO")
+            return
+
+        # Track which collection is "selected" for showing settings
+        sel_col_name = props.selected_collection if hasattr(props, "selected_collection") else ""
+
+        for col in children:
+            is_no_export = _col_is_no_export(col)
+            is_selected  = (col.name == sel_col_name)
+            n_objs = len(_recursive_col_objects(col, exclude_no_export=False))
+
+            box = layout.box()
+            row = box.row(align=True)
+
+            # Click to select
+            icon = "CHECKBOX_DEHLT" if not is_no_export else "CANCEL"
+            if is_selected:
+                row.label(text=f"▶ {col.name}", icon=icon)
+            else:
+                op = row.operator("og.select_level_collection", text=col.name, icon=icon)
+                op.col_name = col.name
+
+            sub = row.row(align=True)
+            sub.alignment = "RIGHT"
+            sub.label(text=f"{n_objs}")
+            op = row.operator("og.remove_collection_from_level", text="", icon="REMOVE")
+            op.col_name = col.name
+
+            # ── Settings for selected collection ─────────────────────────
+            if is_selected:
+                settings_row = box.row(align=True)
+                op = settings_row.operator("og.toggle_collection_no_export",
+                    text="Exclude from Export" if not is_no_export else "Include in Export",
+                    icon="CANCEL" if not is_no_export else "CHECKMARK",
+                    depress=is_no_export)
+                op.col_name = col.name
 
 
 # ---------------------------------------------------------------------------
@@ -6959,11 +7560,17 @@ classes = (
     OG_OT_AddSoundEmitter,
     OG_OT_RemoveLevel,
     OG_OT_RefreshLevels,
+    # ── Collection system operators ──────────────────────────────────────
+    OG_OT_CreateLevel, OG_OT_SetActiveLevel, OG_OT_NudgeLevelProp,
+    OG_OT_DeleteLevel,
+    OG_OT_AddCollectionToLevel, OG_OT_RemoveCollectionFromLevel,
+    OG_OT_ToggleCollectionNoExport, OG_OT_SelectLevelCollection,
     # ── Panels ──────────────────────────────────────────────────────────
     # Level group
     OG_PT_Level,
     OG_PT_LevelFlow,
     OG_PT_LevelManagerSub,
+    OG_PT_CollectionProperties,
     OG_PT_LightBakingSub,
     OG_PT_Music,
     # Spawn group
