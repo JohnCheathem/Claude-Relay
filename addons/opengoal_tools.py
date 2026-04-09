@@ -150,9 +150,9 @@ ENTITY_DEFS = {
     "eco-blue":         {"label":"Blue Eco Vent",        "cat":"Pickups",   "ag":None,                      "nav_safe":True,  "color":(0.2,0.4,1.0,1.0), "shape":"PLAIN_AXES"},
     "eco-green":        {"label":"Green Eco Vent",       "cat":"Pickups",   "ag":None,                      "nav_safe":True,  "color":(0.1,0.9,0.2,1.0), "shape":"PLAIN_AXES"},
     # ---- PLATFORMS ----
-    # needs_sync : True = platform reads 'sync' res lump (period/phase/easing) for path movement
-    # needs_path : True = platform reads 'path' res lump (waypoints drive movement)
-    # needs_notice_dist: True = platform reads 'notice-dist' lump (plat-eco activation range)
+    # needs_sync       : True = reads 'sync' res lump (period/phase/easing) for path movement
+    # needs_path       : True = reads 'path' res lump (waypoints drive movement directly, e.g. plat-button)
+    # needs_notice_dist: True = reads 'notice-dist' lump (plat-eco activation range)
     "plat":             {"label":"Floating Platform",    "cat":"Platforms", "ag":"plat-ag.go",              "nav_safe":True,  "needs_path":False, "needs_sync":True,  "needs_notice_dist":False, "color":(0.5,0.5,0.8,1.0), "shape":"CUBE"},
     "plat-eco":         {"label":"Eco Platform",         "cat":"Platforms", "ag":"plat-eco-ag.go",          "nav_safe":True,  "needs_path":False, "needs_sync":True,  "needs_notice_dist":True,  "color":(0.3,0.7,0.9,1.0), "shape":"CUBE"},
     "plat-button":      {"label":"Button Platform",      "cat":"Platforms", "ag":"plat-button-ag.go",       "nav_safe":True,  "needs_path":True,  "needs_sync":False, "needs_notice_dist":False, "color":(0.6,0.6,0.7,1.0), "shape":"CUBE"},
@@ -350,6 +350,17 @@ def _build_entity_enum():
     return items
 
 ENTITY_ENUM_ITEMS = _build_entity_enum()
+
+# Platform-only enum for the Platforms panel spawn dropdown
+PLATFORM_ENUM_ITEMS = [
+    (etype, info["label"], info.get("label", etype), i)
+    for i, (etype, info) in enumerate(
+        sorted(
+            [(e, inf) for e, inf in ENTITY_DEFS.items() if inf.get("cat") == "Platforms"],
+            key=lambda x: x[1]["label"]
+        )
+    )
+]
 
 # Derived lookup sets — computed once from ENTITY_DEFS
 NAV_UNSAFE_TYPES  = {e for e, info in ENTITY_DEFS.items() if not info.get("nav_safe", True)}
@@ -808,8 +819,8 @@ def collect_cameras(scene):
 
     vol_by_cam = {}
     for o in scene.objects:
-        if o.type == "MESH" and o.name.startswith("CAMVOL_"):
-            link = o.get("og_cam_link", "")
+        if o.type == "MESH" and o.name.startswith("VOL_"):
+            link = o.get("og_vol_link", "")
             if link:
                 vol_by_cam[link] = o
 
@@ -940,10 +951,10 @@ def collect_cameras(scene):
     return camera_actors, trigger_actors
 
 
-def write_gc(name, has_triggers=False):
+def write_gc(name, has_triggers=False, has_checkpoints=False):
     """Write obs.gc: always emits camera-marker type; if has_triggers also
-    emits camera-trigger type that births automatically on level load.
-    No nREPL call needed -- both types birth via entity-actor.birth!
+    emits camera-trigger type; if has_checkpoints emits checkpoint-trigger type.
+    All types birth automatically via entity-actor.birth! — no nREPL needed.
     """
     d = _goal_src() / "levels" / name
     d.mkdir(parents=True, exist_ok=True)
@@ -1023,6 +1034,68 @@ def write_gc(name, has_triggers=False):
             "",
         ]
         log(f"  [write_gc] camera-trigger type embedded")
+
+    if has_checkpoints:
+        lines += [
+            ";; checkpoint-trigger: invisible entity that calls set-continue! when Jak enters.",
+            ";; Two modes depending on lumps present:",
+            ";;   Sphere mode (default): polls distance against 'radius lump.",
+            ";;   AABB mode (when has-volume lump = 1): polls against 6 bound-* lumps.",
+            ";; One-shot — triggered flag latches, never fires again this session.",
+            "(deftype checkpoint-trigger (process-drawable)",
+            "  ((cp-name   string  :offset-assert 176)",
+            "   (radius    float   :offset-assert 180)",
+            "   (triggered symbol  :offset-assert 184)",
+            "   (use-vol   symbol  :offset-assert 188)",
+            "   (xmin      float   :offset-assert 192)",
+            "   (xmax      float   :offset-assert 196)",
+            "   (ymin      float   :offset-assert 200)",
+            "   (ymax      float   :offset-assert 204)",
+            "   (zmin      float   :offset-assert 208)",
+            "   (zmax      float   :offset-assert 212))",
+            "  :heap-base #x70",
+            "  :size-assert #xd8",
+            "  (:states checkpoint-trigger-active))",
+            "",
+            "(defstate checkpoint-trigger-active (checkpoint-trigger)",
+            "  :code",
+            "  (behavior ()",
+            "    (loop",
+            "      (when (and *target* (not (-> self triggered)))",
+            "        (let* ((pos (-> *target* control trans))",
+            "               (inside (if (-> self use-vol)",
+            "                 (and",
+            "                   (< (-> self xmin) (-> pos x)) (< (-> pos x) (-> self xmax))",
+            "                   (< (-> self ymin) (-> pos y)) (< (-> pos y) (-> self ymax))",
+            "                   (< (-> self zmin) (-> pos z)) (< (-> pos z) (-> self zmax)))",
+            "                 (let* ((dx (- (-> pos x) (-> self root trans x)))",
+            "                        (dy (- (-> pos y) (-> self root trans y)))",
+            "                        (dz (- (-> pos z) (-> self root trans z)))",
+            "                        (r  (-> self radius)))",
+            "                   (< (+ (* dx dx) (* dy dy) (* dz dz)) (* r r))))))",
+            "          (when inside",
+            "            (set! (-> self triggered) #t)",
+            "            (set-continue! *game-info* (-> self cp-name)))))",
+            "      (suspend))))",
+            "",
+            "(defmethod init-from-entity! ((this checkpoint-trigger) (arg0 entity-actor))",
+            "  (set! (-> this root) (new (quote process) (quote trsqv)))",
+            "  (process-drawable-from-entity! this arg0)",
+            "  (set! (-> this cp-name)   (res-lump-struct arg0 (quote continue-name) string))",
+            "  (set! (-> this radius)    (res-lump-float  arg0 (quote radius)     :default 12288.0))",
+            "  (set! (-> this triggered) #f)",
+            "  (set! (-> this use-vol)   (!= 0 (the int (res-lump-value arg0 (quote has-volume) uint128))))",
+            "  (set! (-> this xmin)      (res-lump-float arg0 (quote bound-xmin)))",
+            "  (set! (-> this xmax)      (res-lump-float arg0 (quote bound-xmax)))",
+            "  (set! (-> this ymin)      (res-lump-float arg0 (quote bound-ymin)))",
+            "  (set! (-> this ymax)      (res-lump-float arg0 (quote bound-ymax)))",
+            "  (set! (-> this zmin)      (res-lump-float arg0 (quote bound-zmin)))",
+            "  (set! (-> this zmax)      (res-lump-float arg0 (quote bound-zmax)))",
+            "  (go checkpoint-trigger-active)",
+            "  (none))",
+            "",
+        ]
+        log(f"  [write_gc] checkpoint-trigger type embedded")
 
     new_text = "\n".join(lines)
     if p.exists() and p.read_text() == new_text:
@@ -2237,7 +2310,8 @@ ALL_SFX_ITEMS = [
 
 class OGProperties(PropertyGroup):
     level_name:  StringProperty(name="Name", description="Lowercase with dashes", default="my-level")
-    entity_type: EnumProperty(name="Entity Type", items=ENTITY_ENUM_ITEMS)
+    entity_type:    EnumProperty(name="Entity Type",    items=ENTITY_ENUM_ITEMS)
+    platform_type:  EnumProperty(name="Platform Type",  items=PLATFORM_ENUM_ITEMS)
     crate_type:  EnumProperty(name="Crate Type",  items=CRATE_ITEMS)
     nav_radius:  FloatProperty(name="Nav Sphere Radius (m)", default=6.0, min=0.5, max=50.0,
                                description="Fallback navmesh sphere radius for nav-unsafe enemies")
@@ -2256,6 +2330,17 @@ class OGProperties(PropertyGroup):
                                          description="Currently selected sound for emitter placement")
     ambient_default_radius: FloatProperty(name="Default Emitter Radius (m)", default=15.0, min=1.0, max=200.0,
                                           description="Bsphere radius for new sound emitter empties")
+    # Level flow
+    bottom_height:     FloatProperty(name="Death Plane (m)", default=-20.0, min=-500.0, max=-1.0,
+                                     description="Y height below which the player gets an endlessfall death (negative = below level floor)")
+    vis_nick_override: StringProperty(name="Vis Nick Override", default="",
+                                      description="Override the auto-generated 3-letter vis nickname (leave blank to use auto)")
+    # UI collapse state
+    show_camera_list:       BoolProperty(name="Show Camera List",       default=True)
+    show_volume_list:       BoolProperty(name="Show Volume List",       default=True)
+    show_spawn_list:        BoolProperty(name="Show Spawn List",        default=True)
+    show_checkpoint_list:   BoolProperty(name="Show Checkpoint List",   default=True)
+    show_platform_list:     BoolProperty(name="Show Platform List",     default=True)
 
 # ---------------------------------------------------------------------------
 # PROCESS MANAGEMENT
@@ -2423,12 +2508,102 @@ def launch_gk():
 # ---------------------------------------------------------------------------
 
 def collect_spawns(scene):
+    """Collect SPAWN_ empties into continue-point data dicts.
+
+    Each dict contains:
+      name       — uid string (e.g. "start", "spawn1", or custom SPAWN_<name>)
+      x/y/z      — game-space position (metres, Blender→game remap applied)
+      qx/qy/qz/qw — game-space facing quaternion from the empty's rotation
+      cam_x/cam_y/cam_z — camera-trans position (from linked SPAWN_<uid>_CAM empty,
+                          or defaults to spawn pos + 4m up)
+      cam_rot    — camera 3x3 row-major matrix as flat list of 9 floats
+                   (from linked SPAWN_<uid>_CAM empty, or identity)
+      is_checkpoint — True if this is a CHECKPOINT_ empty (auto-assigned mid-level)
+    """
+    # R_remap: Blender(x,y,z) → game(x,z,-y), stored as a 3×3 row matrix.
+    # Used to conjugate Blender rotation matrices into game space:
+    #   game_rot = R_remap @ bl_rot @ R_remap^T
+    # Verified: identity Blender empty → identity game quat (x:0 y:0 z:0 w:1).
+    R_remap = mathutils.Matrix(((1,0,0),(0,0,1),(0,-1,0)))
+
     out = []
-    for o in scene.objects:
-        if o.name.startswith("SPAWN_") and o.type == "EMPTY":
+    for o in sorted(scene.objects, key=lambda o: o.name):
+        # BUG FIX: _CAM anchor empties share the SPAWN_/CHECKPOINT_ prefix.
+        # Skip them here — they are not spawns/checkpoints themselves.
+        if o.name.endswith("_CAM"):
+            continue
+
+        is_spawn      = o.name.startswith("SPAWN_")      and o.type == "EMPTY"
+        is_checkpoint = o.name.startswith("CHECKPOINT_") and o.type == "EMPTY"
+        if not (is_spawn or is_checkpoint):
+            continue
+
+        if is_spawn:
             uid = o.name[6:] or "start"
-            l = o.location
-            out.append({"name":uid, "x":l.x, "y":l.z, "z":-l.y})
+        else:
+            uid = o.name[11:] or "cp0"
+
+        l = o.location
+        gx = round(l.x,  4)
+        gy = round(l.z,  4)
+        gz = round(-l.y, 4)
+
+        # ── Facing quaternion ────────────────────────────────────────────────
+        # Correct remap: game_rot = R_remap @ bl_rot @ R_remap^T
+        # This ensures an unrotated Blender empty produces identity game quat (w=1).
+        # The engine reads quaternions as the inverse, so we negate x/y/z (conjugate).
+        m3      = o.matrix_world.to_3x3()
+        game_m3 = R_remap @ m3 @ R_remap.transposed()
+        gq      = game_m3.to_quaternion()
+        qx   = round(-gq.x, 6)
+        qy   = round(-gq.y, 6)
+        qz   = round(-gq.z, 6)
+        qw   = round( gq.w, 6)
+
+        # ── Camera empty (optional) ──────────────────────────────────────────
+        # User can place a SPAWN_<uid>_CAM or CHECKPOINT_<uid>_CAM empty to
+        # set the camera position/orientation at respawn.
+        # If absent, we default to spawn pos + 4m up, identity rotation.
+        cam_suffix = "_CAM"
+        cam_name   = o.name + cam_suffix
+        cam_obj    = scene.objects.get(cam_name)
+
+        if cam_obj and cam_obj.type == "EMPTY":
+            cl = cam_obj.location
+            cam_x = round(cl.x,  4)
+            cam_y = round(cl.z,  4)
+            cam_z = round(-cl.y, 4)
+            # Build camera rotation matrix (same conjugate formula as camera system)
+            cm3      = cam_obj.matrix_world.to_3x3()
+            bl_look  = -cm3.col[2]                            # camera looks along -local_Z
+            gl = mathutils.Vector((bl_look.x, bl_look.z, -bl_look.y))
+            gl.normalize()
+            game_down = mathutils.Vector((0.0, -1.0, 0.0))
+            cr = gl.cross(game_down)
+            if cr.length < 1e-6:
+                cr = mathutils.Vector((1.0, 0.0, 0.0))
+            cr.normalize()
+            cu = gl.cross(cr)
+            cu.normalize()
+            # camera-rot is a 3x3 row-major matrix stored as 9 floats
+            cam_rot = [
+                round(cr.x, 6), round(cr.y, 6), round(cr.z, 6),
+                round(cu.x, 6), round(cu.y, 6), round(cu.z, 6),
+                round(gl.x, 6), round(gl.y, 6), round(gl.z, 6),
+            ]
+        else:
+            # Default: camera sits 4m above spawn, looks forward (identity-ish)
+            cam_x, cam_y, cam_z = gx, gy + 4.0, gz
+            cam_rot = [1.0, 0.0, 0.0,  0.0, 1.0, 0.0,  0.0, 0.0, 1.0]
+
+        out.append({
+            "name":          uid,
+            "x": gx, "y": gy, "z": gz,
+            "qx": qx, "qy": qy, "qz": qz, "qw": qw,
+            "cam_x": cam_x, "cam_y": cam_y, "cam_z": cam_z,
+            "cam_rot":       cam_rot,
+            "is_checkpoint": is_checkpoint,
+        })
     return out
 
 def collect_actors(scene):
@@ -2526,29 +2701,29 @@ def collect_actors(scene):
         # ── Platform: sync lump ───────────────────────────────────────────────
         # plat / plat-eco / side-to-side-plat use a 'sync' res lump to control
         # path timing.  Format: [period_s, phase, ease_out, ease_in]
-        # If the platform has waypoints (path), always write sync.
-        # If no waypoints, sync is ignored by the engine (platform stays idle).
+        # Only emitted when the platform has waypoints — without waypoints the
+        # engine ignores sync and the platform spawns idle.
         if einfo.get("needs_sync"):
-            period    = float(o.get("og_sync_period",   4.0))
-            phase     = float(o.get("og_sync_phase",    0.0))
-            ease_out  = float(o.get("og_sync_ease_out", 0.15))
-            ease_in   = float(o.get("og_sync_ease_in",  0.15))
+            period   = float(o.get("og_sync_period",   4.0))
+            phase    = float(o.get("og_sync_phase",    0.0))
+            ease_out = float(o.get("og_sync_ease_out", 0.15))
+            ease_in  = float(o.get("og_sync_ease_in",  0.15))
             if path_pts:
-                # Only emit sync when there's a path to follow
                 lump["sync"] = ["float", period, phase, ease_out, ease_in]
                 wrap = bool(o.get("og_sync_wrap", False))
                 if wrap:
                     # fact-options wrap-phase: bit 3 of the options uint64
                     # GOAL: (defenum fact-options :bitfield #t  (wrap-phase 3))
-                    # → value = 1 << 3 = 8
+                    # value = 1 << 3 = 8
                     # Read via: (res-lump-value ent 'options fact-options)
                     lump["options"] = ["uint32", 8]
                 log(f"  [sync] {o.name}  period={period}s  phase={phase}  ease={ease_out}/{ease_in}  wrap={wrap}")
             else:
-                log(f"  [sync-platform] {o.name}  no waypoints — will spawn idle (add waypoints to make it move)")
+                log(f"  [sync-platform] {o.name}  no waypoints — will spawn idle (add ≥2 waypoints to make it move)")
 
-        # ── Platform: path lump (plat-button uses path, not sync) ────────────
+        # ── Platform: path lump (plat-button) ────────────────────────────────
         # plat-button follows a path when pressed. Requires ≥2 waypoints.
+        # Uses needs_path flag and is a Platform, distinguishing from enemy paths.
         if einfo.get("needs_path") and einfo.get("cat") == "Platforms":
             if path_pts:
                 lump["path"] = ["vector4m"] + path_pts
@@ -2556,7 +2731,7 @@ def collect_actors(scene):
             else:
                 log(f"  [WARNING] {o.name} (plat-button) needs ≥2 waypoints or it will not move!")
 
-        # ── Platform: sync path (plat / plat-eco need path lump too) ─────────
+        # ── Platform: sync path (plat / plat-eco) ────────────────────────────
         # When a sync platform has waypoints, also emit the path lump so the
         # engine can evaluate the curve.
         if einfo.get("needs_sync") and path_pts and "path" not in lump:
@@ -2571,7 +2746,7 @@ def collect_actors(scene):
             lump["notice-dist"] = ["meters", notice]
             log(f"  [notice-dist] {o.name}  {notice}m  ({'always active' if notice < 0 else 'eco required'})")
 
-        # Bsphere radius controls vis-culling distance.  nav-enemy run-logic?
+                # Bsphere radius controls vis-culling distance.  nav-enemy run-logic?
         # only processes AI/collision events when draw-status was-drawn is set,
         # which requires the bsphere to pass the renderer's cull test.
         # Custom levels lack a proper BSP vis system, so enemies need a large
@@ -2595,6 +2770,88 @@ def collect_actors(scene):
             "bsphere":   [gx, gy, gz, bsph_r],
             "lump":      lump,
         })
+
+    # ── Checkpoint trigger actors ─────────────────────────────────────────────
+    # CHECKPOINT_ empties export as two things:
+    #   1. A continue-point record in level-info.gc (via collect_spawns) — the
+    #      spawn data the engine uses on respawn.
+    #   2. A checkpoint-trigger actor in the JSONC (here) — an invisible entity
+    #      that calls set-continue! when Jak enters it.
+    # Both are needed: the actor does the triggering, the continue-point holds
+    # the spawn position. The actor's continue-name lump must match the
+    # continue-point name exactly: "{level_name}-{uid}".
+    #
+    # Volume mode: if a CPVOL_ mesh is linked (og_cp_link = checkpoint name),
+    # the actor uses AABB bounds instead of sphere radius. The GOAL code reads
+    # a 'has-volume' lump (uint32 1) to choose AABB vs sphere.
+    level_name_for_cp = scene.og_props.level_name.strip().lower().replace(" ", "-")
+
+    # Build cp_name → vol_obj map from linked CPVOL_ meshes
+    vol_by_cp = {}
+    for o in scene.objects:
+        if o.type == "MESH" and o.name.startswith("VOL_"):
+            link = o.get("og_vol_link", "")
+            if link and link.startswith("CHECKPOINT_"):
+                vol_by_cp[link] = o
+
+    for o in sorted(scene.objects, key=lambda o: o.name):
+        if not (o.name.startswith("CHECKPOINT_") and o.type == "EMPTY"):
+            continue
+        if o.name.endswith("_CAM"):
+            continue
+        uid = o.name[11:] or "cp0"
+        l   = o.location
+        gx  = round(l.x,  4)
+        gy  = round(l.z,  4)
+        gz  = round(-l.y, 4)
+        r   = float(o.get("og_checkpoint_radius", 3.0))
+        cp_name = f"{level_name_for_cp}-{uid}"
+        lump = {
+            "name":          f"checkpoint-trigger-{uid}",
+            "continue-name": cp_name,
+        }
+
+        vol_obj = vol_by_cp.get(o.name)
+        if vol_obj:
+            # AABB mode — derive bounds from volume mesh world-space verts
+            corners = [vol_obj.matrix_world @ v.co for v in vol_obj.data.vertices]
+            gc = [(c.x, c.z, -c.y) for c in corners]  # bl→game remap
+            xs = [c[0] for c in gc]; ys = [c[1] for c in gc]; zs = [c[2] for c in gc]
+            cx = round((min(xs)+max(xs))/2, 4)
+            cy = round((min(ys)+max(ys))/2, 4)
+            cz = round((min(zs)+max(zs))/2, 4)
+            rad = round(max(max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs))/2 + 2.0, 2)
+            lump["has-volume"]  = ["uint32", 1]
+            lump["bound-xmin"]  = ["meters", round(min(xs), 4)]
+            lump["bound-xmax"]  = ["meters", round(max(xs), 4)]
+            lump["bound-ymin"]  = ["meters", round(min(ys), 4)]
+            lump["bound-ymax"]  = ["meters", round(max(ys), 4)]
+            lump["bound-zmin"]  = ["meters", round(min(zs), 4)]
+            lump["bound-zmax"]  = ["meters", round(max(zs), 4)]
+            out.append({
+                "trans":     [cx, cy, cz],
+                "etype":     "checkpoint-trigger",
+                "game_task": "(game-task none)",
+                "quat":      [0, 0, 0, 1],
+                "vis_id":    0,
+                "bsphere":   [cx, cy, cz, rad],
+                "lump":      lump,
+            })
+            log(f"  [checkpoint] {o.name} → '{cp_name}'  AABB vol={vol_obj.name}")
+        else:
+            # Sphere mode — use og_checkpoint_radius
+            lump["radius"] = ["meters", r]
+            out.append({
+                "trans":     [gx, gy, gz],
+                "etype":     "checkpoint-trigger",
+                "game_task": "(game-task none)",
+                "quat":      [0, 0, 0, 1],
+                "vis_id":    0,
+                "bsphere":   [gx, gy, gz, max(r, 3.0)],
+                "lump":      lump,
+            })
+            log(f"  [checkpoint] {o.name} → '{cp_name}'  sphere r={r}m")
+
     return out
 
 def collect_ambients(scene):
@@ -2774,29 +3031,47 @@ def write_gd(name, ags, code_deps, tpages=None):
 
 
 def _make_continues(name, spawns):
+    """Build the GOAL :continues list for level-load-info.
+
+    Each spawn dict carries full quat + camera data from collect_spawns.
+    Spawns include both SPAWN_ (primary) and CHECKPOINT_ (auto-assigned) empties.
+
+    :vis-nick is intentionally 'none for all custom-level continues.
+    Custom levels have no vis data, so vis?=#f at runtime and this field is never
+    acted upon. Matches the test-zone reference implementation in level-info.gc.
+    """
     def cp(sp):
+        cr = sp.get("cam_rot", [1,0,0, 0,1,0, 0,0,1])
+        cr_str = " ".join(str(v) for v in cr)
         return (f"(new 'static 'continue-point\n"
                 f"             :name \"{name}-{sp['name']}\"\n"
                 f"             :level '{name}\n"
                 f"             :trans (new 'static 'vector"
                 f" :x (meters {sp['x']:.4f}) :y (meters {sp['y']:.4f}) :z (meters {sp['z']:.4f}) :w 1.0)\n"
-                f"             :quat (new 'static 'quaternion :w 1.0)\n"
-                f"             :camera-trans (new 'static 'vector :x 0.0 :y 4096.0 :z 0.0 :w 1.0)\n"
-                f"             :camera-rot (new 'static 'array float 9 1.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 1.0)\n"
+                f"             :quat (new 'static 'quaternion"
+                f" :x {sp.get('qx',0.0)} :y {sp.get('qy',0.0)} :z {sp.get('qz',0.0)} :w {sp.get('qw',1.0)})\n"
+                f"             :camera-trans (new 'static 'vector"
+                f" :x (meters {sp.get('cam_x', sp['x']):.4f})"
+                f" :y (meters {sp.get('cam_y', sp['y']+4.0):.4f})"
+                f" :z (meters {sp.get('cam_z', sp['z']):.4f}) :w 1.0)\n"
+                f"             :camera-rot (new 'static 'array float 9 {cr_str})\n"
                 f"             :load-commands '()\n"
                 f"             :vis-nick 'none\n"
                 f"             :lev0 '{name}\n"
                 f"             :disp0 'display\n"
                 f"             :lev1 #f\n"
                 f"             :disp1 #f)")
+
     if spawns:
         return "'(" + "\n             ".join(cp(s) for s in spawns) + ")"
+
+    # No spawns placed — emit a safe default at origin + 10m up
     return (f"'((new 'static 'continue-point\n"
             f"             :name \"{name}-start\"\n"
             f"             :level '{name}\n"
             f"             :trans (new 'static 'vector :x 0.0 :y (meters 10.) :z 0.0 :w 1.0)\n"
             f"             :quat (new 'static 'quaternion :w 1.0)\n"
-            f"             :camera-trans (new 'static 'vector :x 0.0 :y 4096.0 :z 0.0 :w 1.0)\n"
+            f"             :camera-trans (new 'static 'vector :x 0.0 :y (meters 14.) :z 0.0 :w 1.0)\n"
             f"             :camera-rot (new 'static 'array float 9 1.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 1.0)\n"
             f"             :load-commands '()\n"
             f"             :vis-nick 'none\n"
@@ -2816,16 +3091,47 @@ def patch_level_info(name, spawns, scene=None):
         _sb_list = [s for s in [props.sound_bank_1, props.sound_bank_2] if s and s != "none"]
         _sbanks = " ".join(s for s in _sb_list)
         _sbanks_val = f"'({_sbanks})" if _sbanks else "'()"
+        # Level flow settings
+        _bot_h   = float(props.bottom_height)
+        _vis_ov  = props.vis_nick_override.strip()
+        _vnick   = _vis_ov if _vis_ov else _nick(name)
     else:
         _music_val = "#f"
         _sbanks_val = "'()"
+        _bot_h   = -20.0
+        _vnick   = _nick(name)
         props = None
+
+    # ── Auto-compute bsphere from spawn positions ────────────────────────────
+    # Centre = mean of all spawn XZ positions, Y = mean spawn Y + 2m.
+    # Radius = max distance from centre to any spawn + 64m padding so the
+    # engine considers the level "nearby" well before the player reaches it.
+    # Fallback when no spawns: a very large sphere (40km radius) that always passes.
+    if spawns:
+        xs  = [s["x"] for s in spawns]
+        ys  = [s["y"] for s in spawns]
+        zs  = [s["z"] for s in spawns]
+        cx  = sum(xs) / len(xs)
+        cy  = sum(ys) / len(ys) + 2.0
+        cz  = sum(zs) / len(zs)
+        r   = max(
+            math.sqrt((s["x"]-cx)**2 + (s["y"]-cy)**2 + (s["z"]-cz)**2)
+            for s in spawns
+        ) + 64.0
+        # Convert to game units (4096 per metre) for the sphere :w value
+        bsphere_w = round(r * 4096.0, 1)
+        bsphere_str = (f"(new 'static 'sphere"
+                       f" :x {round(cx*4096.0, 1)} :y {round(cy*4096.0, 1)} :z {round(cz*4096.0, 1)}"
+                       f" :w {bsphere_w})")
+    else:
+        bsphere_str = "(new 'static 'sphere :w 167772160000.0)"  # ~40km radius
+
     block = (f"\n(define {name}\n"
              f"  (new 'static 'level-load-info\n"
              f"       :index 27\n"
              f"       :name '{name}\n"
              f"       :visname '{name}-vis\n"
-             f"       :nickname '{_nick(name)}\n"
+             f"       :nickname '{_vnick}\n"
              f"       :packages '()\n"
              f"       :sound-banks {_sbanks_val}\n"
              f"       :music-bank {_music_val}\n"
@@ -2842,8 +3148,8 @@ def patch_level_info(name, spawns, scene=None):
              f"       :load-commands '()\n"
              f"       :alt-load-commands '()\n"
              f"       :bsp-mask #xffffffffffffffff\n"
-             f"       :bsphere (new 'static 'sphere :w 167772160000.0)\n"
-             f"       :bottom-height (meters -20)\n"
+             f"       :bsphere {bsphere_str}\n"
+             f"       :bottom-height (meters {_bot_h:.1f})\n"
              f"       :run-packages '()\n"
              f"       :wait-for-load #t))\n"
              f"\n(cons! *level-load-list* '{name})\n")
@@ -3082,7 +3388,7 @@ class OG_OT_SpawnPlayer(Operator):
     bl_label  = "Add Player Spawn"
     bl_description = "Place a player spawn empty at the 3D cursor"
     def execute(self, ctx):
-        n   = len([o for o in ctx.scene.objects if o.name.startswith("SPAWN_")])
+        n   = len([o for o in ctx.scene.objects if o.name.startswith("SPAWN_") and not o.name.endswith("_CAM")])
         uid = "start" if n == 0 else f"spawn{n}"
         bpy.ops.object.empty_add(type="ARROWS", location=ctx.scene.cursor.location)
         o = ctx.active_object
@@ -3090,6 +3396,70 @@ class OG_OT_SpawnPlayer(Operator):
         o.empty_display_size = 1.0; o.color = (0.0,1.0,0.0,1.0)
         self.report({"INFO"}, f"Added {o.name}")
         return {"FINISHED"}
+
+
+class OG_OT_SpawnCheckpoint(Operator):
+    bl_idname = "og.spawn_checkpoint"
+    bl_label  = "Add Checkpoint"
+    bl_description = (
+        "Place a mid-level checkpoint empty at the 3D cursor. "
+        "The engine auto-assigns the nearest zero-flag checkpoint as the player "
+        "moves around, so these act as silent progress saves without any trigger actors."
+    )
+    def execute(self, ctx):
+        n   = len([o for o in ctx.scene.objects if o.name.startswith("CHECKPOINT_") and not o.name.endswith("_CAM")])
+        uid = f"cp{n}"
+        bpy.ops.object.empty_add(type="SINGLE_ARROW", location=ctx.scene.cursor.location)
+        o = ctx.active_object
+        o.name = f"CHECKPOINT_{uid}"; o.show_name = True
+        o.empty_display_size = 1.2; o.color = (1.0, 0.85, 0.0, 1.0)
+        o["og_checkpoint_radius"] = 3.0
+        self.report({"INFO"}, f"Added {o.name}")
+        return {"FINISHED"}
+
+
+class OG_OT_SpawnCamAnchor(Operator):
+    bl_idname = "og.spawn_cam_anchor"
+    bl_label  = "Add Spawn Camera"
+    bl_description = (
+        "Place a camera-anchor empty linked to the selected SPAWN_ or CHECKPOINT_ empty. "
+        "This sets the camera position and orientation used when the player respawns at that point."
+    )
+    def execute(self, ctx):
+        sel = ctx.active_object
+        if sel is None or sel.type != "EMPTY":
+            self.report({"ERROR"}, "Select a SPAWN_ or CHECKPOINT_ empty first")
+            return {"CANCELLED"}
+        is_spawn = sel.name.startswith("SPAWN_") or sel.name.startswith("CHECKPOINT_")
+        if not is_spawn:
+            self.report({"ERROR"}, "Selected object must be a SPAWN_ or CHECKPOINT_ empty")
+            return {"CANCELLED"}
+        cam_name = sel.name + "_CAM"
+        if ctx.scene.objects.get(cam_name):
+            self.report({"WARNING"}, f"{cam_name} already exists")
+            return {"CANCELLED"}
+        # Place camera 6m behind and 3m above spawn in Blender space
+        offset = mathutils.Vector((0.0, -6.0, 3.0))
+        loc    = sel.matrix_world.translation + sel.matrix_world.to_3x3() @ offset
+        bpy.ops.object.empty_add(type="ARROWS", location=loc)
+        o = ctx.active_object
+        o.name = cam_name; o.show_name = True
+        o.empty_display_size = 0.8; o.color = (0.2, 0.6, 1.0, 1.0)
+        # Point it toward the spawn (face -Z toward spawn so camera looks at it)
+        direction = sel.matrix_world.translation - loc
+        if direction.length > 1e-4:
+            rot_quat = direction.to_track_quat('-Z', 'Y')
+            o.rotation_euler = rot_quat.to_euler()
+        self.report({"INFO"}, f"Added {cam_name}")
+        return {"FINISHED"}
+
+
+
+
+
+
+
+# ── Entity placement ──────────────────────────────────────────────────────────
 
 class OG_OT_SpawnEntity(Operator):
     bl_idname = "og.spawn_entity"
@@ -3327,6 +3697,7 @@ def _bg_build(name, scene):
     state = _BUILD_STATE
     try:
         state["status"] = "Collecting scene..."
+        _clean_orphaned_vol_links(scene)
         actors    = collect_actors(scene)
         ambients  = collect_ambients(scene)
         spawns    = collect_spawns(scene)
@@ -3345,7 +3716,7 @@ def _bg_build(name, scene):
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
-        write_gc(name, has_triggers=bool(trigger_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -3705,6 +4076,7 @@ def _bg_geo_rebuild(name, scene):
     state = _GEO_REBUILD_STATE
     try:
         state["status"] = "Collecting scene..."
+        _clean_orphaned_vol_links(scene)
         actors   = collect_actors(scene)
         ambients = collect_ambients(scene)
         spawns   = collect_spawns(scene)
@@ -3717,7 +4089,7 @@ def _bg_geo_rebuild(name, scene):
         base_id = scene.og_props.base_id
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
-        write_gc(name, has_triggers=bool(trigger_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
         patch_level_info(name, spawns, scene)  # update spawn continue-points if moved
 
         # Run (mi) — re-extracts GLB, repacks DGO, skips unchanged .gc files
@@ -3822,6 +4194,7 @@ def _bg_build_and_play(name, scene):
     try:
         # ── Phase 1: Build ────────────────────────────────────────────────────
         state["status"] = "Collecting scene..."
+        _clean_orphaned_vol_links(scene)
         actors    = collect_actors(scene)
         ambients  = collect_ambients(scene)
         spawns    = collect_spawns(scene)
@@ -3835,7 +4208,7 @@ def _bg_build_and_play(name, scene):
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
-        write_gc(name, has_triggers=bool(trigger_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -3964,12 +4337,7 @@ def _actor_uses_waypoints(etype):
     return (not info.get("nav_safe", True)    # nav-enemy — optional patrol path
             or info.get("needs_path", False)  # process-drawable that requires path
             or info.get("needs_pathb", False)
-            or info.get("needs_sync", False))  # sync platform — path drives movement
-
-
-def _actor_is_platform(etype):
-    """True if this entity is in the Platforms category."""
-    return ENTITY_DEFS.get(etype, {}).get("cat") == "Platforms"
+            or info.get("needs_sync", False)) # sync platform — path drives movement
 
 
 def _actor_uses_navmesh(etype):
@@ -3978,10 +4346,9 @@ def _actor_uses_navmesh(etype):
     return info.get("ai_type") == "nav-enemy"
 
 
-
-
-# ---------------------------------------------------------------------------
-# OPERATOR + PANEL — Audio / Ambience
+def _actor_is_platform(etype):
+    """True if this entity is in the Platforms category."""
+    return ENTITY_DEFS.get(etype, {}).get("cat") == "Platforms"
 # ---------------------------------------------------------------------------
 
 
@@ -4117,7 +4484,7 @@ class OG_PT_Audio(Panel):
 # Panel hierarchy (all under "OpenGOAL" N-panel tab):
 #
 #  OG_PT_LevelSettings   — Level name, base ID
-#  OG_PT_Scene           — Player spawn (expandable later)
+#  OG_PT_Scene           — Level Flow: spawns, checkpoints, death plane, bsphere
 #  OG_PT_PlaceObjects    — Entity picker + Add Entity
 #  OG_PT_Waypoints       — Waypoint management (context-sensitive, collapsible)
 #  OG_PT_NavMesh         — NavMesh linking via object picker
@@ -4161,11 +4528,16 @@ class OG_PT_LevelSettings(Panel):
                 row.enabled = False
                 row.label(text=f"ISO: {_iso(name)}   Nick: {_nick(name)}", icon="INFO")
 
+        layout.separator(factor=0.4)
+        col2 = layout.column(align=True)
+        col2.prop(props, "bottom_height",    text="Death Plane (m)")
+        col2.prop(props, "vis_nick_override", text="Vis Nick Override")
 
-# ── Scene Setup ──────────────────────────────────────────────────────────────
+
+# ── Scene Setup / Level Flow ──────────────────────────────────────────────────
 
 class OG_PT_Scene(Panel):
-    bl_label       = "🎬  Scene"
+    bl_label       = "🗺  Level Flow"
     bl_idname      = "OG_PT_scene"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
@@ -4174,7 +4546,127 @@ class OG_PT_Scene(Panel):
 
     def draw(self, ctx):
         layout = self.layout
-        layout.operator("og.spawn_player", text="Add Player Spawn", icon="ARMATURE_DATA")
+        props  = ctx.scene.og_props
+        scene  = ctx.scene
+
+        # ── Spawn points ──────────────────────────────────────────────────────
+        layout.label(text="Spawn Points", icon="ARMATURE_DATA")
+        col = layout.column(align=True)
+        col.operator("og.spawn_player",     text="Add Player Spawn",  icon="ADD")
+        col.operator("og.spawn_checkpoint", text="Add Checkpoint",    icon="KEYFRAME")
+
+        spawns      = [o for o in scene.objects if o.name.startswith("SPAWN_")      and o.type == "EMPTY" and not o.name.endswith("_CAM")]
+        checkpoints = [o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]
+
+        if spawns or checkpoints:
+            layout.separator(factor=0.4)
+
+            if spawns:
+                # Collapsible spawns
+                row = layout.row()
+                icon = "TRIA_DOWN" if props.show_spawn_list else "TRIA_RIGHT"
+                row.prop(props, "show_spawn_list",
+                         text=f"Player Spawns ({len(spawns)})", icon=icon, emboss=False)
+                if props.show_spawn_list:
+                    box = layout.box()
+                    for o in sorted(spawns, key=lambda x: x.name):
+                        row = box.row(align=True)
+                        row.label(text=o.name, icon="EMPTY_ARROWS")
+                        cam_obj = scene.objects.get(o.name + "_CAM")
+                        if cam_obj:
+                            row.label(text="📷", icon="NONE")
+                        else:
+                            sub = row.row()
+                            sub.alert = True
+                            sub.label(text="no cam", icon="NONE")
+                        op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+                        op.obj_name = o.name
+                        op = row.operator("og.delete_object", text="", icon="TRASH")
+                        op.obj_name = o.name
+
+            if checkpoints:
+                # Collapsible checkpoints
+                row = layout.row()
+                icon = "TRIA_DOWN" if props.show_checkpoint_list else "TRIA_RIGHT"
+                row.prop(props, "show_checkpoint_list",
+                         text=f"Checkpoints ({len(checkpoints)})", icon=icon, emboss=False)
+                if props.show_checkpoint_list:
+                    # Build vol_by_cp map for display
+                    vol_by_cp_panel = {}
+                    for o in scene.objects:
+                        if o.type == "MESH" and o.name.startswith("VOL_"):
+                            link = o.get("og_vol_link", "")
+                            if link and link.startswith("CHECKPOINT_"):
+                                vol_by_cp_panel[link] = o
+                    box = layout.box()
+                    for o in sorted(checkpoints, key=lambda x: x.name):
+                        row = box.row(align=True)
+                        row.label(text=o.name, icon="EMPTY_SINGLE_ARROW")
+                        vol = vol_by_cp_panel.get(o.name)
+                        if vol:
+                            row.label(text=f"📦 {vol.name}")
+                        else:
+                            r = float(o.get("og_checkpoint_radius", 3.0))
+                            sub = row.row()
+                            sub.alert = True
+                            sub.label(text=f"r={r:.1f}m")
+                        cam_obj = scene.objects.get(o.name + "_CAM")
+                        if cam_obj:
+                            row.label(text="📷", icon="NONE")
+                        op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+                        op.obj_name = o.name
+                        op = row.operator("og.delete_object", text="", icon="TRASH")
+                        op.obj_name = o.name
+
+            # ── Camera anchor + volume helpers (context-sensitive) ────────────
+            sel = ctx.active_object
+            if sel and sel.type == "EMPTY" and (sel.name.startswith("SPAWN_") or sel.name.startswith("CHECKPOINT_")) and not sel.name.endswith("_CAM"):
+                is_cp = sel.name.startswith("CHECKPOINT_")
+                layout.separator(factor=0.3)
+                sub = layout.column(align=True)
+
+                # Camera anchor
+                cam_exists = bool(scene.objects.get(sel.name + "_CAM"))
+                if not cam_exists:
+                    sub.operator("og.spawn_cam_anchor", text=f"Add Camera for {sel.name}", icon="CAMERA_DATA")
+                else:
+                    row = sub.row()
+                    row.enabled = False
+                    row.label(text=f"{sel.name}_CAM exists ✓", icon="CHECKMARK")
+
+                # Volume (checkpoints only)
+                if is_cp:
+                    vol_by_cp_sel = {}
+                    for o in scene.objects:
+                        if o.type == "MESH" and o.name.startswith("VOL_"):
+                            lnk = o.get("og_vol_link", "")
+                            if lnk and lnk.startswith("CHECKPOINT_"):
+                                vol_by_cp_sel[lnk] = o
+                    vol_linked = vol_by_cp_sel.get(sel.name)
+                    if vol_linked:
+                        row = sub.row()
+                        row.enabled = False
+                        row.label(text=f"{vol_linked.name} linked ✓", icon="MESH_CUBE")
+                        sub.operator("og.unlink_volume", text="Unlink Volume", icon="X")
+                    else:
+                        op = sub.operator("og.spawn_volume_autolink", text="Add Trigger Volume", icon="MESH_CUBE")
+                        op.target_name = sel.name
+                        sub.label(text="Or use Triggers panel to link existing", icon="INFO")
+
+        # Bsphere preview
+        if spawns or checkpoints:
+            all_pts = spawns + checkpoints
+            xs = [o.location.x for o in all_pts]
+            ys = [o.location.z for o in all_pts]
+            zs = [-o.location.y for o in all_pts]
+            cx = sum(xs)/len(xs); cy = sum(ys)/len(ys); cz = sum(zs)/len(zs)
+            r  = max(
+                math.sqrt((o.location.x-cx)**2 + (o.location.z-cy)**2 + (-o.location.y-cz)**2)
+                for o in all_pts
+            ) + 64.0
+            info_row = layout.row()
+            info_row.enabled = False
+            info_row.label(text=f"Bsphere: r≈{r:.0f}m  centre ({cx:.1f}, {cy:.1f}, {cz:.1f})", icon="SPHERE")
 
 
 # ── Place Objects ─────────────────────────────────────────────────────────────
@@ -4336,84 +4828,458 @@ class OG_OT_SpawnCamera(Operator):
         return {"FINISHED"}
 
 
-class OG_OT_SpawnCamVolume(Operator):
-    bl_idname = "og.spawn_cam_volume"
+
+class OG_OT_SpawnVolume(Operator):
+    """Spawn a generic trigger volume (VOL_N wireframe cube).
+    If the active object is a linkable target (CAMERA_, SPAWN_, CHECKPOINT_),
+    the volume is auto-linked to it immediately on spawn."""
+    bl_idname = "og.spawn_volume"
     bl_label  = "Add Trigger Volume"
     bl_description = (
-        "Add a box mesh trigger volume.\n"
-        "Resize and position it, then use 'Link Trigger Volume' to link it to a camera."
+        "Add a box mesh trigger volume at the 3D cursor. "
+        "If a camera, spawn, or checkpoint is selected, it auto-links."
     )
     def execute(self, ctx):
-        # Count existing CAMVOL meshes for unique naming
         n = len([o for o in ctx.scene.objects
-                 if o.name.startswith("CAMVOL_") and o.type == "MESH"])
+                 if o.type == "MESH" and o.name.startswith("VOL_")])
         bpy.ops.mesh.primitive_cube_add(size=4.0, location=ctx.scene.cursor.location)
         vol = ctx.active_object
-        vol.name = f"CAMVOL_{n}"
+        vol.name = f"VOL_{n}"
+        vol["og_vol_id"] = n          # remember original number for unlink rename
         vol.show_name = True
         vol.display_type = "WIRE"
         vol.color = (0.0, 0.9, 0.3, 0.4)
-        # Use registered BoolProperty (not dict-style) so Blender's GLTF exporter
-        # writes these as JSON integers (1/0). The C++ extractor uses .Get<int>()
-        # which returns 0 for JSON booleans — dict-style would silently break.
         vol.set_invisible = True
         vol.set_collision = True
         vol.ignore        = True
-        self.report({"INFO"}, f"Added {vol.name}  —  resize, then Link Trigger Volume to a camera")
+
+        # Auto-link if the previously active object is a valid target
+        prev = ctx.scene.objects.get(getattr(ctx, "_prev_active_name", ""))
+        # Re-read: before empty_add the active was our target
+        # We stored it in the scene temp prop via the operator invoke
+        target_name = vol.get("_auto_link_target", "")
+        if target_name:
+            target = ctx.scene.objects.get(target_name)
+            if target and not _vol_for_target(ctx.scene, target_name):
+                vol["og_vol_link"] = target_name
+                vol.name = f"VOL_{target_name}"
+                del vol["_auto_link_target"]
+                self.report({"INFO"}, f"Added and linked {vol.name} → {target_name}")
+                return {"FINISHED"}
+
+        self.report({"INFO"}, f"Added {vol.name}  —  select volume + target → Link in Triggers panel")
+        return {"FINISHED"}
+
+    def invoke(self, ctx, event):
+        # Store active object name before adding geometry changes active
+        sel = ctx.active_object
+        if sel and _is_linkable(sel):
+            # Check not already linked
+            existing = _vol_for_target(ctx.scene, sel.name)
+            if existing:
+                self.report({"WARNING"}, f"{sel.name} already has {existing.name} linked — unlink first")
+                return {"CANCELLED"}
+            # Temporarily stamp target onto the new vol via a scene prop
+            # We use a scene-level string prop as a handoff since active changes after add
+            ctx.scene["_pending_vol_target"] = sel.name
+        else:
+            ctx.scene["_pending_vol_target"] = ""
+        return self.execute(ctx)
+
+
+def _is_linkable(obj):
+    """True if this object type can accept a trigger volume."""
+    return (obj.type == "CAMERA" and obj.name.startswith("CAMERA_")) or            (obj.type == "EMPTY"  and (obj.name.startswith("SPAWN_") or obj.name.startswith("CHECKPOINT_")) and not obj.name.endswith("_CAM"))
+
+
+def _vol_for_target(scene, target_name):
+    """Return the VOL_ mesh linked to target_name, or None."""
+    for o in scene.objects:
+        if o.type == "MESH" and o.name.startswith("VOL_") and o.get("og_vol_link") == target_name:
+            return o
+    return None
+
+
+def _clean_orphaned_vol_links(scene):
+    """Remove og_vol_link from any VOL_ mesh whose target no longer exists.
+    Called at export time and available as a panel button.
+    Returns list of volume names that were cleaned."""
+    cleaned = []
+    for o in scene.objects:
+        if o.type == "MESH" and o.name.startswith("VOL_"):
+            link = o.get("og_vol_link", "")
+            if link and not scene.objects.get(link):
+                orig_id = o.get("og_vol_id", 0)
+                del o["og_vol_link"]
+                o.name = f"VOL_{orig_id}"
+                cleaned.append(link)
+                log(f"  [vol] cleaned orphaned link → '{link}' (target deleted)")
+    return cleaned
+
+
+class OG_OT_SpawnVolumeAutoLink(Operator):
+    """Internal: spawn a volume and auto-link to the given target."""
+    bl_idname = "og.spawn_volume_autolink"
+    bl_label  = "Add & Link Trigger Volume"
+    bl_description = "Spawn a trigger volume and immediately link it to the active object"
+
+    target_name: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        target = ctx.scene.objects.get(self.target_name)
+        if not target:
+            self.report({"ERROR"}, f"Target {self.target_name} not found")
+            return {"CANCELLED"}
+        existing = _vol_for_target(ctx.scene, self.target_name)
+        if existing:
+            self.report({"WARNING"}, f"{self.target_name} already linked to {existing.name} — unlink first")
+            return {"CANCELLED"}
+        n = len([o for o in ctx.scene.objects if o.type == "MESH" and o.name.startswith("VOL_")])
+        # Place at target location
+        bpy.ops.mesh.primitive_cube_add(size=4.0, location=target.location)
+        vol = ctx.active_object
+        vol["og_vol_id"] = n
+        vol.show_name = True
+        vol.display_type = "WIRE"
+        vol.set_invisible = True
+        vol.set_collision = True
+        vol.ignore        = True
+        if target.type == "CAMERA":
+            vol.color = (0.0, 0.9, 0.3, 0.4)
+        else:
+            vol.color = (1.0, 0.85, 0.0, 0.4)
+        vol["og_vol_link"] = self.target_name
+        vol.name = f"VOL_{self.target_name}"
+        self.report({"INFO"}, f"Added {vol.name} → {self.target_name}")
         return {"FINISHED"}
 
 
-class OG_OT_LinkCamVolume(Operator):
-    """Link a trigger volume mesh to a camera.
-    Select the CAMVOL mesh + the CAMERA object (any order), then click."""
-    bl_idname   = "og.link_cam_volume"
-    bl_label    = "Link Trigger Volume"
-    bl_description = (
-        "Select the trigger volume mesh + the camera (any order, shift-click both), then click.\n"
-        "When Jak enters the volume the camera will activate."
-    )
+class OG_OT_LinkVolume(Operator):
+    """Link a VOL_ mesh to a camera, spawn, or checkpoint.
+    Select the VOL_ mesh first, then shift-click the target, then click Link."""
+    bl_idname   = "og.link_volume"
+    bl_label    = "Link Volume"
+    bl_description = "Select VOL_ mesh first, then shift-click the target (camera/spawn/checkpoint), then click"
 
     def execute(self, ctx):
         selected = ctx.selected_objects
-        cams = [o for o in selected if o.type == "CAMERA"
-                and o.name.startswith("CAMERA_")]
-        vols = [o for o in selected if o.type == "MESH"
-                and o.name.startswith("CAMVOL_")]
+        vols    = [o for o in selected if o.type == "MESH" and o.name.startswith("VOL_")]
+        targets = [o for o in selected if _is_linkable(o)]
 
         if not vols:
-            self.report({"ERROR"}, "No CAMVOL_ mesh in selection — add a trigger volume first")
+            self.report({"ERROR"}, "No VOL_ mesh in selection")
             return {"CANCELLED"}
         if len(vols) > 1:
             self.report({"ERROR"}, "Multiple volumes selected — select exactly one")
             return {"CANCELLED"}
-        if not cams:
-            self.report({"ERROR"}, "No CAMERA_ object in selection — select the camera too")
+        if not targets:
+            self.report({"ERROR"}, "No linkable target (CAMERA_/SPAWN_/CHECKPOINT_) in selection")
             return {"CANCELLED"}
-        if len(cams) > 1:
-            self.report({"ERROR"}, "Multiple cameras selected — select exactly one")
+        if len(targets) > 1:
+            self.report({"ERROR"}, "Multiple targets selected — select exactly one")
             return {"CANCELLED"}
 
-        vol = vols[0]
-        cam = cams[0]
-        vol["og_cam_link"] = cam.name
-        self.report({"INFO"}, f"Linked {vol.name} → {cam.name}")
+        vol    = vols[0]
+        target = targets[0]
+
+        # Check vol not already linked
+        existing_link = vol.get("og_vol_link", "")
+        if existing_link:
+            if existing_link == target.name:
+                self.report({"WARNING"}, f"{vol.name} is already linked to {target.name}")
+            else:
+                self.report({"WARNING"}, f"{vol.name} is already linked to {existing_link} — unlink first")
+            return {"CANCELLED"}
+
+        # Check target not already has a vol
+        existing_vol = _vol_for_target(ctx.scene, target.name)
+        if existing_vol:
+            self.report({"WARNING"}, f"{target.name} already has {existing_vol.name} linked — unlink first")
+            return {"CANCELLED"}
+
+        vol["og_vol_link"] = target.name
+        if "og_vol_id" not in vol:
+            vol["og_vol_id"] = int(vol.name.replace("VOL_", "") if vol.name[4:].isdigit() else 0)
+        vol.name = f"VOL_{target.name}"
+        self.report({"INFO"}, f"Linked {vol.name} → {target.name}")
         return {"FINISHED"}
 
 
-class OG_OT_UnlinkCamVolume(Operator):
-    """Remove the camera link from the selected trigger volume."""
-    bl_idname   = "og.unlink_cam_volume"
-    bl_label    = "Unlink Trigger Volume"
-    bl_description = "Remove the camera link from the selected trigger volume mesh"
+class OG_OT_UnlinkVolume(Operator):
+    """Unlink a VOL_ mesh from its target. Works on selected VOL_ meshes."""
+    bl_idname   = "og.unlink_volume"
+    bl_label    = "Unlink Volume"
+    bl_description = "Remove the link from the selected VOL_ mesh and restore its generic name"
 
     def execute(self, ctx):
         count = 0
         for o in ctx.selected_objects:
-            if "og_cam_link" in o:
-                del o["og_cam_link"]
+            if o.type == "MESH" and o.name.startswith("VOL_") and "og_vol_link" in o:
+                orig_id = o.get("og_vol_id", 0)
+                del o["og_vol_link"]
+                o.name = f"VOL_{orig_id}"
                 count += 1
-        self.report({"INFO"}, f"Unlinked {count} volume(s)")
+        if count:
+            self.report({"INFO"}, f"Unlinked {count} volume(s)")
+        else:
+            self.report({"WARNING"}, "No linked VOL_ meshes in selection")
         return {"FINISHED"}
+
+
+class OG_OT_SelectAndFrame(Operator):
+    """Make an object active, select it, and frame it in the viewport."""
+    bl_idname = "og.select_and_frame"
+    bl_label  = "View"
+    bl_description = "Select this object and frame it in the viewport"
+
+    obj_name: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        obj = ctx.scene.objects.get(self.obj_name)
+        if not obj:
+            self.report({"ERROR"}, f"Object '{self.obj_name}' not found")
+            return {"CANCELLED"}
+        # Deselect all, select and make active
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        ctx.view_layer.objects.active = obj
+        # Frame in viewport
+        bpy.ops.view3d.view_selected()
+        return {"FINISHED"}
+
+
+class OG_OT_DeleteObject(Operator):
+    """Delete an object by name, also cleaning up any linked volumes."""
+    bl_idname = "og.delete_object"
+    bl_label  = "Delete"
+    bl_description = "Delete this object (volumes linked to it will be unlinked)"
+
+    obj_name: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        obj = ctx.scene.objects.get(self.obj_name)
+        if not obj:
+            self.report({"ERROR"}, f"Object '{self.obj_name}' not found")
+            return {"CANCELLED"}
+        # Clean any volumes linked to this object before deleting
+        for o in ctx.scene.objects:
+            if o.type == "MESH" and o.name.startswith("VOL_"):
+                if o.get("og_vol_link") == self.obj_name:
+                    orig_id = o.get("og_vol_id", 0)
+                    del o["og_vol_link"]
+                    o.name = f"VOL_{orig_id}"
+        # Also delete associated _CAM, _ALIGN, _PIVOT, _LOOK_AT empties for cameras
+        suffixes = ["_CAM", "_ALIGN", "_PIVOT", "_LOOK_AT"]
+        for suf in suffixes:
+            associated = ctx.scene.objects.get(self.obj_name + suf)
+            if associated:
+                bpy.data.objects.remove(associated, do_unlink=True)
+        # Delete the object itself
+        bpy.data.objects.remove(obj, do_unlink=True)
+        self.report({"INFO"}, f"Deleted '{self.obj_name}'")
+        return {"FINISHED"}
+
+
+class OG_OT_CleanOrphanedLinks(Operator):
+    """Remove og_vol_link from any VOL_ whose target object has been deleted."""
+    bl_idname   = "og.clean_orphaned_links"
+    bl_label    = "Clean Orphaned Links"
+    bl_description = "Remove links from volumes whose target (camera/spawn/checkpoint) has been deleted"
+
+    def execute(self, ctx):
+        cleaned = _clean_orphaned_vol_links(ctx.scene)
+        if cleaned:
+            self.report({"INFO"}, f"Cleaned {len(cleaned)} orphaned link(s): {', '.join(cleaned)}")
+        else:
+            self.report({"INFO"}, "No orphaned links found")
+        return {"FINISHED"}
+
+
+# ── Entity placement ──────────────────────────────────────────────────────────
+
+
+
+
+def validate_ambients(ambients):
+    errors = []
+    for i, a in enumerate(ambients):
+        t = a.get("trans", [])
+        b = a.get("bsphere", [])
+        name = a.get("lump", {}).get("name", f"ambient[{i}]")
+        if len(t) != 4:
+            errors.append(f"{name}: ambient trans has {len(t)} elements, expected 4  (value={t})")
+        if len(b) != 4:
+            errors.append(f"{name}: ambient bsphere has {len(b)} elements, expected 4  (value={b})")
+    return errors
+
+
+
+
+# ---------------------------------------------------------------------------
+# OPERATORS — NavMesh linking
+# ---------------------------------------------------------------------------
+
+
+
+
+# ---------------------------------------------------------------------------
+# OPERATOR — Export & Build
+# ---------------------------------------------------------------------------
+
+_BUILD_STATE = {"done":False, "status":"", "error":None, "ok":False}
+
+
+def patch_entity_gc(navmesh_actors):
+    """
+    Patch engine/entity/entity.gc to add custom-nav-mesh-check-and-setup.
+
+    navmesh_actors: list of (actor_aid, mesh_data) tuples.
+
+    Adds/replaces:
+      1. A (defun custom-nav-mesh-check-and-setup ...) with one case per actor.
+      2. A call to it at the top of (defmethod birth! entity-actor ...).
+
+    Safe to call repeatedly — old injected code is stripped before re-injecting.
+    """
+    p = _entity_gc()
+    if not p.exists():
+        log(f"WARNING: entity.gc not found at {p}")
+        return
+
+    raw  = p.read_bytes()
+    crlf = b"\r\n" in raw
+    txt  = raw.decode("utf-8").replace("\r\n", "\n")
+
+    # ── Strip any previously injected block ──────────────────────────────────
+    import re
+    txt = re.sub(
+        r"\n;; \[OpenGOAL Tools\] BEGIN custom-nav-mesh.*?;; \[OpenGOAL Tools\] END custom-nav-mesh\n",
+        "",
+        txt,
+        flags=re.DOTALL,
+    )
+    # Strip old birth! injection line
+    txt = re.sub(r"  \(custom-nav-mesh-check-and-setup this\)\n", "", txt)
+
+    if not navmesh_actors:
+        # Nothing to inject — just clean file
+        out = txt.replace("\n", "\r\n") if crlf else txt
+        p.write_bytes(out.encode("utf-8"))
+        log("entity.gc: cleaned (no navmesh actors)")
+        return
+
+    # ── Build the defun block ─────────────────────────────────────────────────
+    lines = [
+        "",
+        ";; [OpenGOAL Tools] BEGIN custom-nav-mesh",
+
+        "(defun custom-nav-mesh-check-and-setup ((this entity-actor))",
+        "  (case (-> this aid)",
+    ]
+    for aid, mesh in navmesh_actors:
+        lines.append(_navmesh_to_goal(mesh, aid))
+    lines += [
+        "  )",
+        "  ;; Manually init the nav-mesh without calling entity-nav-login.",
+        "  ;; entity-nav-login calls update-route-table which writes back to the route",
+        "  ;; array — but our mesh is 'static (read-only GAME.CGO memory), so that",
+        "  ;; write would segfault. Instead we just set up the user-list engine.",
+        "  (when (nonzero? (-> this nav-mesh))",
+        "    (when (zero? (-> (-> this nav-mesh) user-list))",
+        "      (set! (-> (-> this nav-mesh) user-list)",
+        "            (new 'loading-level 'engine 'nav-engine 32))",
+        "    )",
+        "  )",
+        "  (none)",
+        ")",
+        ";; [OpenGOAL Tools] END custom-nav-mesh",
+        "",
+    ]
+    inject_block = "\n".join(lines)
+
+    # Insert before (defmethod birth! ((this entity-actor))
+    BIRTH_MARKER = "(defmethod birth! ((this entity-actor))"
+    if BIRTH_MARKER not in txt:
+        log("WARNING: entity.gc birth! marker not found — cannot inject nav-mesh")
+        return
+    txt = txt.replace(BIRTH_MARKER, inject_block + "\n" + BIRTH_MARKER, 1)
+
+    # ── Inject call at top of birth! body ────────────────────────────────────
+    # Find the body start — line after "Create a process for this entity..."
+    # We look for the first (let* ... after the birth! marker
+    CALL_MARKER = "  (let* ((entity-type (-> this etype))"
+    txt = txt.replace(
+        CALL_MARKER,
+        "  (custom-nav-mesh-check-and-setup this)\n" + CALL_MARKER,
+        1,
+    )
+
+    out = txt.replace("\n", "\r\n") if crlf else txt
+    p.write_bytes(out.encode("utf-8"))
+    log(f"Patched entity.gc with {len(navmesh_actors)} nav-mesh actor(s)")
+
+
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# OPERATOR + PANEL — Audio / Ambience
+# ---------------------------------------------------------------------------
+
+
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# PANELS
+# ---------------------------------------------------------------------------
+# Panel hierarchy (all under "OpenGOAL" N-panel tab):
+#
+#  OG_PT_LevelSettings   — Level name, base ID
+#  OG_PT_Scene           — Level Flow: spawns, checkpoints, death plane, bsphere
+#  OG_PT_PlaceObjects    — Entity picker + Add Entity
+#  OG_PT_Waypoints       — Waypoint management (context-sensitive, collapsible)
+#  OG_PT_NavMesh         — NavMesh linking via object picker
+#  OG_PT_BuildPlay       — Big ▶ Export, Build & Play button
+#  OG_PT_DevTools        — Expert options + Quick Open (collapsed)
+#  OG_PT_Collision       — Per-object collision (separate, object-context)
+# ---------------------------------------------------------------------------
+
+# Shared header style helper
+def _header_sep(layout):
+    """A subtle separator line used between sub-sections inside a panel."""
+    layout.separator(factor=0.4)
+
+
+# ── Level Settings ───────────────────────────────────────────────────────────
+
+
+
+# ── Scene Setup / Level Flow ──────────────────────────────────────────────────
+
+
+
+# ── Place Objects ─────────────────────────────────────────────────────────────
+
+
+
+# ── Waypoints ─────────────────────────────────────────────────────────────────
+
+
+
+# ── NavMesh ───────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
 
 
 class OG_OT_SpawnCamAlign(Operator):
@@ -4494,6 +5360,110 @@ class OG_OT_SpawnCamLookAt(Operator):
         sel["og_cam_look_at"] = look_name
         self.report({"INFO"}, f"Added {look_name}  —  move it to where the camera should look")
         return {"FINISHED"}
+
+# ── Triggers ─────────────────────────────────────────────────────────────────
+
+class OG_PT_Triggers(Panel):
+    bl_label       = "🔗  Triggers"
+    bl_idname      = "OG_PT_triggers"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        layout = self.layout
+        scene  = ctx.scene
+        sel    = ctx.active_object
+
+        # ── Spawn generic volume ──────────────────────────────────────────
+        layout.operator("og.spawn_volume", text="Add Trigger Volume", icon="MESH_CUBE")
+        layout.separator(factor=0.3)
+
+        # ── Context: link UI ─────────────────────────────────────────────
+        # Works regardless of which object is active — we look at the full
+        # selection for a VOL_ + linkable target pair.
+        sel_vols    = [o for o in ctx.selected_objects if o.type == "MESH" and o.name.startswith("VOL_")]
+        sel_targets = [o for o in ctx.selected_objects if _is_linkable(o)]
+        active_vol  = sel if (sel and sel.type == "MESH" and sel.name.startswith("VOL_")) else (sel_vols[0] if sel_vols else None)
+
+        if active_vol:
+            box = layout.box()
+            box.label(text=active_vol.name, icon="MESH_CUBE")
+            link = active_vol.get("og_vol_link", "")
+            if link:
+                box.label(text=f"Linked → {link}", icon="CHECKMARK")
+                box.operator("og.unlink_volume", text="Unlink", icon="X")
+            else:
+                if sel_targets:
+                    tgt = sel_targets[0]
+                    existing = _vol_for_target(scene, tgt.name)
+                    if existing and existing is not active_vol:
+                        row = box.row()
+                        row.alert = True
+                        row.label(text=f"{tgt.name} already linked to {existing.name}", icon="ERROR")
+                    else:
+                        box.operator("og.link_volume",
+                                     text=f"Link → {tgt.name}", icon="LINKED")
+                else:
+                    box.label(text="Not linked", icon="ERROR")
+                    box.label(text="Shift-select a target to link", icon="INFO")
+            layout.separator(factor=0.3)
+        elif sel_targets and not sel_vols:
+            # Target selected but no vol — show hint
+            box = layout.box()
+            box.label(text=f"{sel_targets[0].name} selected", icon="INFO")
+            box.label(text="Also select a VOL_ to link", icon="INFO")
+            layout.separator(factor=0.3)
+
+        # ── All volumes list ──────────────────────────────────────────────
+        vols = sorted([o for o in scene.objects
+                       if o.type == "MESH" and o.name.startswith("VOL_")],
+                      key=lambda o: o.name)
+        if not vols:
+            box = layout.box()
+            box.label(text="No trigger volumes in scene", icon="INFO")
+            return
+
+        # Collapsible header
+        row = layout.row()
+        icon = "TRIA_DOWN" if ctx.scene.og_props.show_volume_list else "TRIA_RIGHT"
+        row.prop(ctx.scene.og_props, "show_volume_list",
+                 text=f"Volumes ({len(vols)})", icon=icon, emboss=False)
+        if not ctx.scene.og_props.show_volume_list:
+            return
+
+        box = layout.box()
+        for v in vols:
+            row = box.row(align=True)
+            link = v.get("og_vol_link", "")
+            if link:
+                target_exists = bool(scene.objects.get(link))
+                if target_exists:
+                    row.label(text=v.name, icon="CHECKMARK")
+                    row.label(text=f"→ {link}")
+                else:
+                    row.alert = True
+                    row.label(text=v.name, icon="ERROR")
+                    row.label(text=f"→ {link} (DELETED)")
+            else:
+                row.alert = True
+                row.label(text=v.name, icon="MESH_CUBE")
+                row.label(text="unlinked")
+            op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+            op.obj_name = v.name
+            op = row.operator("og.delete_object", text="", icon="TRASH")
+            op.obj_name = v.name
+
+        # Orphan cleanup button — only show if any orphans exist
+        orphans = [o for o in vols if o.get("og_vol_link") and not scene.objects.get(o.get("og_vol_link", ""))]
+        if orphans:
+            layout.separator(factor=0.3)
+            row = layout.row()
+            row.alert = True
+            row.operator("og.clean_orphaned_links", text=f"Clean {len(orphans)} Orphaned Link(s)", icon="ERROR")
+
+
 class OG_PT_Camera(Panel):
     bl_label       = "📷  Camera"
     bl_idname      = "OG_PT_camera"
@@ -4512,8 +5482,13 @@ class OG_PT_Camera(Panel):
 
         # ── Top-level add buttons ─────────────────────────────────────────
         row = layout.row(align=True)
-        row.operator("og.spawn_camera",     text="Add Camera",  icon="CAMERA_DATA")
-        row.operator("og.spawn_cam_volume", text="Add Volume",  icon="CUBE")
+        row.operator("og.spawn_camera", text="Add Camera", icon="CAMERA_DATA")
+        # If a camera is active, auto-link the new volume to it
+        if sel and sel.type == "CAMERA" and sel.name.startswith("CAMERA_"):
+            op = row.operator("og.spawn_volume_autolink", text="Add Volume", icon="CUBE")
+            op.target_name = sel.name
+        else:
+            row.operator("og.spawn_volume", text="Add Volume", icon="CUBE")
 
         layout.separator()
 
@@ -4521,7 +5496,7 @@ class OG_PT_Camera(Panel):
         # Show context-sensitive controls when a relevant object is active
         if sel and sel.type == "CAMERA" and sel.name.startswith("CAMERA_"):
             self._draw_camera_props(layout, sel, scene)
-        elif sel and sel.type == "MESH" and sel.name.startswith("CAMVOL_"):
+        elif sel and sel.type == "MESH" and sel.name.startswith("VOL_"):
             self._draw_volume_props(layout, sel, scene)
 
         layout.separator()
@@ -4537,19 +5512,30 @@ class OG_PT_Camera(Panel):
             box.label(text="No cameras placed yet", icon="INFO")
             return
 
+        # Collapsible header
+        row = layout.row()
+        icon = "TRIA_DOWN" if ctx.scene.og_props.show_camera_list else "TRIA_RIGHT"
+        row.prop(ctx.scene.og_props, "show_camera_list",
+                 text=f"Cameras ({len(cam_objects)})", icon=icon, emboss=False)
+        if not ctx.scene.og_props.show_camera_list:
+            return
+
         # Build reverse map: cam_name -> list of linked vol names
         vol_map = {}
         for o in scene.objects:
-            if o.type == "MESH" and o.name.startswith("CAMVOL_"):
-                link = o.get("og_cam_link", "")
-                if link:
+            if o.type == "MESH" and o.name.startswith("VOL_"):
+                link = o.get("og_vol_link", "")
+                if link and link.startswith("CAMERA_"):
                     vol_map.setdefault(link, []).append(o.name)
 
         for cam_obj in cam_objects:
             box = layout.box()
-            row = box.row()
-            icon = "CAMERA_DATA"
-            row.label(text=cam_obj.name, icon=icon)
+            row = box.row(align=True)
+            row.label(text=cam_obj.name, icon="CAMERA_DATA")
+            op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+            op.obj_name = cam_obj.name
+            op = row.operator("og.delete_object", text="", icon="TRASH")
+            op.obj_name = cam_obj.name
 
             mode   = cam_obj.get("og_cam_mode",   "fixed")
             interp = float(cam_obj.get("og_cam_interp", 1.0))
@@ -4594,11 +5580,15 @@ class OG_PT_Camera(Panel):
 
             # Linked volumes
             linked_vols = vol_map.get(cam_obj.name, [])
-            vrow = box.row()
+            vrow = box.row(align=True)
             if linked_vols:
                 vrow.label(text=f"Trigger: {', '.join(linked_vols)}", icon="CHECKMARK")
+                op = vrow.operator("og.spawn_volume_autolink", text="", icon="ADD")
+                op.target_name = cam_obj.name
             else:
                 vrow.label(text="No trigger — always active", icon="INFO")
+                op = vrow.operator("og.spawn_volume_autolink", text="Add Volume", icon="ADD")
+                op.target_name = cam_obj.name
 
     def _draw_camera_props(self, layout, cam, scene):
         """Context panel when a CAMERA_ object is active."""
@@ -4637,17 +5627,16 @@ class OG_PT_Camera(Panel):
             lbox.operator("og.spawn_cam_look_at", text="Add Look-At Target", icon="PIVOT_CURSOR")
 
     def _draw_volume_props(self, layout, vol, scene):
-        """Context panel when a CAMVOL_ mesh is active."""
+        """Context panel when a VOL_ mesh is active in Camera panel."""
         box = layout.box()
-        box.label(text=f"Selected: {vol.name}", icon="CUBE")
-        link = vol.get("og_cam_link", "")
+        box.label(text=f"Selected: {vol.name}", icon="MESH_CUBE")
+        link = vol.get("og_vol_link", "")
         if link:
             box.label(text=f"Linked to: {link}", icon="CHECKMARK")
-            box.operator("og.unlink_cam_volume", text="Unlink", icon="X")
+            box.operator("og.unlink_volume", text="Unlink", icon="X")
         else:
             box.label(text="Not linked to any camera", icon="ERROR")
-            box.label(text="Shift-select camera + this volume", icon="INFO")
-            box.operator("og.link_cam_volume", text="Link Trigger Volume", icon="LINKED")
+            box.label(text="Use Triggers panel to link", icon="INFO")
 
 
 class OG_OT_SetCamProp(Operator):
@@ -4681,15 +5670,22 @@ class OG_OT_NudgeCamFloat(Operator):
         return {"FINISHED"}
 
 
+
+
+# ── Platform ──────────────────────────────────────────────────────────────────
+
+
 class OG_OT_NudgeFloatProp(Operator):
-    """Nudge a float custom property on the active object."""
-    bl_idname   = "og.nudge_float_prop"
-    bl_label    = "Nudge Float Property"
-    bl_options  = {"REGISTER", "UNDO"}
+    """Nudge a float custom property on the active object by a fixed delta."""
+    bl_idname  = "og.nudge_float_prop"
+    bl_label   = "Nudge Float Property"
+    bl_options = {"REGISTER", "UNDO"}
+
     prop_name: bpy.props.StringProperty()
     delta:     bpy.props.FloatProperty()
     val_min:   bpy.props.FloatProperty(default=-1e9)
     val_max:   bpy.props.FloatProperty(default=1e9)
+
     def execute(self, ctx):
         o = ctx.active_object
         if o:
@@ -4698,11 +5694,21 @@ class OG_OT_NudgeFloatProp(Operator):
         return {"FINISHED"}
 
 
-# ── Platform ──────────────────────────────────────────────────────────────────
+class OG_OT_TogglePlatformWrap(Operator):
+    """Toggle wrap-phase (one-way loop vs ping-pong) on the selected platform."""
+    bl_idname = "og.toggle_platform_wrap"
+    bl_label  = "Toggle Wrap Phase"
+
+    def execute(self, ctx):
+        o = ctx.active_object
+        if not o:
+            return {"CANCELLED"}
+        o["og_sync_wrap"] = 0 if bool(o.get("og_sync_wrap", 0)) else 1
+        return {"FINISHED"}
 
 
 class OG_OT_SetPlatformDefaults(Operator):
-    """Set default sync values on the selected platform actor"""
+    """Reset sync values on the selected platform actor to defaults."""
     bl_idname = "og.set_platform_defaults"
     bl_label  = "Reset Sync Defaults"
 
@@ -4718,149 +5724,226 @@ class OG_OT_SetPlatformDefaults(Operator):
         return {"FINISHED"}
 
 
-class OG_PT_Platform(Panel):
-    bl_label       = "🟦  Platform"
-    bl_idname      = "OG_PT_platform"
+class OG_OT_SpawnPlatform(Operator):
+    """Place a platform actor empty at the 3D cursor."""
+    bl_idname     = "og.spawn_platform"
+    bl_label      = "Add Platform"
+    bl_description = "Place a platform actor at the 3D cursor"
+
+    def execute(self, ctx):
+        etype = ctx.scene.og_props.platform_type
+        einfo = ENTITY_DEFS.get(etype, {})
+        base_id = ctx.scene.og_props.base_id
+
+        uid = f"{base_id:04d}"
+        ctx.scene.og_props.base_id += 1
+
+        bpy.ops.object.empty_add(type=einfo.get("shape", "CUBE"),
+                                 location=ctx.scene.cursor.location)
+        o = ctx.active_object
+        o.name        = f"ACTOR_{etype}_{uid}"
+        o.show_name   = True
+        o.empty_display_size = 0.5
+        color = einfo.get("color", (0.5, 0.5, 0.8, 1.0))
+        o.color = color
+        if hasattr(o, "show_in_front"):
+            o.show_in_front = True
+        return {"FINISHED"}
+
+
+# ── Platforms panel ───────────────────────────────────────────────────────────
+
+
+def _draw_platform_settings(layout, sel):
+    """Draw per-platform settings for the active platform actor."""
+    etype = sel.name.split("_", 2)[1]
+    einfo = ENTITY_DEFS.get(etype, {})
+
+    layout.label(text=einfo.get("label", etype), icon="CUBE")
+
+    # ── Sync controls (plat, plat-eco, side-to-side-plat) ────────────────────
+    if einfo.get("needs_sync"):
+        box = layout.box()
+        box.label(text="Sync (Path Timing)", icon="TIME")
+
+        wp_prefix = sel.name + "_wp_"
+        wp_count  = sum(1 for o in bpy.data.objects
+                        if o.name.startswith(wp_prefix) and o.type == "EMPTY")
+
+        if wp_count < 2:
+            box.label(text="⚠ Add ≥2 waypoints to enable movement", icon="INFO")
+        else:
+            box.label(text=f"✓ {wp_count} waypoints — platform will move", icon="CHECKMARK")
+
+        col = box.column(align=True)
+
+        # Period
+        row = col.row(align=True)
+        row.label(text="Period (s):")
+        period = float(sel.get("og_sync_period", 4.0))
+        op = row.operator("og.nudge_float_prop", text="-0.5", icon="REMOVE")
+        op.prop_name = "og_sync_period"; op.delta = -0.5; op.val_min = 0.5
+        row.label(text=f"{period:.1f}s")
+        op = row.operator("og.nudge_float_prop", text="+0.5", icon="ADD")
+        op.prop_name = "og_sync_period"; op.delta = 0.5; op.val_max = 300.0
+
+        # Phase
+        row = col.row(align=True)
+        row.label(text="Phase (0–1):")
+        phase = float(sel.get("og_sync_phase", 0.0))
+        op = row.operator("og.nudge_float_prop", text="-0.1", icon="REMOVE")
+        op.prop_name = "og_sync_phase"; op.delta = -0.1; op.val_min = 0.0
+        row.label(text=f"{phase:.2f}")
+        op = row.operator("og.nudge_float_prop", text="+0.1", icon="ADD")
+        op.prop_name = "og_sync_phase"; op.delta = 0.1; op.val_max = 0.9
+
+        # Ease out
+        row = col.row(align=True)
+        row.label(text="Ease Out:")
+        ease_out = float(sel.get("og_sync_ease_out", 0.15))
+        op = row.operator("og.nudge_float_prop", text="-0.05", icon="REMOVE")
+        op.prop_name = "og_sync_ease_out"; op.delta = -0.05; op.val_min = 0.0
+        row.label(text=f"{ease_out:.2f}")
+        op = row.operator("og.nudge_float_prop", text="+0.05", icon="ADD")
+        op.prop_name = "og_sync_ease_out"; op.delta = 0.05; op.val_max = 0.5
+
+        # Ease in
+        row = col.row(align=True)
+        row.label(text="Ease In:")
+        ease_in = float(sel.get("og_sync_ease_in", 0.15))
+        op = row.operator("og.nudge_float_prop", text="-0.05", icon="REMOVE")
+        op.prop_name = "og_sync_ease_in"; op.delta = -0.05; op.val_min = 0.0
+        row.label(text=f"{ease_in:.2f}")
+        op = row.operator("og.nudge_float_prop", text="+0.05", icon="ADD")
+        op.prop_name = "og_sync_ease_in"; op.delta = 0.05; op.val_max = 0.5
+
+        # Wrap phase toggle
+        wrap = bool(sel.get("og_sync_wrap", 0))
+        row = box.row()
+        icon = "CHECKBOX_HLT" if wrap else "CHECKBOX_DEHLT"
+        label = "Loop (wrap-phase) ✓" if wrap else "Loop (wrap-phase)"
+        row.operator("og.toggle_platform_wrap", text=label, icon=icon)
+
+        box.operator("og.set_platform_defaults", text="Reset to Defaults", icon="LOOP_BACK")
+
+        if wp_count >= 2:
+            box.label(text="Tip: phase staggers multiple platforms", icon="INFO")
+
+    # ── plat-button path info ─────────────────────────────────────────────────
+    if einfo.get("needs_path") and not einfo.get("needs_sync"):
+        box = layout.box()
+        box.label(text="Path (Button Travel)", icon="ANIM")
+        wp_prefix = sel.name + "_wp_"
+        wp_count  = sum(1 for o in bpy.data.objects
+                        if o.name.startswith(wp_prefix) and o.type == "EMPTY")
+        if wp_count < 2:
+            box.label(text="⚠ Needs ≥2 waypoints (start + end)", icon="ERROR")
+        else:
+            box.label(text=f"✓ {wp_count} waypoints", icon="CHECKMARK")
+        box.label(text="Use Waypoints panel to add points ↓", icon="INFO")
+
+    # ── notice-dist (plat-eco) ────────────────────────────────────────────────
+    if einfo.get("needs_notice_dist"):
+        box = layout.box()
+        box.label(text="Eco Notice Distance", icon="RADIOBUT_ON")
+        notice = float(sel.get("og_notice_dist", -1.0))
+        row = box.row(align=True)
+        op = row.operator("og.nudge_float_prop", text="-5m", icon="REMOVE")
+        op.prop_name = "og_notice_dist"; op.delta = -5.0; op.val_min = 0.0
+        if notice < 0:
+            row.label(text="∞ (always active)")
+        else:
+            row.label(text=f"{notice:.0f}m")
+        op = row.operator("og.nudge_float_prop", text="+5m", icon="ADD")
+        op.prop_name = "og_notice_dist"; op.delta = 5.0; op.val_max = 500.0
+        toggle_row = box.row()
+        if notice < 0:
+            toggle_row.label(text="Moves without eco — click +5m to set range", icon="INFO")
+        else:
+            op = toggle_row.operator("og.nudge_float_prop", text="Set Always Active", icon="RADIOBUT_ON")
+            op.prop_name = "og_notice_dist"; op.delta = -999.0; op.val_min = -1.0
+
+
+class OG_PT_Platforms(Panel):
+    bl_label       = "🟦  Platforms"
+    bl_idname      = "OG_PT_platforms"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
     bl_category    = "OpenGOAL"
     bl_options     = {"DEFAULT_CLOSED"}
 
-    @classmethod
-    def poll(cls, ctx):
-        sel = ctx.active_object
-        if not sel or not sel.name.startswith("ACTOR_") or "_wp_" in sel.name:
-            return False
-        parts = sel.name.split("_", 2)
-        if len(parts) < 3:
-            return False
-        return _actor_is_platform(parts[1])
-
     def draw(self, ctx):
         layout = self.layout
-        sel    = ctx.active_object
-        etype  = sel.name.split("_", 2)[1]
-        einfo  = ENTITY_DEFS.get(etype, {})
+        props  = ctx.scene.og_props
+        scene  = ctx.scene
 
-        layout.label(text=einfo.get("label", etype), icon="CUBE")
+        # ── Spawn section (always visible) ───────────────────────────────────
+        layout.label(text="Spawn", icon="ADD")
+        layout.prop(props, "platform_type", text="")
+        layout.operator("og.spawn_platform", text="Add Platform at Cursor", icon="ADD")
 
-        # ── Sync controls (plat, plat-eco, side-to-side-plat) ────────────────
-        if einfo.get("needs_sync"):
+        layout.separator(factor=0.5)
+
+        # ── Active platform settings (only when a platform actor is selected) ─
+        sel = ctx.active_object
+        is_platform_selected = (
+            sel is not None
+            and sel.name.startswith("ACTOR_")
+            and "_wp_" not in sel.name
+            and len(sel.name.split("_", 2)) >= 3
+            and _actor_is_platform(sel.name.split("_", 2)[1])
+        )
+
+        if is_platform_selected:
+            layout.separator(factor=0.2)
+            layout.label(text="Selected Platform Settings", icon="SETTINGS")
+            _draw_platform_settings(layout, sel)
+            layout.separator(factor=0.5)
+
+        # ── Scene platform list (collapsible) ────────────────────────────────
+        plats = sorted(
+            [o for o in scene.objects
+             if o.name.startswith("ACTOR_")
+             and "_wp_" not in o.name
+             and o.type == "EMPTY"
+             and len(o.name.split("_", 2)) >= 3
+             and _actor_is_platform(o.name.split("_", 2)[1])],
+            key=lambda o: o.name
+        )
+
+        if not plats:
             box = layout.box()
-            box.label(text="Sync (Path Timing)", icon="TIME")
+            box.label(text="No platforms in scene", icon="INFO")
+            return
 
-            # Count waypoints to show movement status
-            wp_prefix = sel.name + "_wp_"
-            wp_count = sum(1 for o in bpy.data.objects
-                           if o.name.startswith(wp_prefix) and o.type == "EMPTY")
+        row = layout.row()
+        icon = "TRIA_DOWN" if props.show_platform_list else "TRIA_RIGHT"
+        row.prop(props, "show_platform_list",
+                 text=f"Platforms ({len(plats)})", icon=icon, emboss=False)
 
-            if wp_count < 2:
-                box.label(text=f"⚠ Add ≥2 waypoints to enable movement", icon="INFO")
+        if not props.show_platform_list:
+            return
+
+        box = layout.box()
+        for p in plats:
+            etype = p.name.split("_", 2)[1]
+            einfo = ENTITY_DEFS.get(etype, {})
+            label = einfo.get("label", etype)
+            is_active = (sel is not None and sel == p)
+
+            row = box.row(align=True)
+            if is_active:
+                row.alert = False
+                row.label(text=f"▶ {label}", icon="CUBE")
             else:
-                box.label(text=f"✓ {wp_count} waypoints — platform will move", icon="CHECKMARK")
+                row.label(text=label, icon="CUBE")
+            row.label(text=p.name.split("_", 2)[2])  # uid portion
 
-            col = box.column(align=True)
-
-            # Period
-            row = col.row(align=True)
-            row.label(text="Period (s):")
-            period = float(sel.get("og_sync_period", 4.0))
-            op_m = row.operator("og.nudge_float_prop", text="-0.5", icon="REMOVE")
-            op_m.prop_name = "og_sync_period"; op_m.delta = -0.5; op_m.val_min = 0.5
-            row.label(text=f"{period:.1f}s")
-            op_p = row.operator("og.nudge_float_prop", text="+0.5", icon="ADD")
-            op_p.prop_name = "og_sync_period"; op_p.delta = 0.5; op_p.val_max = 300.0
-
-            # Phase
-            row2 = col.row(align=True)
-            row2.label(text="Phase (0–1):")
-            phase = float(sel.get("og_sync_phase", 0.0))
-            op_m2 = row2.operator("og.nudge_float_prop", text="-0.1", icon="REMOVE")
-            op_m2.prop_name = "og_sync_phase"; op_m2.delta = -0.1; op_m2.val_min = 0.0
-            row2.label(text=f"{phase:.2f}")
-            op_p2 = row2.operator("og.nudge_float_prop", text="+0.1", icon="ADD")
-            op_p2.prop_name = "og_sync_phase"; op_p2.delta = 0.1; op_p2.val_max = 0.9
-
-            # Ease out / Ease in
-            row3 = col.row(align=True)
-            row3.label(text="Ease Out:")
-            ease_out = float(sel.get("og_sync_ease_out", 0.15))
-            op_mo = row3.operator("og.nudge_float_prop", text="-0.05", icon="REMOVE")
-            op_mo.prop_name = "og_sync_ease_out"; op_mo.delta = -0.05; op_mo.val_min = 0.0
-            row3.label(text=f"{ease_out:.2f}")
-            op_po = row3.operator("og.nudge_float_prop", text="+0.05", icon="ADD")
-            op_po.prop_name = "og_sync_ease_out"; op_po.delta = 0.05; op_po.val_max = 0.5
-
-            row4 = col.row(align=True)
-            row4.label(text="Ease In:")
-            ease_in = float(sel.get("og_sync_ease_in", 0.15))
-            op_mi = row4.operator("og.nudge_float_prop", text="-0.05", icon="REMOVE")
-            op_mi.prop_name = "og_sync_ease_in"; op_mi.delta = -0.05; op_mi.val_min = 0.0
-            row4.label(text=f"{ease_in:.2f}")
-            op_pi = row4.operator("og.nudge_float_prop", text="+0.05", icon="ADD")
-            op_pi.prop_name = "og_sync_ease_in"; op_pi.delta = 0.05; op_pi.val_max = 0.5
-
-            # Wrap phase toggle
-            wrap = bool(sel.get("og_sync_wrap", 0))
-            row5 = box.row()
-            icon5 = "CHECKBOX_HLT" if wrap else "CHECKBOX_DEHLT"
-            op_w = row5.operator("og.toggle_platform_wrap", text="Loop (wrap-phase)" if not wrap else "Loop (wrap-phase) ✓", icon=icon5)
-
-            box.operator("og.set_platform_defaults", text="Reset to Defaults", icon="LOOP_BACK")
-
-            # Helpful hint about phase staggering
-            if wp_count >= 2:
-                box.label(text="Tip: phase staggers multiple platforms", icon="INFO")
-
-        # ── plat-button path info ─────────────────────────────────────────────
-        if einfo.get("needs_path") and not einfo.get("needs_sync"):
-            box2 = layout.box()
-            box2.label(text="Path (Button Travel)", icon="ANIM")
-            wp_prefix2 = sel.name + "_wp_"
-            wp_count2 = sum(1 for o in bpy.data.objects
-                            if o.name.startswith(wp_prefix2) and o.type == "EMPTY")
-            if wp_count2 < 2:
-                box2.label(text="⚠ Needs ≥2 waypoints (start + end)", icon="ERROR")
-            else:
-                box2.label(text=f"✓ {wp_count2} waypoints", icon="CHECKMARK")
-            box2.label(text="Use Waypoints panel to add points ↓", icon="INFO")
-
-        # ── notice-dist (plat-eco) ────────────────────────────────────────────
-        if einfo.get("needs_notice_dist"):
-            box3 = layout.box()
-            box3.label(text="Eco Notice Distance", icon="RADIOBUT_ON")
-            notice = float(sel.get("og_notice_dist", -1.0))
-            row_n = box3.row(align=True)
-            # -5m: if currently always-active (-1), jump to 0 (disable always-active)
-            op_nm = row_n.operator("og.nudge_float_prop", text="-5m", icon="REMOVE")
-            op_nm.prop_name = "og_notice_dist"; op_nm.delta = -5.0; op_nm.val_min = 0.0
-            if notice < 0:
-                row_n.label(text="∞ (always active)")
-            else:
-                row_n.label(text=f"{notice:.0f}m")
-            op_np = row_n.operator("og.nudge_float_prop", text="+5m", icon="ADD")
-            op_np.prop_name = "og_notice_dist"; op_np.delta = 5.0; op_np.val_max = 500.0
-            # Toggle always-active
-            toggle_row = box3.row()
-            if notice < 0:
-                toggle_row.label(text="Moves without eco — click +5m to set range", icon="INFO")
-            else:
-                op_always = toggle_row.operator("og.nudge_float_prop", text="Set Always Active", icon="RADIOBUT_ON")
-                op_always.prop_name = "og_notice_dist"; op_always.delta = -999.0; op_always.val_min = -1.0
-
-
-class OG_OT_TogglePlatformWrap(Operator):
-    """Toggle wrap-phase (loop vs ping-pong) on selected platform"""
-    bl_idname = "og.toggle_platform_wrap"
-    bl_label  = "Toggle Wrap Phase"
-
-    def execute(self, ctx):
-        o = ctx.active_object
-        if not o:
-            return {"CANCELLED"}
-        current = bool(o.get("og_sync_wrap", 0))
-        o["og_sync_wrap"] = 0 if current else 1
-        return {"FINISHED"}
+            # Frame/select button — selecting naturally triggers settings above
+            op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+            op.obj_name = p.name
+            op = row.operator("og.delete_object", text="", icon="TRASH")
+            op.obj_name = p.name
 
 
 class OG_PT_NavMesh(Panel):
@@ -5013,6 +6096,81 @@ class OG_PT_BuildPlay(Panel):
 
 # ── Developer Tools ───────────────────────────────────────────────────────────
 
+class OG_OT_ReloadAddon(Operator):
+    """Hot-reload the OpenGOAL addon from disk — clears all Python module caches.
+    Use this after updating the .py file instead of restarting Blender."""
+    bl_idname = "og.reload_addon"
+    bl_label  = "Reload Addon"
+    bl_description = "Reload the OpenGOAL addon from disk without restarting Blender"
+
+    def execute(self, ctx):
+        import importlib, sys
+        # Find our module name in sys.modules
+        mod_name = None
+        for name, mod in list(sys.modules.items()):
+            if hasattr(mod, "__file__") and mod.__file__ and "opengoal_tools" in mod.__file__:
+                mod_name = name
+                break
+        if mod_name is None:
+            self.report({"ERROR"}, "Could not find opengoal_tools in sys.modules")
+            return {"CANCELLED"}
+        try:
+            # Unregister current version
+            unregister()
+            # Force reload from disk — bypasses all caches
+            mod = sys.modules[mod_name]
+            importlib.reload(mod)
+            # Re-register the freshly loaded version
+            mod.register()
+            self.report({"INFO"}, f"Reloaded {mod_name} from disk ✓")
+        except Exception as e:
+            self.report({"ERROR"}, f"Reload failed: {e}")
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class OG_OT_CleanLevelFiles(Operator):
+    """Delete generated files for the current level so the next build writes them fresh.
+    Removes: obs.gc, .jsonc, .glb, .gd — forces a clean compile without stale cached data."""
+    bl_idname = "og.clean_level_files"
+    bl_label  = "Clean Level Files"
+    bl_description = "Delete generated level files to force a clean rebuild (obs.gc, jsonc, glb, gd)"
+
+    def execute(self, ctx):
+        name = ctx.scene.og_props.level_name.strip().lower().replace(" ", "-")
+        if not name:
+            self.report({"ERROR"}, "No level name set")
+            return {"CANCELLED"}
+
+        deleted = []
+        skipped = []
+
+        # goal_src obs.gc — the one that causes stale compile errors
+        obs_gc = _goal_src() / "levels" / name / f"{name}-obs.gc"
+        # custom_assets files
+        assets = _ldir(name)
+        targets = [
+            obs_gc,
+            assets / f"{name}.jsonc",
+            assets / f"{name}.glb",
+            assets / f"{_nick(name)}.gd",
+        ]
+
+        for p in targets:
+            if p.exists():
+                p.unlink()
+                deleted.append(p.name)
+            else:
+                skipped.append(p.name)
+
+        if deleted:
+            self.report({"INFO"}, f"Deleted: {', '.join(deleted)}" +
+                        (f"  (not found: {', '.join(skipped)})" if skipped else ""))
+        else:
+            self.report({"WARNING"}, f"Nothing to delete — files not found for '{name}'")
+        return {"FINISHED"}
+
+
 class OG_PT_DevTools(Panel):
     bl_label       = "🔧  Developer Tools"
     bl_idname      = "OG_PT_dev_tools"
@@ -5023,6 +6181,13 @@ class OG_PT_DevTools(Panel):
 
     def draw(self, ctx):
         layout = self.layout
+
+        # ── Reload / Clean ───────────────────────────────────────────────────
+        row = layout.row(align=True)
+        row.scale_y = 1.4
+        row.operator("og.reload_addon",       text="🔄  Reload Addon", icon="FILE_REFRESH")
+        row.operator("og.clean_level_files",  text="🗑  Clean Files",  icon="TRASH")
+        layout.separator(factor=0.5)
 
         # Paths
         layout.label(text="Paths", icon="PREFERENCES")
@@ -5405,11 +6570,17 @@ class OG_PT_LevelManager(Panel):
 
 classes = (
     OGPreferences, OGProperties,
-    OG_OT_SpawnPlayer, OG_OT_SpawnEntity,
-    OG_OT_SpawnCamera, OG_OT_SpawnCamVolume, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
+    OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
+    OG_OT_SpawnPlayer, OG_OT_SpawnCheckpoint, OG_OT_SpawnCamAnchor,
+    OG_OT_SpawnVolume, OG_OT_SpawnVolumeAutoLink, OG_OT_LinkVolume, OG_OT_UnlinkVolume, OG_OT_CleanOrphanedLinks,
+    OG_OT_SelectAndFrame, OG_OT_DeleteObject,
+    OG_OT_SpawnEntity,
+    OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
     OG_OT_SpawnCamLookAt,
-    OG_OT_LinkCamVolume, OG_OT_UnlinkCamVolume,
+    # OG_OT_LinkCamVolume, OG_OT_UnlinkCamVolume — replaced by generic OG_OT_LinkVolume
     OG_OT_SetCamProp, OG_OT_NudgeCamFloat,
+    OG_OT_NudgeFloatProp,
+    OG_OT_TogglePlatformWrap, OG_OT_SetPlatformDefaults, OG_OT_SpawnPlatform,
     OG_OT_AddWaypoint, OG_OT_DeleteWaypoint,
     OG_OT_MarkNavMesh, OG_OT_UnmarkNavMesh,
     OG_OT_LinkNavMesh, OG_OT_UnlinkNavMesh,
@@ -5427,10 +6598,8 @@ classes = (
     OG_PT_Scene,
     OG_PT_PlaceObjects,
     OG_PT_Waypoints,
-    OG_PT_Platform,
-    OG_OT_SetPlatformDefaults,
-    OG_OT_TogglePlatformWrap,
-    OG_OT_NudgeFloatProp,
+    OG_PT_Platforms,
+    OG_PT_Triggers,
     OG_PT_Camera,
     OG_PT_NavMesh,
     OG_PT_BuildPlay,
