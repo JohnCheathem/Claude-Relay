@@ -11,8 +11,9 @@ bl_info = {
 import bpy, os, re, json, socket, subprocess, threading, time, math, mathutils
 from pathlib import Path
 from bpy.props import (StringProperty, BoolProperty, IntProperty,
-                       EnumProperty, PointerProperty, FloatProperty)
-from bpy.types import Panel, Operator, PropertyGroup, AddonPreferences
+                       EnumProperty, PointerProperty, FloatProperty,
+                       CollectionProperty)
+from bpy.types import Panel, Operator, PropertyGroup, AddonPreferences, UIList
 
 # ---------------------------------------------------------------------------
 # PAT ENUMS
@@ -823,8 +824,8 @@ def _active_level_col(scene):
 
 
 def _col_is_no_export(col):
-    """Check if a collection is marked as no-export (Reference)."""
-    return bool(col.get("og_no_export", False))
+    """Check if a collection is marked as no-export."""
+    return bool(getattr(col, "og_no_export", False))
 
 
 def _recursive_col_objects(col, exclude_no_export=True):
@@ -2599,6 +2600,27 @@ ALL_SFX_ITEMS = [
 # SCENE PROPERTIES
 # ---------------------------------------------------------------------------
 
+class OGCollectionItem(PropertyGroup):
+    """Single item in the Collection Properties UIList."""
+    name: StringProperty(name="Name")
+
+
+class OG_UL_CollectionList(UIList):
+    """Native Blender UIList for displaying level sub-collections."""
+    bl_idname = "OG_UL_collection_list"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index):
+        col = bpy.data.collections.get(item.name)
+        if col is None:
+            layout.label(text=item.name, icon="ERROR")
+            return
+        is_excluded = _col_is_no_export(col)
+        if is_excluded:
+            layout.label(text=item.name, icon="CANCEL")
+        else:
+            layout.label(text=item.name, icon="OUTLINER_COLLECTION")
+
+
 class OGProperties(PropertyGroup):
     # Collection-based level selection
     active_level:   EnumProperty(name="Active Level", items=_active_level_items,
@@ -2646,10 +2668,10 @@ class OGProperties(PropertyGroup):
     show_spawn_list:        BoolProperty(name="Show Spawn List",        default=True)
     show_checkpoint_list:   BoolProperty(name="Show Checkpoint List",   default=True)
     show_platform_list:     BoolProperty(name="Show Platform List",     default=True)
-    # Collection Properties panel — which sub-collection is selected
+    # Collection Properties UIList
+    col_list:               CollectionProperty(type=OGCollectionItem)
+    col_list_index:         IntProperty(name="Active Collection Index", default=0)
     selected_collection:    StringProperty(name="Selected Collection", default="")
-    collection_search:      StringProperty(name="Search Collection", default="",
-                                           description="Search for a sub-collection in the active level")
 
 # ---------------------------------------------------------------------------
 # PROCESS MANAGEMENT
@@ -3965,6 +3987,37 @@ class OG_OT_RemoveCollectionFromLevel(Operator):
         # Re-link to scene root so it doesn't vanish
         ctx.scene.collection.children.link(col)
         self.report({"INFO"}, f"Removed '{self.col_name}' from level")
+        return {"FINISHED"}
+
+
+class OG_OT_RemoveCollectionFromLevelActive(Operator):
+    """Remove the selected collection from the active level."""
+    bl_idname   = "og.remove_collection_from_level_active"
+    bl_label    = "Remove Selected Collection"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    def execute(self, ctx):
+        props = ctx.scene.og_props
+        level_col = _active_level_col(ctx.scene)
+        if level_col is None:
+            self.report({"ERROR"}, "No active level"); return {"CANCELLED"}
+        if not props.col_list or props.col_list_index >= len(props.col_list):
+            self.report({"ERROR"}, "No collection selected"); return {"CANCELLED"}
+        col_name = props.col_list[props.col_list_index].name
+        col = None
+        for c in level_col.children:
+            if c.name == col_name:
+                col = c
+                break
+        if col is None:
+            self.report({"ERROR"}, f"'{col_name}' not found"); return {"CANCELLED"}
+        level_col.children.unlink(col)
+        ctx.scene.collection.children.link(col)
+        # Remove from UIList
+        props.col_list.remove(props.col_list_index)
+        if props.col_list_index >= len(props.col_list):
+            props.col_list_index = max(0, len(props.col_list) - 1)
+        self.report({"INFO"}, f"Removed '{col_name}' from level")
         return {"FINISHED"}
 
 
@@ -6072,6 +6125,28 @@ class OG_PT_LevelManagerSub(Panel):
         row.operator("og.assign_collection_as_level", text="Assign Existing", icon="OUTLINER_COLLECTION")
 
 
+def _sync_col_list(props, level_col):
+    """Sync the UIList CollectionProperty with the level's actual children."""
+    children = sorted(level_col.children, key=lambda c: c.name)
+    child_names = [c.name for c in children]
+
+    # Remove items not in children
+    for i in range(len(props.col_list) - 1, -1, -1):
+        if props.col_list[i].name not in child_names:
+            props.col_list.remove(i)
+
+    # Add missing children
+    existing = {item.name for item in props.col_list}
+    for name in child_names:
+        if name not in existing:
+            item = props.col_list.add()
+            item.name = name
+
+    # Clamp index
+    if props.col_list_index >= len(props.col_list):
+        props.col_list_index = max(0, len(props.col_list) - 1)
+
+
 class OG_PT_CollectionProperties(Panel):
     bl_label       = "📂  Collection Properties"
     bl_idname      = "OG_PT_collection_props"
@@ -6093,51 +6168,25 @@ class OG_PT_CollectionProperties(Panel):
         if level_col is None:
             return
 
-        children = sorted(level_col.children, key=lambda c: c.name)
-        sel_name = props.selected_collection
+        # Sync list with actual children
+        _sync_col_list(props, level_col)
 
-        # ── List box ─────────────────────────────────────────────────────
-        box = layout.box()
-        if not children:
-            box.label(text="No collections", icon="INFO")
-        else:
-            for col in children:
-                is_selected = (col.name == sel_name)
-                is_excluded = _col_is_no_export(col)
+        # ── Native UIList ────────────────────────────────────────────────
+        row = layout.row()
+        row.template_list("OG_UL_collection_list", "", props, "col_list",
+                          props, "col_list_index", rows=3)
 
-                row = box.row(align=True)
-                row.active = is_selected
+        # ── Add / Remove buttons ─────────────────────────────────────────
+        col = row.column(align=True)
+        col.operator("og.add_collection_to_level", text="", icon="ADD")
+        col.operator("og.remove_collection_from_level_active", text="", icon="REMOVE")
 
-                # Clicking selects this item
-                icon = "OUTLINER_COLLECTION" if not is_excluded else "CANCEL"
-                op = row.operator("og.select_level_collection", text=col.name,
-                                  icon=icon, depress=is_selected)
-                op.col_name = col.name
-
-                # Remove button
-                op = row.operator("og.remove_collection_from_level", text="", icon="X")
-                op.col_name = col.name
-
-        # ── Add Collection button (search scoped to level children) ──────
-        layout.operator("og.add_collection_to_level", text="Add Collection", icon="ADD")
-
-        # ── Settings for selected collection ─────────────────────────────
-        if sel_name:
-            sel_col = None
-            for c in children:
-                if c.name == sel_name:
-                    sel_col = c
-                    break
+        # ── Settings for selected item ───────────────────────────────────
+        if props.col_list and 0 <= props.col_list_index < len(props.col_list):
+            sel_name = props.col_list[props.col_list_index].name
+            sel_col = bpy.data.collections.get(sel_name)
             if sel_col:
-                layout.separator(factor=0.4)
-                settings_box = layout.box()
-                settings_box.label(text=sel_col.name, icon="OUTLINER_COLLECTION")
-                is_excluded = _col_is_no_export(sel_col)
-                row = settings_box.row()
-                op = row.operator("og.toggle_collection_no_export", text="Exclude from Export",
-                                  icon="CHECKBOX_HLT" if is_excluded else "CHECKBOX_DEHLT",
-                                  depress=is_excluded)
-                op.col_name = sel_col.name
+                layout.prop(sel_col, "og_no_export")
 
 
 # ---------------------------------------------------------------------------
@@ -7680,7 +7729,8 @@ class OG_OT_RefreshLevels(Operator):
 # ---------------------------------------------------------------------------
 
 classes = (
-    OGPreferences, OGProperties,
+    OGPreferences, OGCollectionItem, OGProperties,
+    OG_UL_CollectionList,
     OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
     OG_OT_SpawnPlayer, OG_OT_SpawnCheckpoint, OG_OT_SpawnCamAnchor,
     OG_OT_SpawnVolume, OG_OT_SpawnVolumeAutoLink, OG_OT_LinkVolume, OG_OT_UnlinkVolume, OG_OT_CleanOrphanedLinks,
@@ -7708,6 +7758,7 @@ classes = (
     OG_OT_SetActiveLevel, OG_OT_NudgeLevelProp,
     OG_OT_DeleteLevel,
     OG_OT_AddCollectionToLevel, OG_OT_RemoveCollectionFromLevel,
+    OG_OT_RemoveCollectionFromLevelActive,
     OG_OT_ToggleCollectionNoExport, OG_OT_SelectLevelCollection,
     OG_OT_EditLevel,
     # ── Panels ──────────────────────────────────────────────────────────
@@ -7768,6 +7819,11 @@ def register():
     bpy.types.Object.collide_event         = bpy.props.EnumProperty(items=pat_events,   name="Event")
     bpy.types.Object.collide_mode          = bpy.props.EnumProperty(items=pat_modes,    name="Mode")
 
+    bpy.types.Collection.og_no_export      = bpy.props.BoolProperty(
+        name="Exclude from Export",
+        description="When enabled, this collection and its contents are excluded from level export",
+        default=False)
+
 def unregister():
     _unload_previews()
     bpy.types.MATERIAL_PT_custom_props.remove(_draw_mat)
@@ -7784,6 +7840,8 @@ def unregister():
               "enable_custom_weights","copy_eye_draws","copy_mod_draws"):
         try: delattr(bpy.types.Object, a)
         except Exception: pass
+    try: delattr(bpy.types.Collection, "og_no_export")
+    except Exception: pass
 
 if __name__ == "__main__":
     register()
