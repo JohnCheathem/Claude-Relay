@@ -228,3 +228,34 @@ to match what GOALC reports. Struct size #xbc (188) is verified correct.
 - [ ] Die → verify respawn at checkpoint, not at start spawn
 - [ ] Walk into checkpoint a second time → verify it doesn't re-trigger
 - [ ] Verify start spawn still works as fallback if no checkpoint reached
+
+---
+
+## CRITICAL DEV NOTE — str_replace class header eating
+
+**Bug pattern (happened 4 times):** When inserting a new class before an existing one,
+using `class OG_PT_DevTools(Panel):` (or any class header) as the LAST line of `old_str`,
+then forgetting to include it in `new_str`. This silently drops the header, causing
+`name 'OG_PT_DevTools' is not defined` at Blender addon load time.
+
+**Rule going forward:**
+- NEVER use a class header as the boundary/anchor of a str_replace
+- When inserting before a class, anchor on content INSIDE the preceding class
+  (e.g. the `return {"FINISHED"}` line + blank lines before the next class)
+- Always include the preserved class header in BOTH old_str AND new_str
+- Run the integrity check script after EVERY edit before committing
+
+**Integrity check (run after every edit):**
+```python
+import ast, re
+src = open('addons/opengoal_tools.py').read()
+tree = ast.parse(src)
+top = {n.name: n.lineno for n in tree.body if isinstance(n, ast.ClassDef)}
+classes_tuple = next(n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'classes' for t in n.targets))
+tuple_names = [n.id for n in ast.walk(classes_tuple.value) if isinstance(n, ast.Name)]
+nested = [f'{c.name} inside {p.name}' for p in tree.body if isinstance(p, ast.ClassDef) for c in ast.walk(p) if c is not p and isinstance(c, ast.ClassDef)]
+missing = [n for n in tuple_names if n not in top]
+assert not missing, f'UNDEFINED IN TUPLE: {missing}'
+assert not nested, f'NESTED CLASSES: {nested}'
+print(f'OK — {len(top)} classes')
+```
