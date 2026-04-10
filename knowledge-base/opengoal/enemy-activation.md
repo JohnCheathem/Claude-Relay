@@ -283,6 +283,14 @@ exported solid geometry (not just navmesh — they're separate). Repeated
 warnings with decreasing Y values mean the entity is falling through the void
 under gravity.
 
+**If the geometry visually appears to be there but the warning still fires**,
+the user's jak-project build may be missing upstream commit
+[`e2f14f4`](https://github.com/open-goal/jak-project/commit/e2f14f459dfb2ab62c439925beb120f4d1b16af2)
+(`build_level` BVH wrapper fix — silently drops face-containing nodes when
+they sit alongside non-face-containing siblings in the collision BVH tree).
+See `upstream-fixes-to-watch.md` for the full backport notes. Quick check:
+if their jak-project commit is older than April 2026, they probably need this.
+
 ### `run-logic?` gating on nav-enemies
 
 Nav-enemies have a `run-logic?` override (`nav-enemy.gc:472`) that gates
