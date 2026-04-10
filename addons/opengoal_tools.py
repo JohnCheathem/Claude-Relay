@@ -3537,6 +3537,20 @@ def collect_actors(scene):
         if is_enemy and "vis-dist" not in lump:
             lump["vis-dist"] = ["meters", 200.0]
 
+        # ── Entity links (alt-actor, water-actor, state-actor, etc.) ─────────
+        # Build string-array lumps from og_actor_links CollectionProperty.
+        # These are merged before custom lump rows so rows can override them.
+        link_lumps = _build_actor_link_lumps(o, etype)
+        for lkey, lval in link_lumps.items():
+            lump[lkey] = lval
+            names = lval[1:]  # strip "string" prefix
+            log(f"  [entity-link] {o.name}  '{lkey}' → {names}")
+
+        # Warn about required slots that are unset
+        for (lkey, sidx, label, _accepted, required) in _actor_link_slots(etype):
+            if required and not _actor_get_link(o, lkey, sidx):
+                log(f"  [WARNING] {o.name} required link '{lkey}[{sidx}]' ({label}) is not set — may crash at runtime!")
+
         # ── Custom lump rows (assisted panel) ────────────────────────────────
         # Merge OGLumpRow entries into the lump dict. Rows take priority over
         # hardcoded values above — any conflict logs a warning but the row wins.
@@ -5993,6 +6007,212 @@ def _lump_ref_for_etype(etype):
 
 
 # ===========================================================================
+# ACTOR ENTITY LINK SYSTEM
+# ---------------------------------------------------------------------------
+# Many actors reference other actors at runtime via entity-actor-lookup, which
+# reads a named lump key (e.g. "alt-actor", "water-actor", "state-actor") and
+# resolves it to an entity-actor pointer.
+#
+# The engine supports two formats for these references:
+#   - string array:  ["string", "orbit-plat-center-0"]   → entity-by-name
+#   - uint32 array:  ["uint32", <aid>]                    → entity-by-aid
+#
+# We use string format (entity name).  The level builder always assigns names
+# as "{etype}-{uid}", matching what collect_actors writes into lump["name"].
+#
+# ACTOR_LINK_DEFS maps etype → list of slot definitions:
+#   (lump_key, slot_index, label, accepted_etypes, required)
+#
+#   lump_key      — the res-lump key the engine reads (e.g. "alt-actor")
+#   slot_index    — 0-based index within that key's array
+#   label         — human-readable description shown in the panel
+#   accepted_etypes — list of valid target etype strings, or ["any"] for any ACTOR_
+#   required      — True = export warns if unset; False = optional
+#
+# At export, all slots for the same lump_key are collected in slot_index order
+# and written as a single string array lump.
+# ===========================================================================
+
+ACTOR_LINK_DEFS = {
+    # ── Enemies ──────────────────────────────────────────────────────────────
+    "cave-trap": [
+        ("alt-actor", 0, "Spider Egg 0",  ["spider-egg"], False),
+        ("alt-actor", 1, "Spider Egg 1",  ["spider-egg"], False),
+        ("alt-actor", 2, "Spider Egg 2",  ["spider-egg"], False),
+        ("alt-actor", 3, "Spider Egg 3",  ["spider-egg"], False),
+    ],
+    "spider-egg": [
+        ("alt-actor", 0, "Notify actor (messaged on hatch)", ["any"], False),
+    ],
+    "quicksandlurker": [
+        ("water-actor", 0, "Mud surface entity", ["any"], False),
+    ],
+    "balloonlurker": [
+        ("water-actor", 0, "Water surface entity", ["any"], False),
+    ],
+    "swamp-rat-nest": [
+        # No alt-actor — communicates via path + proximity
+    ],
+    "villa-starfish": [
+        # No alt-actor — path-driven
+    ],
+
+    # ── Platforms ─────────────────────────────────────────────────────────────
+    "orbit-plat": [
+        ("alt-actor", 0, "Center entity to orbit around", ["any"], True),
+    ],
+    "square-platform": [
+        ("alt-actor", 0, "Water entity (for splash effects)", ["water-vol"], False),
+    ],
+    "snow-log": [
+        ("alt-actor", 0, "Snow log master controller", ["any"], True),
+    ],
+    "snow-log-button": [
+        ("alt-actor", 0, "Snow log to activate", ["snow-log"], True),
+    ],
+    "ogre-bridge": [
+        ("alt-actor", 0, "Ogre bridge end piece", ["ogre-bridgeend"], True),
+    ],
+    "lavaballoon": [
+        # path-driven; no actor links
+    ],
+    "darkecobarrel": [
+        # path-driven; no actor links
+    ],
+
+    # ── Interactables / Doors ─────────────────────────────────────────────────
+    "eco-door": [
+        ("state-actor", 0, "Lock controller (door locked until this entity's task completes)", ["any"], False),
+    ],
+    "helix-water": [
+        ("alt-actor", 0, "Helix button 0",  ["helix-button"], True),
+        ("alt-actor", 1, "Helix button 1",  ["helix-button"], False),
+        ("alt-actor", 2, "Helix button 2",  ["helix-button"], False),
+        ("alt-actor", 3, "Helix button 3",  ["helix-button"], False),
+    ],
+    "helix-button": [
+        ("alt-actor", 0, "Helix water controller",  ["helix-water"],      True),
+        ("alt-actor", 1, "Helix slide door",         ["helix-slide-door"], True),
+    ],
+    "accordian": [
+        ("alt-actor", 0, "Task gate entity (optional)", ["any"], False),
+    ],
+    "swamp-tetherrock": [
+        ("alt-actor", 0, "Master blimp entity (optional)", ["swamp-blimp"], False),
+    ],
+
+    # ── Pickups / Eco ─────────────────────────────────────────────────────────
+    "ecovent": [
+        ("alt-actor", 0, "Blocker entity (vent blocked until this task completes)", ["any"], False),
+    ],
+    "ventblue": [
+        ("alt-actor", 0, "Blocker entity", ["any"], False),
+    ],
+    "ventred": [
+        ("alt-actor", 0, "Blocker entity", ["any"], False),
+    ],
+    "ventyellow": [
+        ("alt-actor", 0, "Blocker entity", ["any"], False),
+    ],
+
+    # ── NPCs ──────────────────────────────────────────────────────────────────
+    "minershort": [
+        ("alt-actor", 0, "Paired minertall (required)", ["minertall"], True),
+    ],
+}
+
+
+def _actor_link_slots(etype):
+    """Return the list of link slot defs for this etype, or []."""
+    return ACTOR_LINK_DEFS.get(etype, [])
+
+
+def _actor_has_links(etype):
+    """True if this etype has any defined entity link slots."""
+    return bool(_actor_link_slots(etype))
+
+
+def _actor_links(obj):
+    """Return the og_actor_links CollectionProperty on an actor empty."""
+    return getattr(obj, "og_actor_links", None)
+
+
+def _actor_get_link(obj, lump_key, slot_index):
+    """Return the OGActorLink entry for (lump_key, slot_index), or None."""
+    links = _actor_links(obj)
+    if not links:
+        return None
+    for entry in links:
+        if entry.lump_key == lump_key and entry.slot_index == slot_index:
+            return entry
+    return None
+
+
+def _actor_set_link(obj, lump_key, slot_index, target_name):
+    """Set or update a link entry. Creates if missing."""
+    links = _actor_links(obj)
+    if links is None:
+        return
+    for entry in links:
+        if entry.lump_key == lump_key and entry.slot_index == slot_index:
+            entry.target_name = target_name
+            return
+    entry = links.add()
+    entry.lump_key    = lump_key
+    entry.slot_index  = slot_index
+    entry.target_name = target_name
+
+
+def _actor_remove_link(obj, lump_key, slot_index):
+    """Remove a link entry. Returns True if found."""
+    links = _actor_links(obj)
+    if links is None:
+        return False
+    for i, entry in enumerate(links):
+        if entry.lump_key == lump_key and entry.slot_index == slot_index:
+            links.remove(i)
+            return True
+    return False
+
+
+def _build_actor_link_lumps(obj, etype):
+    """Build dict of lump_key → ["string", name0, name1, ...] for all set links.
+
+    Gaps in the index sequence are skipped (sparse arrays not supported by engine).
+    Returns a dict of lump entries to merge into the actor's lump dict at export.
+    """
+    slots = _actor_link_slots(etype)
+    if not slots:
+        return {}
+
+    # Group slots by lump_key, collect target names in slot_index order
+    from collections import defaultdict
+    by_key = defaultdict(dict)  # lump_key → {slot_index: target_name}
+    for (lkey, sidx, _label, _accepted, _required) in slots:
+        by_key[lkey]  # ensure key exists even if no links set
+
+    links = _actor_links(obj)
+    if links:
+        for entry in links:
+            if entry.target_name and entry.lump_key in by_key:
+                by_key[entry.lump_key][entry.slot_index] = entry.target_name
+
+    result = {}
+    for lkey, slot_map in by_key.items():
+        if not slot_map:
+            continue
+        # Build ordered list: slot 0, 1, 2... skipping missing
+        max_idx = max(slot_map.keys())
+        names = []
+        for i in range(max_idx + 1):
+            if i in slot_map:
+                names.append(slot_map[i])
+        if names:
+            result[lkey] = ["string"] + names
+    return result
+
+
+# ===========================================================================
 # LUMP ROW SYSTEM
 # ---------------------------------------------------------------------------
 # ACTOR_ empties can hold a CollectionProperty of OGLumpRow entries.
@@ -6241,6 +6461,29 @@ def _aggro_event_id(name):
         if n == name:
             return i
     return 0
+
+
+class OGActorLink(bpy.types.PropertyGroup):
+    """One entity link slot on an ACTOR_ empty.
+
+    Stored as og_actor_links CollectionProperty on the Object.
+    Each entry maps (lump_key, slot_index) → target_name.
+    At export these are serialised as  lump_key: ["string", name0, name1, ...]
+    """
+    lump_key:     bpy.props.StringProperty(
+        name="Lump Key",
+        description="The res-lump key this link writes to (e.g. alt-actor, water-actor)",
+    )
+    slot_index:   bpy.props.IntProperty(
+        name="Slot Index",
+        description="Index within the lump array (0 = first element)",
+        default=0,
+        min=0,
+    )
+    target_name:  bpy.props.StringProperty(
+        name="Target",
+        description="Name of the linked ACTOR_ empty",
+    )
 
 
 class OGVolLink(PropertyGroup):
@@ -6838,6 +7081,57 @@ class OG_OT_AddLinkFromSelection(Operator):
         entry.behaviour   = "cue-chase"
         _rename_vol_for_links(vol)
         self.report({"INFO"}, f"Linked {vol.name} → {self.target_name}")
+        return {"FINISHED"}
+
+
+class OG_OT_SetActorLink(Operator):
+    """Set an entity link slot on an ACTOR_ empty.
+
+    Called from the Actor Links panel when the user clicks 'Link →'.
+    source_name = the ACTOR_ empty being edited.
+    lump_key / slot_index = which slot to fill.
+    target_name = the ACTOR_ empty to link to.
+    """
+    bl_idname   = "og.set_actor_link"
+    bl_label    = "Set Actor Link"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    source_name:  bpy.props.StringProperty()
+    lump_key:     bpy.props.StringProperty()
+    slot_index:   bpy.props.IntProperty(default=0)
+    target_name:  bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        obj = ctx.scene.objects.get(self.source_name)
+        if not obj:
+            self.report({"ERROR"}, f"Source '{self.source_name}' not found")
+            return {"CANCELLED"}
+        target = ctx.scene.objects.get(self.target_name)
+        if not target:
+            self.report({"ERROR"}, f"Target '{self.target_name}' not found")
+            return {"CANCELLED"}
+        _actor_set_link(obj, self.lump_key, self.slot_index, self.target_name)
+        self.report({"INFO"}, f"Linked {self.source_name} [{self.lump_key}[{self.slot_index}]] → {self.target_name}")
+        return {"FINISHED"}
+
+
+class OG_OT_ClearActorLink(Operator):
+    """Remove an entity link slot from an ACTOR_ empty."""
+    bl_idname   = "og.clear_actor_link"
+    bl_label    = "Clear Actor Link"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    source_name: bpy.props.StringProperty()
+    lump_key:    bpy.props.StringProperty()
+    slot_index:  bpy.props.IntProperty(default=0)
+
+    def execute(self, ctx):
+        obj = ctx.scene.objects.get(self.source_name)
+        if not obj:
+            self.report({"ERROR"}, f"Source '{self.source_name}' not found")
+            return {"CANCELLED"}
+        _actor_remove_link(obj, self.lump_key, self.slot_index)
+        self.report({"INFO"}, f"Cleared {self.source_name} [{self.lump_key}[{self.slot_index}]]")
         return {"FINISHED"}
 
 
@@ -8738,6 +9032,131 @@ class OG_PT_ActorNavMesh(Panel):
         layout.label(text=f"Fallback sphere radius: {nav_r:.1f}m", icon="SPHERE")
 
 
+def _draw_actor_links(layout, obj, scene, etype):
+    """Draw the Actor Links panel for an ACTOR_ empty.
+
+    Shows each defined slot with:
+    - Current linked target (name + jump-to button) or 'Not set'
+    - A 'Link →' button when exactly one compatible ACTOR_ is shift-selected
+    - An X (clear) button when a link is set
+    """
+    slots = _actor_link_slots(etype)
+    if not slots:
+        layout.label(text="No entity link slots for this actor type.", icon="INFO")
+        return
+
+    # Gather the currently shift-selected ACTOR_ empties (excluding this one)
+    sel_actors = [
+        o for o in bpy.context.selected_objects
+        if o != obj
+        and o.type == "EMPTY"
+        and o.name.startswith("ACTOR_")
+        and "_wp_" not in o.name
+        and "_wpb_" not in o.name
+    ]
+
+    # Group slots by lump_key for display
+    seen_keys = []
+    for (lkey, sidx, label, accepted, required) in slots:
+        if lkey not in seen_keys:
+            seen_keys.append(lkey)
+
+    for lkey in seen_keys:
+        key_slots = [(sidx, lbl, acc, req) for (lk, sidx, lbl, acc, req) in slots if lk == lkey]
+
+        box = layout.box()
+        box.label(text=lkey, icon="LINKED")
+
+        for (sidx, label, accepted, required) in key_slots:
+            entry = _actor_get_link(obj, lkey, sidx)
+            current_name = entry.target_name if entry else ""
+            current_obj  = scene.objects.get(current_name) if current_name else None
+
+            row = box.row(align=True)
+
+            # Slot label
+            req_mark = " *" if required else ""
+            row.label(text=f"[{sidx}] {label}{req_mark}")
+
+            if current_obj:
+                # Linked — show name, jump-to, clear buttons
+                row2 = box.row(align=True)
+                row2.label(text=current_name, icon="CHECKMARK")
+                op = row2.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+                op.obj_name = current_name
+                op = row2.operator("og.clear_actor_link", text="", icon="X")
+                op.source_name = obj.name
+                op.lump_key    = lkey
+                op.slot_index  = sidx
+            elif current_name:
+                # Name stored but object missing from scene
+                row2 = box.row(align=True)
+                row2.alert = True
+                row2.label(text=f"⚠ missing: {current_name}", icon="ERROR")
+                op = row2.operator("og.clear_actor_link", text="", icon="X")
+                op.source_name = obj.name
+                op.lump_key    = lkey
+                op.slot_index  = sidx
+            else:
+                # Not set
+                row2 = box.row(align=True)
+                row2.enabled = False
+                req_text = "Required — not set" if required else "Optional — not set"
+                row2.label(text=req_text, icon="ERROR" if required else "DOT")
+
+            # Link button: visible when one compatible actor is shift-selected
+            compatible = [
+                o for o in sel_actors
+                if accepted == ["any"] or
+                   (len(o.name.split("_", 2)) >= 3 and o.name.split("_", 2)[1] in accepted)
+            ]
+            if len(compatible) == 1:
+                tgt = compatible[0]
+                op = box.operator("og.set_actor_link",
+                                  text=f"Link → {tgt.name}", icon="LINKED")
+                op.source_name = obj.name
+                op.lump_key    = lkey
+                op.slot_index  = sidx
+                op.target_name = tgt.name
+            elif len(sel_actors) > 0 and len(compatible) == 0:
+                hint = box.row()
+                hint.enabled = False
+                hint.label(text=f"Selected actor not valid for this slot", icon="INFO")
+                hint2 = box.row()
+                hint2.enabled = False
+                hint2.label(text=f"  Accepted: {', '.join(accepted)}")
+            else:
+                hint = box.row()
+                hint.enabled = False
+                hint.label(text="Shift-select target then click Link →", icon="INFO")
+
+
+class OG_PT_ActorLinks(Panel):
+    """Entity link slots — actor-to-actor references exported as alt-actor / water-actor etc."""
+    bl_label       = "Entity Links"
+    bl_idname      = "OG_PT_actor_links"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name:
+            return False
+        parts = sel.name.split("_", 2)
+        return (len(parts) >= 3
+                and parts[0] == "ACTOR"
+                and _actor_has_links(parts[1]))
+
+    def draw(self, ctx):
+        sel   = ctx.active_object
+        etype = sel.name.split("_", 2)[1]
+        _draw_actor_links(self.layout, sel, ctx.scene, etype)
+
+
 class OG_PT_ActorPlatform(Panel):
     bl_label       = "Platform Settings"
     bl_idname      = "OG_PT_actor_platform"
@@ -9907,6 +10326,7 @@ class OG_OT_RefreshLevels(Operator):
 
 classes = (
     OGLumpRow,
+    OGActorLink,
     OGVolLink,
     OGPreferences, OGProperties,
     OG_OT_AddLumpRow, OG_OT_RemoveLumpRow, OG_OT_UseLumpRef,
@@ -9915,6 +10335,7 @@ classes = (
     OG_OT_SpawnPlayer, OG_OT_SpawnCheckpoint, OG_OT_SpawnCamAnchor,
     OG_OT_SpawnVolume, OG_OT_SpawnVolumeAutoLink, OG_OT_LinkVolume, OG_OT_UnlinkVolume, OG_OT_CleanOrphanedLinks,
     OG_OT_RemoveVolLink, OG_OT_AddLinkFromSelection, OG_OT_SpawnAggroTrigger,
+    OG_OT_SetActorLink, OG_OT_ClearActorLink,
     OG_OT_SelectAndFrame, OG_OT_DeleteObject,
     OG_OT_SpawnEntity,
     OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
@@ -9972,6 +10393,7 @@ classes = (
     OG_PT_ActorActivation,
     OG_PT_ActorTriggerBehaviour,
     OG_PT_ActorNavMesh,
+    OG_PT_ActorLinks,
     OG_PT_ActorPlatform,
     OG_PT_ActorCrate,
     OG_PT_ActorWaypoints,
@@ -10027,6 +10449,10 @@ def register():
     # Each VOL_ mesh holds a list of (target_name, behaviour) entries.
     bpy.types.Object.og_vol_links          = bpy.props.CollectionProperty(type=OGVolLink)
 
+    # Actor entity links — registered after OGActorLink is in classes tuple.
+    # Each ACTOR_ empty holds a list of (lump_key, slot_index, target_name) entries.
+    bpy.types.Object.og_actor_links        = bpy.props.CollectionProperty(type=OGActorLink)
+
     # Custom lump rows — registered after OGLumpRow is in classes tuple.
     # Each ACTOR_ empty holds a list of (key, ltype, value) assisted lump entries.
     bpy.types.Object.og_lump_rows          = bpy.props.CollectionProperty(type=OGLumpRow)
@@ -10051,7 +10477,7 @@ def unregister():
     for a in ("set_invisible","set_collision","ignore","noedge","noentity",
               "nolineofsight","nocamera","collide_material","collide_event","collide_mode",
               "enable_custom_weights","copy_eye_draws","copy_mod_draws","og_vol_links",
-              "og_lump_rows","og_lump_rows_index"):
+              "og_actor_links","og_lump_rows","og_lump_rows_index"):
         try: delattr(bpy.types.Object, a)
         except Exception: pass
     try: delattr(bpy.types.Collection, "og_no_export")
