@@ -1046,8 +1046,9 @@ def _collect_navmesh_actors(scene):
     actor_aid = base_id + 1-based index in canonical actor order,
     matching exactly what collect_actors and the JSONC builder assign.
     """
-    base_id = scene.og_props.base_id
-    ordered = _canonical_actor_objects(scene)
+    base_id = int(_get_level_prop(scene, "og_base_id", 10000))
+    level_objs = _level_objects(scene)
+    ordered = _canonical_actor_objects(scene, objects=level_objs)
 
     result = []
     for idx, o in enumerate(ordered):
@@ -1110,14 +1111,16 @@ def collect_cameras(scene):
     camera_actors  -- camera-marker entities (hold position/rotation)
     trigger_actors -- camera-trigger entities (AABB polling, birth on level load)
     """
+    level_objs = _level_objects(scene)
+
     cam_objects = sorted(
-        [o for o in scene.objects
+        [o for o in level_objs
          if o.name.startswith("CAMERA_") and o.type == "CAMERA"],
         key=lambda o: o.name,
     )
 
     vol_by_cam = {}
-    for o in scene.objects:
+    for o in level_objs:
         if o.type == "MESH" and o.name.startswith("VOL_"):
             link = o.get("og_vol_link", "")
             if link:
@@ -2847,7 +2850,7 @@ def collect_spawns(scene):
     R_remap = mathutils.Matrix(((1,0,0),(0,0,1),(0,-1,0)))
 
     out = []
-    for o in sorted(scene.objects, key=lambda o: o.name):
+    for o in sorted(_level_objects(scene), key=lambda o: o.name):
         # BUG FIX: _CAM anchor empties share the SPAWN_/CHECKPOINT_ prefix.
         # Skip them here — they are not spawns/checkpoints themselves.
         if o.name.endswith("_CAM"):
@@ -2938,7 +2941,8 @@ def collect_actors(scene):
     real navmesh (future work).
     """
     out = []
-    for o in _canonical_actor_objects(scene):
+    level_objs = _level_objects(scene)
+    for o in _canonical_actor_objects(scene, objects=level_objs):
         p = o.name.split("_", 2)
         etype, uid = p[1], p[2]
         l = o.location
@@ -3105,17 +3109,17 @@ def collect_actors(scene):
     # Volume mode: if a CPVOL_ mesh is linked (og_cp_link = checkpoint name),
     # the actor uses AABB bounds instead of sphere radius. The GOAL code reads
     # a 'has-volume' lump (uint32 1) to choose AABB vs sphere.
-    level_name_for_cp = scene.og_props.level_name.strip().lower().replace(" ", "-")
+    level_name_for_cp = str(_get_level_prop(scene, "og_level_name", "")).strip().lower().replace(" ", "-")
 
     # Build cp_name → vol_obj map from linked CPVOL_ meshes
     vol_by_cp = {}
-    for o in scene.objects:
+    for o in level_objs:
         if o.type == "MESH" and o.name.startswith("VOL_"):
             link = o.get("og_vol_link", "")
             if link and link.startswith("CHECKPOINT_"):
                 vol_by_cp[link] = o
 
-    for o in sorted(scene.objects, key=lambda o: o.name):
+    for o in sorted(level_objs, key=lambda o: o.name):
         if not (o.name.startswith("CHECKPOINT_") and o.type == "EMPTY"):
             continue
         if o.name.endswith("_CAM"):
@@ -3177,7 +3181,7 @@ def collect_actors(scene):
 
 def collect_ambients(scene):
     out = []
-    for o in scene.objects:
+    for o in _level_objects(scene):
         if not (o.name.startswith("AMBIENT_") and o.type == "EMPTY"):
             continue
         l = o.location
@@ -3232,7 +3236,7 @@ def collect_nav_mesh_geometry(scene, level_name):
     engine-side support lands.
     """
     tris = []
-    for o in scene.objects:
+    for o in _level_objects(scene):
         if not (o.type == "MESH" and o.get("og_navmesh", False)):
             continue
         mesh = o.data
@@ -3406,22 +3410,21 @@ def patch_level_info(name, spawns, scene=None):
     if not p.exists(): log(f"WARNING: {p} not found"); return
     # Audio settings from scene props (if scene provided)
     if scene is not None:
-        props = scene.og_props
-        _bank = props.music_bank
+        _bank      = str(_get_level_prop(scene, "og_music_bank",    "none") or "none")
         _music_val = f"'{_bank}" if _bank and _bank != "none" else "#f"
-        _sb_list = [s for s in [props.sound_bank_1, props.sound_bank_2] if s and s != "none"]
-        _sbanks = " ".join(s for s in _sb_list)
+        _sb1       = str(_get_level_prop(scene, "og_sound_bank_1",  "none") or "none")
+        _sb2       = str(_get_level_prop(scene, "og_sound_bank_2",  "none") or "none")
+        _sb_list   = [s for s in [_sb1, _sb2] if s and s != "none"]
+        _sbanks    = " ".join(_sb_list)
         _sbanks_val = f"'({_sbanks})" if _sbanks else "'()"
-        # Level flow settings
-        _bot_h   = float(props.bottom_height)
-        _vis_ov  = props.vis_nick_override.strip()
-        _vnick   = _vis_ov if _vis_ov else _nick(name)
+        _bot_h     = float(_get_level_prop(scene, "og_bottom_height", -20.0))
+        _vis_ov    = str(_get_level_prop(scene, "og_vis_nick_override", "") or "").strip()
+        _vnick     = _vis_ov if _vis_ov else _nick(name)
     else:
         _music_val = "#f"
         _sbanks_val = "'()"
         _bot_h   = -20.0
         _vnick   = _nick(name)
-        props = None
 
     # ── Auto-compute bsphere from spawn positions ────────────────────────────
     # Centre = mean of all spawn XZ positions, Y = mean spawn Y + 2m.
@@ -3691,13 +3694,64 @@ def remove_level(name):
 
 def export_glb(ctx, name):
     d = _ldir(name); d.mkdir(parents=True, exist_ok=True)
-    bpy.ops.export_scene.gltf(
-        filepath=str(d / f"{name}.glb"), export_format="GLB",
-        export_vertex_color="ACTIVE", export_normals=True,
-        export_materials="EXPORT", export_texcoords=True,
-        export_apply=True, use_selection=False,
-        export_yup=True, export_skins=False, export_animations=False,
-        export_extras=True)
+
+    level_col = _active_level_col(ctx.scene)
+    if level_col is not None:
+        # Collection mode — export only objects inside the Geometry sub-collection,
+        # excluding anything under the Reference sub-collection (og_no_export=True).
+        # We select only those objects, export with use_selection=True, then restore.
+        geo_col = None
+        for c in level_col.children:
+            if c.name == "Geometry":
+                geo_col = c
+                break
+
+        # Gather exportable objects: meshes in Geometry (and its children) except Reference
+        if geo_col is not None:
+            export_objs = _recursive_col_objects(geo_col, exclude_no_export=True)
+            export_objs = [o for o in export_objs if o.type == "MESH"]
+        else:
+            # No Geometry sub-collection yet — fall back to all meshes in the level
+            export_objs = [o for o in _recursive_col_objects(level_col, exclude_no_export=True)
+                           if o.type == "MESH"]
+
+        # Save selection state
+        prev_active    = ctx.view_layer.objects.active
+        prev_selected  = [o for o in ctx.scene.objects if o.select_get()]
+
+        # Deselect all, select export targets
+        for o in ctx.scene.objects:
+            o.select_set(False)
+        for o in export_objs:
+            o.select_set(True)
+        if export_objs:
+            ctx.view_layer.objects.active = export_objs[0]
+
+        bpy.ops.export_scene.gltf(
+            filepath=str(d / f"{name}.glb"), export_format="GLB",
+            export_vertex_color="ACTIVE", export_normals=True,
+            export_materials="EXPORT", export_texcoords=True,
+            export_apply=True, use_selection=True,
+            export_yup=True, export_skins=False, export_animations=False,
+            export_extras=True)
+
+        # Restore selection state
+        for o in ctx.scene.objects:
+            o.select_set(False)
+        for o in prev_selected:
+            o.select_set(True)
+        ctx.view_layer.objects.active = prev_active
+
+    else:
+        # Fallback: v1.1.0 behaviour — export entire scene
+        bpy.ops.export_scene.gltf(
+            filepath=str(d / f"{name}.glb"), export_format="GLB",
+            export_vertex_color="ACTIVE", export_normals=True,
+            export_materials="EXPORT", export_texcoords=True,
+            export_apply=True, use_selection=False,
+            export_yup=True, export_skins=False, export_animations=False,
+            export_extras=True)
+
     log("Exported GLB")
 
 # ---------------------------------------------------------------------------
@@ -4090,7 +4144,7 @@ class OG_OT_SpawnPlayer(Operator):
     bl_label  = "Add Player Spawn"
     bl_description = "Place a player spawn empty at the 3D cursor"
     def execute(self, ctx):
-        n   = len([o for o in ctx.scene.objects if o.name.startswith("SPAWN_") and not o.name.endswith("_CAM")])
+        n   = len([o for o in _level_objects(ctx.scene) if o.name.startswith("SPAWN_") and not o.name.endswith("_CAM")])
         uid = "start" if n == 0 else f"spawn{n}"
         bpy.ops.object.empty_add(type="ARROWS", location=ctx.scene.cursor.location)
         o = ctx.active_object
@@ -4110,7 +4164,7 @@ class OG_OT_SpawnCheckpoint(Operator):
         "moves around, so these act as silent progress saves without any trigger actors."
     )
     def execute(self, ctx):
-        n   = len([o for o in ctx.scene.objects if o.name.startswith("CHECKPOINT_") and not o.name.endswith("_CAM")])
+        n   = len([o for o in _level_objects(ctx.scene) if o.name.startswith("CHECKPOINT_") and not o.name.endswith("_CAM")])
         uid = f"cp{n}"
         bpy.ops.object.empty_add(type="SINGLE_ARROW", location=ctx.scene.cursor.location)
         o = ctx.active_object
@@ -4184,7 +4238,7 @@ class OG_OT_SpawnEntity(Operator):
         info  = ENTITY_DEFS.get(etype, {})
         shape = info.get("shape", "SPHERE")
         color = info.get("color", (1.0,0.5,0.1,1.0))
-        n     = len([o for o in ctx.scene.objects if o.name.startswith(f"ACTOR_{etype}_")])
+        n     = len([o for o in _level_objects(ctx.scene) if o.name.startswith(f"ACTOR_{etype}_")])
         bpy.ops.object.empty_add(type=shape, location=ctx.scene.cursor.location)
         o = ctx.active_object
         o.name = f"ACTOR_{etype}_{n}"
@@ -4427,11 +4481,13 @@ def _bg_build(name, scene):
             log(f"[code-deps] {code_deps}")
 
         state["status"] = "Writing files..."
-        base_id = scene.og_props.base_id
+        base_id = int(_get_level_prop(scene, "og_base_id", 10000))
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
-        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
+        _lv_objs = _level_objects(scene)
+        has_cps = bool([o for o in _lv_objs if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")])
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps)
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -4801,10 +4857,12 @@ def _bg_geo_rebuild(name, scene):
         cam_actors, trigger_actors = collect_cameras(scene)
 
         state["status"] = "Writing level files..."
-        base_id = scene.og_props.base_id
+        base_id = int(_get_level_prop(scene, "og_base_id", 10000))
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
-        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
+        _lv_objs = _level_objects(scene)
+        has_cps = bool([o for o in _lv_objs if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")])
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps)
         patch_level_info(name, spawns, scene)  # update spawn continue-points if moved
 
         # Run (mi) — re-extracts GLB, repacks DGO, skips unchanged .gc files
@@ -4919,11 +4977,13 @@ def _bg_build_and_play(name, scene):
         cam_actors, trigger_actors = collect_cameras(scene)
 
         state["status"] = "Writing level files..."
-        base_id = scene.og_props.base_id
+        base_id = int(_get_level_prop(scene, "og_base_id", 10000))
         write_jsonc(name, actors, ambients, cam_actors + trigger_actors, base_id)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
-        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=bool([o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]))
+        _lv_objs = _level_objects(scene)
+        has_cps = bool([o for o in _lv_objs if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")])
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps)
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -5102,7 +5162,7 @@ class OG_OT_AddSoundEmitter(Operator):
         snd   = props.sfx_sound.split("__")[0] if "__" in props.sfx_sound else props.sfx_sound
         if not snd:
             snd = "waterfall"
-        existing = [o for o in ctx.scene.objects if o.name.startswith("AMBIENT_snd")]
+        existing = [o for o in _level_objects(ctx.scene) if o.name.startswith("AMBIENT_snd")]
         idx  = len(existing) + 1
         name = f"AMBIENT_snd{idx:03d}"
 
@@ -5133,7 +5193,7 @@ class OG_OT_SpawnCamera(Operator):
         "Link a trigger volume mesh with 'Link Trigger Volume'."
     )
     def execute(self, ctx):
-        n = len([o for o in ctx.scene.objects
+        n = len([o for o in _level_objects(ctx.scene)
                  if o.name.startswith("CAMERA_") and o.type == "CAMERA"])
         cam_name = f"CAMERA_{n}"
         bpy.ops.object.camera_add(location=ctx.scene.cursor.location)
@@ -5167,7 +5227,7 @@ class OG_OT_SpawnVolume(Operator):
         "If a camera, spawn, or checkpoint is selected, it auto-links."
     )
     def execute(self, ctx):
-        n = len([o for o in ctx.scene.objects
+        n = len([o for o in _level_objects(ctx.scene)
                  if o.type == "MESH" and o.name.startswith("VOL_")])
         bpy.ops.mesh.primitive_cube_add(size=4.0, location=ctx.scene.cursor.location)
         vol = ctx.active_object
@@ -5191,9 +5251,11 @@ class OG_OT_SpawnVolume(Operator):
                 vol["og_vol_link"] = target_name
                 vol.name = f"VOL_{target_name}"
                 del vol["_auto_link_target"]
+                _link_object_to_sub_collection(ctx.scene, vol, *_COL_PATH_TRIGGERS)
                 self.report({"INFO"}, f"Added and linked {vol.name} → {target_name}")
                 return {"FINISHED"}
 
+        _link_object_to_sub_collection(ctx.scene, vol, *_COL_PATH_TRIGGERS)
         self.report({"INFO"}, f"Added {vol.name}  —  select volume + target → Link in Triggers panel")
         return {"FINISHED"}
 
@@ -5221,7 +5283,7 @@ def _is_linkable(obj):
 
 def _vol_for_target(scene, target_name):
     """Return the VOL_ mesh linked to target_name, or None."""
-    for o in scene.objects:
+    for o in _level_objects(scene):
         if o.type == "MESH" and o.name.startswith("VOL_") and o.get("og_vol_link") == target_name:
             return o
     return None
@@ -5232,7 +5294,7 @@ def _clean_orphaned_vol_links(scene):
     Called at export time and available as a panel button.
     Returns list of volume names that were cleaned."""
     cleaned = []
-    for o in scene.objects:
+    for o in _level_objects(scene):
         if o.type == "MESH" and o.name.startswith("VOL_"):
             link = o.get("og_vol_link", "")
             if link and not scene.objects.get(link):
@@ -5261,7 +5323,7 @@ class OG_OT_SpawnVolumeAutoLink(Operator):
         if existing:
             self.report({"WARNING"}, f"{self.target_name} already linked to {existing.name} — unlink first")
             return {"CANCELLED"}
-        n = len([o for o in ctx.scene.objects if o.type == "MESH" and o.name.startswith("VOL_")])
+        n = len([o for o in _level_objects(ctx.scene) if o.type == "MESH" and o.name.startswith("VOL_")])
         # Place at target location
         bpy.ops.mesh.primitive_cube_add(size=4.0, location=target.location)
         vol = ctx.active_object
@@ -5389,7 +5451,7 @@ class OG_OT_DeleteObject(Operator):
             self.report({"ERROR"}, f"Object '{self.obj_name}' not found")
             return {"CANCELLED"}
         # Clean any volumes linked to this object before deleting
-        for o in ctx.scene.objects:
+        for o in _level_objects(ctx.scene):
             if o.type == "MESH" and o.name.startswith("VOL_"):
                 if o.get("og_vol_link") == self.obj_name:
                     orig_id = o.get("og_vol_id", 0)
@@ -5603,7 +5665,7 @@ class OG_OT_SpawnPlatform(Operator):
         einfo = ENTITY_DEFS.get(etype, {})
 
         # Use count of existing same-type actors as uid, matching OG_OT_SpawnEntity pattern
-        n   = len([o for o in ctx.scene.objects if o.name.startswith(f"ACTOR_{etype}_")])
+        n   = len([o for o in _level_objects(ctx.scene) if o.name.startswith(f"ACTOR_{etype}_")])
         uid = f"{n:04d}"
 
         bpy.ops.object.empty_add(type=einfo.get("shape", "CUBE"),
@@ -5615,6 +5677,7 @@ class OG_OT_SpawnPlatform(Operator):
         o.color              = einfo.get("color", (0.5, 0.5, 0.8, 1.0))
         if hasattr(o, "show_in_front"):
             o.show_in_front = True
+        _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_SPAWNABLE_PLATFORMS)
         self.report({"INFO"}, f"Added {o.name}")
         return {"FINISHED"}
 
@@ -5635,7 +5698,7 @@ def _draw_platform_settings(layout, sel, scene):
         box.label(text="Sync (Path Timing)", icon="TIME")
 
         wp_prefix = sel.name + "_wp_"
-        wp_count  = sum(1 for o in scene.objects
+        wp_count  = sum(1 for o in _level_objects(scene)
                         if o.name.startswith(wp_prefix) and o.type == "EMPTY")
 
         if wp_count < 2:
@@ -5702,7 +5765,7 @@ def _draw_platform_settings(layout, sel, scene):
         box = layout.box()
         box.label(text="Path (Button Travel)", icon="ANIM")
         wp_prefix = sel.name + "_wp_"
-        wp_count  = sum(1 for o in scene.objects
+        wp_count  = sum(1 for o in _level_objects(scene)
                         if o.name.startswith(wp_prefix) and o.type == "EMPTY")
         if wp_count < 2:
             box.label(text="⚠ Needs ≥2 waypoints (start + end)", icon="ERROR")
@@ -5930,8 +5993,10 @@ class OG_PT_LevelFlow(Panel):
         col.operator("og.spawn_player",     text="Add Player Spawn",  icon="ADD")
         col.operator("og.spawn_checkpoint", text="Add Checkpoint",    icon="KEYFRAME")
 
-        spawns      = [o for o in scene.objects if o.name.startswith("SPAWN_")      and o.type == "EMPTY" and not o.name.endswith("_CAM")]
-        checkpoints = [o for o in scene.objects if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]
+        # Scope object lists to the active level collection (fallback = all scene objects)
+        lv_objs     = _level_objects(scene)
+        spawns      = [o for o in lv_objs if o.name.startswith("SPAWN_")      and o.type == "EMPTY" and not o.name.endswith("_CAM")]
+        checkpoints = [o for o in lv_objs if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")]
 
         if spawns or checkpoints:
             layout.separator(factor=0.4)
@@ -5946,6 +6011,7 @@ class OG_PT_LevelFlow(Panel):
                     for o in sorted(spawns, key=lambda x: x.name):
                         row = box.row(align=True)
                         row.label(text=o.name, icon="EMPTY_ARROWS")
+                        # CAM anchors looked up globally by name — correct, they may live anywhere
                         cam_obj = scene.objects.get(o.name + "_CAM")
                         if cam_obj:
                             row.label(text="📷", icon="NONE")
@@ -5965,7 +6031,7 @@ class OG_PT_LevelFlow(Panel):
                          text=f"Checkpoints ({len(checkpoints)})", icon=icon, emboss=False)
                 if props.show_checkpoint_list:
                     vol_by_cp_panel = {}
-                    for o in scene.objects:
+                    for o in lv_objs:
                         if o.type == "MESH" and o.name.startswith("VOL_"):
                             link = o.get("og_vol_link", "")
                             if link and link.startswith("CHECKPOINT_"):
@@ -6004,7 +6070,7 @@ class OG_PT_LevelFlow(Panel):
                     row.label(text=f"{sel.name}_CAM exists ✓", icon="CHECKMARK")
                 if is_cp:
                     vol_by_cp_sel = {}
-                    for o in scene.objects:
+                    for o in lv_objs:
                         if o.type == "MESH" and o.name.startswith("VOL_"):
                             lnk = o.get("og_vol_link", "")
                             if lnk and lnk.startswith("CHECKPOINT_"):
@@ -6272,7 +6338,7 @@ class OG_PT_SpawnPlatforms(Panel):
 
         # Scene platform list
         plats = sorted(
-            [o for o in scene.objects
+            [o for o in _level_objects(scene)
              if o.name.startswith("ACTOR_")
              and "_wp_" not in o.name
              and o.type == "EMPTY"
@@ -6393,7 +6459,7 @@ class OG_PT_SpawnSounds(Panel):
         row2.scale_y = 1.4
         row2.operator("og.add_sound_emitter", text="Add Emitter at Cursor", icon="ADD")
 
-        emitters = [o for o in ctx.scene.objects
+        emitters = [o for o in _level_objects(ctx.scene)
                     if o.name.startswith("AMBIENT_") and o.type == "EMPTY"
                     and o.get("og_sound_name")]
         if emitters:
@@ -6512,7 +6578,7 @@ def _draw_selected_actor(layout, sel, scene):
         layout.separator(factor=0.3)
         prefix = sel.name + "_wp_"
         wps = sorted(
-            [o for o in scene.objects if o.name.startswith(prefix) and o.type == "EMPTY"],
+            [o for o in _level_objects(scene) if o.name.startswith(prefix) and o.type == "EMPTY"],
             key=lambda o: o.name
         )
         box = layout.box()
@@ -6538,7 +6604,7 @@ def _draw_selected_actor(layout, sel, scene):
         if einfo.get("needs_pathb"):
             prefixb = sel.name + "_wpb_"
             wpsb = sorted(
-                [o for o in scene.objects if o.name.startswith(prefixb) and o.type == "EMPTY"],
+                [o for o in _level_objects(scene) if o.name.startswith(prefixb) and o.type == "EMPTY"],
                 key=lambda o: o.name
             )
             box2 = layout.box()
@@ -6593,7 +6659,7 @@ def _draw_selected_checkpoint(layout, sel, scene):
     # Volume link
     layout.separator(factor=0.3)
     vol_linked = None
-    for o in scene.objects:
+    for o in _level_objects(scene):
         if o.type == "MESH" and o.name.startswith("VOL_"):
             if o.get("og_vol_link") == sel.name:
                 vol_linked = o
@@ -6737,7 +6803,7 @@ def _draw_selected_camera(layout, sel, scene):
         pass
 
     # ── Linked trigger volumes ───────────────────────────────────────────
-    vols = [o for o in scene.objects
+    vols = [o for o in _level_objects(scene)
             if o.type == "MESH" and o.name.startswith("VOL_")
             and o.get("og_vol_link") == sel.name]
     vbox = layout.box()
@@ -7050,7 +7116,7 @@ class OG_PT_Triggers(Panel):
             box.label(text="Also select a VOL_ to link", icon="INFO")
             layout.separator(factor=0.3)
 
-        vols = sorted([o for o in scene.objects
+        vols = sorted([o for o in _level_objects(scene)
                        if o.type == "MESH" and o.name.startswith("VOL_")],
                       key=lambda o: o.name)
         if not vols:
@@ -7133,7 +7199,7 @@ class OG_PT_Camera(Panel):
         layout.separator()
 
         cam_objects = sorted(
-            [o for o in scene.objects if o.name.startswith("CAMERA_") and o.type == "CAMERA"],
+            [o for o in _level_objects(scene) if o.name.startswith("CAMERA_") and o.type == "CAMERA"],
             key=lambda o: o.name,
         )
         if not cam_objects:
@@ -7149,7 +7215,7 @@ class OG_PT_Camera(Panel):
             return
 
         vol_map = {}
-        for o in scene.objects:
+        for o in _level_objects(scene):
             if o.type == "MESH" and o.name.startswith("VOL_"):
                 link = o.get("og_vol_link", "")
                 if link and link.startswith("CAMERA_"):
@@ -7328,7 +7394,7 @@ class OG_OT_CleanLevelFiles(Operator):
     bl_description = "Delete generated level files to force a clean rebuild (obs.gc, jsonc, glb, gd)"
 
     def execute(self, ctx):
-        name = ctx.scene.og_props.level_name.strip().lower().replace(" ", "-")
+        name = _lname(ctx)
         if not name:
             self.report({"ERROR"}, "No level name set")
             return {"CANCELLED"}
@@ -7395,7 +7461,7 @@ class OG_PT_DevTools(Panel):
 
         # Quick Open — nested here
         layout.label(text="Quick Open", icon="FILE_FOLDER")
-        name = ctx.scene.og_props.level_name.strip().lower().replace(" ", "-")
+        name = _lname(ctx)
         self._quick_open(layout, name)
 
     def _btn(self, layout, label, icon, path, is_file=False):
