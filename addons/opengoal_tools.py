@@ -997,6 +997,18 @@ def _set_blender_active_collection(context, col):
             context.view_layer.active_layer_collection = lc
 
 
+def _get_death_plane(self):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        return float(col.get("og_bottom_height", -20.0))
+    return -20.0
+
+def _set_death_plane(self, value):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        col["og_bottom_height"] = max(-500.0, min(-1.0, value))
+
+
 def _on_active_level_changed(self, context):
     """Called when active_level enum changes — sync Blender's active collection."""
     col = _active_level_col(context.scene)
@@ -2637,6 +2649,7 @@ class OGProperties(PropertyGroup):
                                           description="Bsphere radius for new sound emitter empties")
     # Level flow
     bottom_height:     FloatProperty(name="Death Plane (m)", default=-20.0, min=-500.0, max=-1.0,
+                                     get=_get_death_plane, set=_set_death_plane,
                                      description="Y height below which the player gets an endlessfall death (negative = below level floor)")
     vis_nick_override: StringProperty(name="Vis Nick Override", default="",
                                       description="Override the auto-generated 3-letter vis nickname (leave blank to use auto)")
@@ -5884,14 +5897,8 @@ class OG_PT_Level(Panel):
 
         layout.separator(factor=0.4)
 
-        # Death plane
-        bh = float(level_col.get("og_bottom_height", -20.0))
-        row_bh = layout.row(align=True)
-        row_bh.label(text=f"Death Plane: {bh:.1f}m")
-        op = row_bh.operator("og.nudge_level_prop", text="-")
-        op.prop_name = "og_bottom_height"; op.delta = -5.0; op.val_min = -500.0; op.val_max = -1.0
-        op = row_bh.operator("og.nudge_level_prop", text="+")
-        op.prop_name = "og_bottom_height"; op.delta = 5.0; op.val_min = -500.0; op.val_max = -1.0
+        # Death plane — direct number input
+        layout.prop(props, "bottom_height")
 
         # Vis nick override
         vnick = str(level_col.get("og_vis_nick_override", ""))
@@ -6051,20 +6058,20 @@ class OG_PT_LevelManagerSub(Panel):
             layout.label(text="No levels in this file")
 
         for col in levels:
-            lname   = col.get("og_level_name", col.name)
+            lname     = col.get("og_level_name", col.name)
             is_active = (active is not None and col.name == active.name)
 
             row = layout.row(align=True)
-            op = row.operator("og.set_active_level", text=lname,
-                              icon="RADIOBUT_ON" if is_active else "RADIOBUT_OFF",
+            # Checkbox appearance via toggle operator — depress=is_active gives filled look
+            op = row.operator("og.set_active_level",
+                              text=lname,
+                              icon="CHECKBOX_HLT" if is_active else "CHECKBOX_DEHLT",
                               depress=is_active)
-            op.col_name = col.name
-            op = row.operator("og.delete_level", text="", icon="X")
             op.col_name = col.name
 
         layout.separator(factor=0.4)
         row = layout.row(align=True)
-        row.operator("og.create_level", text="Add Level", icon="ADD")
+        row.operator("og.create_level",               text="Add Level",       icon="ADD")
         row.operator("og.assign_collection_as_level", text="Assign Existing", icon="OUTLINER_COLLECTION")
 
 
