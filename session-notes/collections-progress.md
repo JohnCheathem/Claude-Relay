@@ -260,3 +260,70 @@ Migration: "Convert to Collection Level" operator moves existing objects into th
   Phase 3 (Auto-Organization) ✅ complete
   Phase 4 (Geometry Organization) — not yet started
   Phase 5 (Migration) — not yet started
+
+- 2026-04-09: Additional changes post-wiring (all committed, merged to main):
+
+  Routing fixes (commit 15a69e5):
+  - SpawnCamAnchor → Spawns sub-collection (was unrouted)
+  - SpawnVolumeAutoLink → Triggers sub-collection (was unrouted)
+  - AddWaypoint → Waypoints sub-collection (was dumping to active collection)
+    uid scan scoped to _level_objects (was global bpy.data.objects)
+  - New constant: _COL_PATH_WAYPOINTS = ("Waypoints",)
+  - Renamed Terrain → Solid (_COL_PATH_GEO_SOLID, sub-col name "Solid")
+
+  Sub-collection prefixing + Sort operator (commit 645c83f):
+  - _ensure_sub_collection: all sub-col names now prefixed with level name
+    e.g. cave-test.Spawnables, cave-test.Spawnables.Enemies
+    Guarantees uniqueness across multiple levels in one .blend
+  - New helper _classify_object(obj): returns correct _COL_PATH_* for any object
+  - OG_OT_SortLevelObjects: walks all level objects, classifies, moves misplaced ones
+  - OG_PT_CleanSub: 🧹 Clean sub-panel under Collections → Sort Collection Objects button
+
+  UI restructure (commits ae51ffe, dfe4f74):
+  - Camera + Triggers moved under Spawn Objects as sub-panels
+  - Camera label → "Cameras"
+  - "OpenGOAL Collision" → "Collision"
+  - "Collection Properties" → "Collections"
+  - Death plane removed from Level panel, moved into pencil-icon edit dialog
+  - Level Flow panel removed from Level group
+  - OG_PT_SpawnLevelFlow: new sub-panel under Spawn Objects
+    Dropdown: Player Spawn / Checkpoint + Add button
+    Collapsible lists + context actions preserved
+  - spawn_flow_type EnumProperty added to OGProperties
+
+  NavMesh collection routing + UI improvements (commit cc28381):
+  - _COL_PATH_NAVMESHES = ("NavMeshes",) constant added
+  - _classify_object: NAVMESH_ prefix / og_navmesh tag → NavMeshes
+  - OG_OT_MarkNavMesh: prefixes NAVMESH_, routes into NavMeshes
+  - OG_OT_UnmarkNavMesh: strips NAVMESH_, moves to Geometry/Solid
+  - OG_OT_LinkNavMesh: routes mesh into NavMeshes after linking
+  - OG_OT_UnlinkNavMesh: strips NAVMESH_, moves mesh to Geometry/Solid, removes tag
+  - Link NavMesh button guarded in both enemy panel and Selected Object panel
+    Only shows when a mesh is shift-selected; otherwise shows "Shift-select a mesh"
+  - Selected Object panel always visible (poll = True)
+    Handles None → "Select an object to inspect"
+    Handles non-OG object → name + "Not an OpenGOAL-managed object"
+  - Mesh settings converted to collapsible sub-panels under Selected Object:
+    OG_PT_SelectedCollision (Collision + Visibility)
+    OG_PT_SelectedLightBaking (Light Baking)
+    OG_PT_SelectedNavMeshTag (NavMesh tag)
+
+  Merge (commit 113b0c0):
+  - feature/collections merged to main
+  - Backup: addons/opengoal_tools_v1.1.0_pre_collections_backup.py
+  - Final addon: 8125 lines, syntax clean
+
+  Final collection hierarchy (shipped):
+  📁 my-level
+    📁 Geometry / Solid, Collision Only, Visual Only, Reference
+    📁 Spawnables / Enemies, Platforms, Props & Objects, NPCs, Pickups
+    📁 Spawns
+    📁 Cameras
+    📁 Sound Emitters
+    📁 Triggers
+    📁 Waypoints
+    📁 NavMeshes
+
+  Phase 4 (Geometry Organization) — not started
+  Phase 5 (Migration) — not started
+  Phase 6 (Multi-Level Build) — not started
