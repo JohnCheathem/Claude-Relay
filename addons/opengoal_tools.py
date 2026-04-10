@@ -8153,7 +8153,6 @@ class OG_PT_SelectedObject(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        scene  = ctx.scene
 
         if sel is None:
             layout.label(text="Select an object to inspect", icon="INFO")
@@ -8164,40 +8163,34 @@ class OG_PT_SelectedObject(Panel):
             layout.label(text="Not an OpenGOAL-managed object", icon="INFO")
             return
 
+        # Name + type hint — sub-panels carry all the detail
         name = sel.name
-
-        # Dispatch based on object type
         if name.startswith("ACTOR_") and "_wp_" not in name:
-            _draw_selected_actor(layout, sel, scene)
-
+            parts = name.split("_", 2)
+            etype = parts[1] if len(parts) >= 3 else ""
+            einfo = ENTITY_DEFS.get(etype, {})
+            label = einfo.get("label", etype)
+            cat   = einfo.get("cat", "")
+            row = layout.row()
+            row.label(text=label, icon="OBJECT_DATA")
+            sub = row.row(); sub.enabled = False
+            sub.label(text=f"[{cat}]")
         elif name.startswith("SPAWN_") and not name.endswith("_CAM"):
-            _draw_selected_spawn(layout, sel, scene)
-
+            layout.label(text=name, icon="EMPTY_ARROWS")
         elif name.startswith("CHECKPOINT_") and not name.endswith("_CAM"):
-            _draw_selected_checkpoint(layout, sel, scene)
-
+            layout.label(text=name, icon="EMPTY_SINGLE_ARROW")
         elif name.startswith("AMBIENT_"):
-            _draw_selected_emitter(layout, sel)
-
+            layout.label(text=name, icon="SPEAKER")
         elif name.startswith("CAMERA_") and sel.type == "CAMERA":
-            _draw_selected_camera(layout, sel, scene)
-
+            layout.label(text=name, icon="CAMERA_DATA")
         elif name.startswith("VOL_"):
-            _draw_selected_volume(layout, sel, scene)
-
+            layout.label(text=name, icon="MESH_CUBE")
         elif name.endswith("_CAM"):
-            _draw_selected_cam_anchor(layout, sel, scene)
-
+            layout.label(text=name, icon="CAMERA_DATA")
         elif sel.type == "MESH":
-            # Navmesh mesh header if applicable
-            if sel.get("og_navmesh") or sel.name.startswith("NAVMESH_"):
-                _draw_selected_navmesh(layout, sel)
-            else:
-                layout.label(text=sel.name, icon="MESH_DATA")
-            # Collision, Visibility, Light Baking, NavMesh Tag rendered by sub-panels
-
+            layout.label(text=name, icon="MOD_MESHDEFORM" if (sel.get("og_navmesh") or name.startswith("NAVMESH_")) else "MESH_DATA")
         else:
-            layout.label(text=sel.name, icon="OBJECT_DATA")
+            layout.label(text=name, icon="OBJECT_DATA")
 
         # Universal actions
         layout.separator(factor=0.3)
@@ -8266,6 +8259,378 @@ class OG_PT_SelectedNavMeshTag(Panel):
 
     def draw(self, ctx):
         _draw_selected_mesh_navtag(self.layout, ctx.active_object)
+
+
+# ===========================================================================
+# OBJECT-TYPE SUB-PANELS
+# Each polls on the active object's name prefix/type so it only appears
+# for the relevant object. All carry bl_parent_id="OG_PT_selected_object".
+# ===========================================================================
+
+# ── ACTOR sub-panels ────────────────────────────────────────────────────────
+
+class OG_PT_ActorActivation(Panel):
+    bl_label       = "Activation"
+    bl_idname      = "OG_PT_actor_activation"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and _actor_is_enemy(parts[1])
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        idle_d = float(sel.get("og_idle_distance", 80.0))
+        row = layout.row(align=True)
+        op = row.operator("og.nudge_float_prop", text="-5m", icon="REMOVE")
+        op.prop_name = "og_idle_distance"; op.delta = -5.0; op.val_min = 0.0
+        row.label(text=f"Idle Distance: {idle_d:.0f}m")
+        op = row.operator("og.nudge_float_prop", text="+5m", icon="ADD")
+        op.prop_name = "og_idle_distance"; op.delta = 5.0; op.val_max = 500.0
+        sub = layout.row(); sub.enabled = False
+        sub.label(text="Player must be closer than this to wake the enemy", icon="INFO")
+
+
+class OG_PT_ActorTriggerBehaviour(Panel):
+    bl_label       = "Trigger Behaviour"
+    bl_idname      = "OG_PT_actor_trigger_behaviour"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and _actor_supports_aggro_trigger(parts[1])
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        scene  = ctx.scene
+        linked_vols = _vols_linking_to(scene, sel.name)
+        if linked_vols:
+            for v in linked_vols:
+                entry = _vol_get_link_to(v, sel.name)
+                if not entry: continue
+                row = layout.row(align=True)
+                row.label(text=f"✓ {v.name}", icon="MESH_CUBE")
+                row.prop(entry, "behaviour", text="")
+                op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+                op.obj_name = v.name
+                op = row.operator("og.remove_vol_link", text="", icon="X")
+                op.vol_name = v.name; op.target_name = sel.name
+        else:
+            sub = layout.row(); sub.enabled = False
+            sub.label(text="No trigger volumes linked", icon="INFO")
+        op = layout.operator("og.spawn_aggro_trigger", text="Add Aggro Trigger", icon="ADD")
+        op.target_name = sel.name
+
+
+class OG_PT_ActorNavMesh(Panel):
+    bl_label       = "NavMesh"
+    bl_idname      = "OG_PT_actor_navmesh"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and _actor_uses_navmesh(parts[1])
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        nm_name = sel.get("og_navmesh_link", "")
+        nm_obj  = bpy.data.objects.get(nm_name) if nm_name else None
+        if nm_obj:
+            row = layout.row(align=True)
+            row.label(text=f"✓ {nm_obj.name}", icon="CHECKMARK")
+            row.operator("og.unlink_navmesh", text="", icon="X")
+            try:
+                nm_obj.data.calc_loop_triangles()
+                tc = len(nm_obj.data.loop_triangles)
+                layout.label(text=f"{tc} triangles", icon="MESH_DATA")
+            except Exception:
+                pass
+        else:
+            layout.label(text="No mesh linked", icon="ERROR")
+            sel_meshes = [o for o in bpy.context.selected_objects if o.type == "MESH"]
+            if sel_meshes:
+                layout.label(text=f"Will link to: {sel_meshes[0].name}", icon="INFO")
+                layout.operator("og.link_navmesh", text="Link NavMesh", icon="LINKED")
+            else:
+                layout.label(text="Shift-select a mesh to link", icon="INFO")
+        nav_r = float(sel.get("og_nav_radius", 6.0))
+        layout.label(text=f"Fallback sphere radius: {nav_r:.1f}m", icon="SPHERE")
+
+
+class OG_PT_ActorPlatform(Panel):
+    bl_label       = "Platform Settings"
+    bl_idname      = "OG_PT_actor_platform"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and _actor_is_platform(parts[1])
+
+    def draw(self, ctx):
+        _draw_platform_settings(self.layout, ctx.active_object, ctx.scene)
+
+
+class OG_PT_ActorCrate(Panel):
+    bl_label       = "Crate"
+    bl_idname      = "OG_PT_actor_crate"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and parts[1] == "crate"
+
+    def draw(self, ctx):
+        sel = ctx.active_object
+        ct  = sel.get("og_crate_type", "steel")
+        self.layout.label(text=f"Crate Type: {ct}", icon="PACKAGE")
+
+
+class OG_PT_ActorWaypoints(Panel):
+    bl_label       = "Waypoints"
+    bl_idname      = "OG_PT_actor_waypoints"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return (len(parts) >= 3 and parts[0] == "ACTOR"
+                and _actor_uses_waypoints(parts[1]))
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        scene  = ctx.scene
+        parts  = sel.name.split("_", 2)
+        etype  = parts[1]
+        einfo  = ENTITY_DEFS.get(etype, {})
+
+        prefix = sel.name + "_wp_"
+        wps = sorted(
+            [o for o in _level_objects(scene) if o.name.startswith(prefix) and o.type == "EMPTY"],
+            key=lambda o: o.name
+        )
+        layout.label(text=f"Path  ({len(wps)} point{'s' if len(wps) != 1 else ''})", icon="ANIM")
+        if wps:
+            col = layout.column(align=True)
+            for wp in wps:
+                row = col.row(align=True)
+                row.label(text=wp.name, icon="EMPTY_AXIS")
+                op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM"); op.obj_name = wp.name
+                op = row.operator("og.delete_waypoint",  text="", icon="X");        op.wp_name  = wp.name
+        op = layout.operator("og.add_waypoint", text="Add Waypoint at Cursor", icon="PLUS")
+        op.enemy_name = sel.name; op.pathb_mode = False
+        if einfo.get("needs_path") and len(wps) < 1:
+            layout.label(text="⚠ Needs ≥ 1 waypoint or will crash", icon="ERROR")
+
+        if einfo.get("needs_pathb"):
+            layout.separator(factor=0.5)
+            prefixb = sel.name + "_wpb_"
+            wpsb = sorted(
+                [o for o in _level_objects(scene) if o.name.startswith(prefixb) and o.type == "EMPTY"],
+                key=lambda o: o.name
+            )
+            layout.label(text=f"Path B  ({len(wpsb)} points)", icon="ANIM")
+            if wpsb:
+                col2 = layout.column(align=True)
+                for wp in wpsb:
+                    row = col2.row(align=True)
+                    row.label(text=wp.name, icon="EMPTY_AXIS")
+                    op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM"); op.obj_name = wp.name
+                    op = row.operator("og.delete_waypoint",  text="", icon="X");        op.wp_name  = wp.name
+            op = layout.operator("og.add_waypoint", text="Add Path B Waypoint", icon="PLUS")
+            op.enemy_name = sel.name; op.pathb_mode = True
+            if len(wpsb) < 1:
+                layout.label(text="⚠ swamp-bat crashes without Path B", icon="ERROR")
+
+
+# ── SPAWN sub-panel ─────────────────────────────────────────────────────────
+
+class OG_PT_SpawnSettings(Panel):
+    bl_label       = "Spawn Settings"
+    bl_idname      = "OG_PT_spawn_settings"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.name.startswith("SPAWN_")
+                and not sel.name.endswith("_CAM"))
+
+    def draw(self, ctx):
+        _draw_selected_spawn(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── CHECKPOINT sub-panel ────────────────────────────────────────────────────
+
+class OG_PT_CheckpointSettings(Panel):
+    bl_label       = "Checkpoint Settings"
+    bl_idname      = "OG_PT_checkpoint_settings"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.name.startswith("CHECKPOINT_")
+                and not sel.name.endswith("_CAM"))
+
+    def draw(self, ctx):
+        _draw_selected_checkpoint(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── AMBIENT sub-panel ───────────────────────────────────────────────────────
+
+class OG_PT_AmbientEmitter(Panel):
+    bl_label       = "Sound Emitter"
+    bl_idname      = "OG_PT_ambient_emitter"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return sel is not None and sel.name.startswith("AMBIENT_")
+
+    def draw(self, ctx):
+        _draw_selected_emitter(self.layout, ctx.active_object)
+
+
+# ── CAMERA sub-panels ───────────────────────────────────────────────────────
+
+class OG_PT_CameraSettings(Panel):
+    bl_label       = "Camera Settings"
+    bl_idname      = "OG_PT_camera_settings"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.name.startswith("CAMERA_")
+                and sel.type == "CAMERA")
+
+    def draw(self, ctx):
+        _draw_selected_camera(self.layout, ctx.active_object, ctx.scene)
+
+
+class OG_PT_CamAnchorInfo(Panel):
+    bl_label       = "Anchor Info"
+    bl_idname      = "OG_PT_cam_anchor_info"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return sel is not None and sel.name.endswith("_CAM")
+
+    def draw(self, ctx):
+        _draw_selected_cam_anchor(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── VOLUME sub-panel ────────────────────────────────────────────────────────
+
+class OG_PT_VolumeLinks(Panel):
+    bl_label       = "Volume Links"
+    bl_idname      = "OG_PT_volume_links"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return sel is not None and sel.name.startswith("VOL_")
+
+    def draw(self, ctx):
+        _draw_selected_volume(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── NAVMESH INFO sub-panel ──────────────────────────────────────────────────
+
+class OG_PT_NavmeshInfo(Panel):
+    bl_label       = "Navmesh Info"
+    bl_idname      = "OG_PT_navmesh_info"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.type == "MESH"
+                and (sel.get("og_navmesh") or sel.name.startswith("NAVMESH_")))
+
+    def draw(self, ctx):
+        _draw_selected_navmesh(self.layout, ctx.active_object)
 
 
 # ===========================================================================
@@ -9246,6 +9611,21 @@ classes = (
     OG_PT_SelectedCollision,
     OG_PT_SelectedLightBaking,
     OG_PT_SelectedNavMeshTag,
+    # Object-type sub-panels
+    OG_PT_ActorActivation,
+    OG_PT_ActorTriggerBehaviour,
+    OG_PT_ActorNavMesh,
+    OG_PT_ActorPlatform,
+    OG_PT_ActorCrate,
+    OG_PT_ActorWaypoints,
+    OG_PT_SpawnSettings,
+    OG_PT_CheckpointSettings,
+    OG_PT_AmbientEmitter,
+    OG_PT_CameraSettings,
+    OG_PT_CamAnchorInfo,
+    OG_PT_VolumeLinks,
+    OG_PT_NavmeshInfo,
+    # Lump sub-panels
     OG_PT_SelectedLumps,
     OG_PT_SelectedLumpReference,
     OG_PT_Waypoints,
