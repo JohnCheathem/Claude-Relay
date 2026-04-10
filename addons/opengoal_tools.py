@@ -1,7 +1,7 @@
 bl_info = {
     "name": "OpenGOAL Level Tools",
     "author": "water111 / JohnCheathem",
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "blender": (4, 4, 0),
     "location": "View3D > N-Panel > OpenGOAL",
     "description": "Jak 1 level export, actor placement, build and launch tools",
@@ -11,7 +11,8 @@ bl_info = {
 import bpy, os, re, json, socket, subprocess, threading, time, math, mathutils
 from pathlib import Path
 from bpy.props import (StringProperty, BoolProperty, IntProperty,
-                       EnumProperty, PointerProperty, FloatProperty)
+                       EnumProperty, PointerProperty, FloatProperty,
+                       CollectionProperty)
 from bpy.types import Panel, Operator, PropertyGroup, AddonPreferences
 
 # ---------------------------------------------------------------------------
@@ -183,6 +184,80 @@ ENTITY_DEFS = {
     "swamp-spike":      {"label":"Swamp Spike",          "cat":"Objects",   "ag":"swamp-spike-ag.go",       "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.7,0.3,0.2,1.0), "shape":"CONE"},
     "whirlpool":        {"label":"Whirlpool",            "cat":"Objects",   "ag":"whirlpool-ag.go",         "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.2,0.4,0.8,1.0), "shape":"CIRCLE"},
     "warp-gate":        {"label":"Warp Gate Switch",     "cat":"Objects",   "ag":"warp-gate-switch-ag.go",  "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.2,0.7,0.8,1.0), "shape":"CIRCLE"},
+    # ---- ENEMIES (NEW) — process-drawable, no navmesh needed ----
+    # Misty group
+    "balloonlurker":    {"label":"Balloon Lurker",       "cat":"Enemies",   "tpage_group":"Misty",    "ag":"balloonlurker-ag.go",     "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.7,0.5,0.8,1.0), "shape":"SPHERE"},
+    # Jungle group
+    "darkvine":         {"label":"Dark Vine",            "cat":"Enemies",   "tpage_group":"Jungle",   "ag":"darkvine-ag.go",          "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.2,0.5,0.1,1.0), "shape":"SPHERE"},
+    "junglefish":       {"label":"Jungle Fish",          "cat":"Enemies",   "tpage_group":"Jungle",   "ag":"junglefish-ag.go",        "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.3,0.6,0.5,1.0), "shape":"SPHERE"},
+    # Rolling group
+    "peeper":           {"label":"Peeper",               "cat":"Enemies",   "tpage_group":"Rolling",  "ag":"lightning-mole-ag.go",    "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.8,0.8,0.3,1.0), "shape":"SPHERE"},
+    # Robocave group
+    "cave-trap":        {"label":"Cave Trap",            "cat":"Enemies",   "tpage_group":"Robocave", "ag":None,                      "nav_safe":True,  "needs_path":True,  "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.2,0.1,1.0), "shape":"SPHERE"},
+    "spider-egg":       {"label":"Spider Egg",           "cat":"Enemies",   "tpage_group":"Robocave", "ag":"spider-egg-ag.go",        "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.6,0.5,0.3,1.0), "shape":"SPHERE"},
+    "spider-vent":      {"label":"Spider Vent",          "cat":"Enemies",   "tpage_group":"Robocave", "ag":None,                      "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.3,0.1,1.0), "shape":"SPHERE"},
+    # Swamp group
+    "swamp-rat-nest":   {"label":"Swamp Rat Nest",       "cat":"Enemies",   "tpage_group":"Swamp",    "ag":"swamp-rat-nest-ag.go",    "nav_safe":True,  "needs_path":True,  "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.4,0.3,0.1,1.0), "shape":"SPHERE"},
+    # Sunken group
+    "sunkenfisha":      {"label":"Sunken Fish School",   "cat":"Enemies",   "tpage_group":"Sunken",   "ag":None,                      "nav_safe":True,  "needs_path":True,  "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.2,0.5,0.7,1.0), "shape":"SPHERE"},
+    "sharkey":          {"label":"Lurker Shark",         "cat":"Enemies",   "tpage_group":"Swamp",    "ag":"sharkey-ag.go",           "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.6,0.3,0.1,1.0), "shape":"SPHERE"},
+    # Village1 group
+    "villa-starfish":   {"label":"Villa Starfish",       "cat":"Enemies",   "tpage_group":"Village1", "ag":None,                      "nav_safe":True,  "needs_path":True,  "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(1.0,0.6,0.5,1.0), "shape":"SPHERE"},
+
+    # ---- PICKUPS (NEW) ----
+    "eco-pill":         {"label":"Eco Pill (Health)",    "cat":"Pickups",   "ag":"eco-pill-ag.go",          "nav_safe":True,  "color":(0.3,0.9,0.3,1.0), "shape":"PLAIN_AXES"},
+    "ecovent":          {"label":"Blue Eco Vent",        "cat":"Pickups",   "ag":"vent-ag.go",              "nav_safe":True,  "color":(0.2,0.4,1.0,1.0), "shape":"PLAIN_AXES"},
+    "ventblue":         {"label":"Blue Eco Vent (alt)",  "cat":"Pickups",   "ag":"vent-ag.go",              "nav_safe":True,  "color":(0.2,0.4,1.0,1.0), "shape":"PLAIN_AXES"},
+    "ventred":          {"label":"Red Eco Vent",         "cat":"Pickups",   "ag":"vent-ag.go",              "nav_safe":True,  "color":(1.0,0.2,0.1,1.0), "shape":"PLAIN_AXES"},
+    "ventyellow":       {"label":"Yellow Eco Vent",      "cat":"Pickups",   "ag":"vent-ag.go",              "nav_safe":True,  "color":(1.0,0.9,0.0,1.0), "shape":"PLAIN_AXES"},
+    "ecoventrock":      {"label":"Eco Vent (Rock)",      "cat":"Pickups",   "tpage_group":"Beach",    "ag":"ecoventrock-ag.go",       "nav_safe":True,  "color":(0.3,0.7,0.3,1.0), "shape":"PLAIN_AXES"},
+
+    # ---- PLATFORMS (NEW) ----
+    "orbit-plat":       {"label":"Orbit Platform",       "cat":"Platforms", "tpage_group":"Sunken",   "ag":"orbit-plat-ag.go",        "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.4,0.6,0.9,1.0), "shape":"CUBE"},
+    "square-platform":  {"label":"Square Platform",      "cat":"Platforms", "tpage_group":"Sunken",   "ag":"square-platform-ag.go",   "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.4,0.6,0.8,1.0), "shape":"CUBE"},
+    "ropebridge":       {"label":"Rope Bridge",          "cat":"Platforms", "tpage_group":"Jungle",   "ag":None,                      "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.6,0.4,0.2,1.0), "shape":"CUBE"},
+    "lavaballoon":      {"label":"Lava Balloon",         "cat":"Platforms", "tpage_group":"Lavatube", "ag":"lavaballoon-ag.go",       "nav_safe":True,  "needs_path":True,  "needs_sync":False, "needs_notice_dist":False, "color":(1.0,0.5,0.1,1.0), "shape":"SPHERE"},
+    "darkecobarrel":    {"label":"Dark Eco Barrel",      "cat":"Platforms", "tpage_group":"Lavatube", "ag":"darkecobarrel-ag.go",     "nav_safe":True,  "needs_path":True,  "needs_sync":False, "needs_notice_dist":False, "color":(0.3,0.0,0.5,1.0), "shape":"CUBE"},
+    "caveelevator":     {"label":"Cave Elevator",        "cat":"Platforms", "tpage_group":"Maincave", "ag":"caveelevator-ag.go",      "nav_safe":True,  "needs_path":True,  "needs_sync":False, "needs_notice_dist":False, "color":(0.5,0.4,0.3,1.0), "shape":"CUBE"},
+    "caveflamepots":    {"label":"Cave Flame Pots",      "cat":"Platforms", "tpage_group":"Maincave", "ag":"caveflamepots-ag.go",     "nav_safe":True,  "needs_path":True,  "needs_sync":False, "needs_notice_dist":False, "color":(1.0,0.3,0.0,1.0), "shape":"CUBE"},
+    "cavetrapdoor":     {"label":"Cave Trap Door",       "cat":"Platforms", "tpage_group":"Maincave", "ag":"cavetrapdoor-ag.go",      "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.4,0.3,0.2,1.0), "shape":"CUBE"},
+    "cavespatula":      {"label":"Cave Spatula Plat",    "cat":"Platforms", "tpage_group":"Maincave", "ag":"cavespatula-ag.go",       "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.5,0.4,0.2,1.0), "shape":"CUBE"},
+    "cavespatulatwo":   {"label":"Cave Spatula Plat 2",  "cat":"Platforms", "tpage_group":"Maincave", "ag":"cavespatulatwo-ag.go",    "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.5,0.4,0.3,1.0), "shape":"CUBE"},
+    "ogre-bridge":      {"label":"Ogre Drawbridge",      "cat":"Platforms", "tpage_group":"Ogre",     "ag":"ogre-bridge-ag.go",       "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.5,0.4,0.2,1.0), "shape":"CUBE"},
+    "ogre-bridgeend":   {"label":"Ogre Bridge End",      "cat":"Platforms", "tpage_group":"Ogre",     "ag":"ogre-bridgeend-ag.go",    "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.5,0.4,0.3,1.0), "shape":"CUBE"},
+    "pontoon":          {"label":"Pontoon (Village2)",   "cat":"Platforms", "tpage_group":"Village2", "ag":"pontoon-ag.go",           "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.5,0.4,0.2,1.0), "shape":"CUBE"},
+    "tra-pontoon":      {"label":"Pontoon (Training)",   "cat":"Platforms", "tpage_group":"Training", "ag":"tra-pontoon-ag.go",       "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.5,0.4,0.3,1.0), "shape":"CUBE"},
+    "mis-bone-bridge":  {"label":"Bone Bridge",          "cat":"Platforms", "tpage_group":"Misty",    "ag":"mis-bone-bridge-ag.go",   "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.7,0.6,0.4,1.0), "shape":"CUBE"},
+    "breakaway-left":   {"label":"Breakaway Plat (L)",   "cat":"Platforms", "tpage_group":"Misty",    "ag":"breakaway-left-ag.go",    "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.6,0.5,0.3,1.0), "shape":"CUBE"},
+    "breakaway-mid":    {"label":"Breakaway Plat (M)",   "cat":"Platforms", "tpage_group":"Misty",    "ag":"breakaway-mid-ag.go",     "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.6,0.5,0.3,1.0), "shape":"CUBE"},
+    "breakaway-right":  {"label":"Breakaway Plat (R)",   "cat":"Platforms", "tpage_group":"Misty",    "ag":"breakaway-right-ag.go",   "nav_safe":True,  "needs_path":False, "needs_sync":False, "needs_notice_dist":False, "color":(0.6,0.5,0.3,1.0), "shape":"CUBE"},
+
+    # ---- OBJECTS / INTERACTABLES (NEW) ----
+    "water-vol":        {"label":"Water Volume",         "cat":"Objects",   "ag":None,                      "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.2,0.4,0.9,0.6), "shape":"CUBE"},
+    "swingpole":        {"label":"Swing Pole",           "cat":"Objects",   "ag":None,                      "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.8,0.6,0.2,1.0), "shape":"PLAIN_AXES"},
+    "springbox":        {"label":"Bounce Pad (Bouncer)", "cat":"Objects",   "tpage_group":"Jungle",   "ag":"bouncer-ag.go",           "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.9,0.7,0.1,1.0), "shape":"CUBE"},
+    "oracle":           {"label":"Oracle",               "cat":"NPCs",      "tpage_group":"Village1", "ag":"oracle-ag.go",            "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.9,0.8,0.5,1.0), "shape":"SPHERE"},
+    "minershort":       {"label":"Miner (Short)",        "cat":"NPCs",      "tpage_group":"Village3", "ag":"minershort-ag.go",        "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.6,0.5,0.3,1.0), "shape":"SPHERE"},
+    "minertall":        {"label":"Miner (Tall)",         "cat":"NPCs",      "tpage_group":"Village3", "ag":"minertall-ag.go",         "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.45,0.3,1.0),"shape":"SPHERE"},
+    "eco-door":         {"label":"Eco Door",             "cat":"Objects",   "ag":"eco-door-ag.go",          "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.3,0.6,0.8,1.0), "shape":"CUBE"},
+    "launcherdoor":     {"label":"Launcher Door",        "cat":"Objects",   "ag":"launcherdoor-ag.go",      "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.4,0.5,0.7,1.0), "shape":"CUBE"},
+    "shover":           {"label":"Shover Platform",      "cat":"Objects",   "tpage_group":"Sunken",   "ag":"shover-ag.go",            "nav_safe":True,  "needs_path":True,  "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.5,0.7,1.0), "shape":"CUBE"},
+    "swampgate":        {"label":"Swamp Spike Gate",     "cat":"Objects",   "tpage_group":"Swamp",    "ag":"swamp-spike-gate-ag.go",  "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.4,0.5,0.2,1.0), "shape":"CUBE"},
+    "ceilingflag":      {"label":"Ceiling Flag",         "cat":"Objects",   "tpage_group":"Village2", "ag":"ceilingflag-ag.go",       "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.8,0.6,0.2,1.0), "shape":"SPHERE"},
+    "windturbine":      {"label":"Wind Turbine",         "cat":"Objects",   "tpage_group":"Misty",    "ag":"windturbine-ag.go",       "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.6,0.6,0.7,1.0), "shape":"SPHERE"},
+    "boatpaddle":       {"label":"Boat Paddle",          "cat":"Objects",   "tpage_group":"Misty",    "ag":"boatpaddle-ag.go",        "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.5,0.4,0.2,1.0), "shape":"SPHERE"},
+    "accordian":        {"label":"Accordian Obstacle",   "cat":"Objects",   "tpage_group":"Jungle",   "ag":"accordian-ag.go",         "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.5,0.3,1.0), "shape":"CUBE"},
+    "lavafall":         {"label":"Lava Fall",            "cat":"Objects",   "tpage_group":"Lavatube", "ag":"lavafall-ag.go",          "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(1.0,0.3,0.0,1.0), "shape":"CUBE"},
+    "lavafallsewera":   {"label":"Lava Fall Sewer A",    "cat":"Objects",   "tpage_group":"Lavatube", "ag":"lavafallsewera-ag.go",    "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(1.0,0.3,0.0,1.0), "shape":"CUBE"},
+    "lavafallsewerb":   {"label":"Lava Fall Sewer B",    "cat":"Objects",   "tpage_group":"Lavatube", "ag":"lavafallsewerb-ag.go",    "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(1.0,0.35,0.0,1.0),"shape":"CUBE"},
+    "lavabase":         {"label":"Lava Base",            "cat":"Objects",   "tpage_group":"Lavatube", "ag":"lavabase-ag.go",          "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.9,0.2,0.0,1.0), "shape":"CUBE"},
+    "lavayellowtarp":   {"label":"Lava Yellow Tarp",     "cat":"Objects",   "tpage_group":"Lavatube", "ag":"lavayellowtarp-ag.go",    "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.9,0.8,0.1,1.0), "shape":"CUBE"},
+    "chainmine":        {"label":"Chain Mine",           "cat":"Objects",   "tpage_group":"Lavatube", "ag":"chainmine-ag.go",         "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.6,0.1,0.1,1.0), "shape":"SPHERE"},
+    "balloon":          {"label":"Balloon Obstacle",     "cat":"Objects",   "tpage_group":"Firecanyon","ag":"balloon-ag.go",          "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.9,0.4,0.1,1.0), "shape":"SPHERE"},
+    "crate-darkeco-cluster": {"label":"Dark Eco Crate Cluster","cat":"Objects","tpage_group":"Firecanyon","ag":"crate-darkeco-cluster-ag.go","nav_safe":True,"needs_path":False,"needs_pathb":False,"is_prop":False,"ai_type":"process-drawable","color":(0.3,0.0,0.5,1.0),"shape":"CUBE"},
+    "swamp-tetherrock": {"label":"Swamp Tether Rock",    "cat":"Objects",   "tpage_group":"Village2", "ag":"swamp-tetherrock-ag.go",  "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.4,0.3,1.0), "shape":"SPHERE"},
+    "fishermans-boat":  {"label":"Fisherman's Boat",     "cat":"Objects",   "tpage_group":"Village1", "ag":"fishermans-boat-ag.go",   "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.5,0.4,0.2,1.0), "shape":"CUBE"},
+
     # ---- DEBUG ----
     "test-actor":       {"label":"Test Actor",           "cat":"Debug",     "ag":"test-actor-ag.go",        "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"prop",             "color":(0.8,0.8,0.8,1.0), "shape":"PLAIN_AXES"},
 }
@@ -448,6 +523,70 @@ ETYPE_CODE = {
     "junglesnake":     {"o": "junglesnake.o",      "o_only": True},
     "muse":            {"o": "muse.o",             "o_only": True},
     "bonelurker":      {"o": "bonelurker.o",       "o_only": True},  # ⚠ known crash - see open questions
+    # New enemies
+    "balloonlurker":   {"o": "balloonlurker.o",   "o_only": True},
+    "darkvine":        {"o": "darkvine.o",         "o_only": True},
+    "junglefish":      {"o": "junglefish.o",       "o_only": True},
+    "peeper":          {"o": "rolling-lightning-mole.o", "o_only": True},
+    "cave-trap":       {"o": "cave-trap.o",        "o_only": True},
+    "spider-egg":      {"o": "spider-egg.o",       "o_only": True},
+    "spider-vent":     {"o": "cave-trap.o",        "o_only": True},  # spider-vent is in cave-trap.gc
+    "swamp-rat-nest":  {"o": "swamp-rat-nest.o",   "o_only": True},
+    "sunkenfisha":     {"o": "sunken-fish.o",      "o_only": True},
+    "sharkey":         {"o": "sharkey.o",          "o_only": True},
+    "villa-starfish":  {"o": "village-obs.o",      "o_only": True},  # villa-starfish is in village-obs.gc
+    # New pickups
+    "eco-pill":        {"o": "collectables.o",     "o_only": True},
+    "ecovent":         {"o": "collectables.o",     "o_only": True},
+    "ventblue":        {"o": "collectables.o",     "o_only": True},
+    "ventred":         {"o": "collectables.o",     "o_only": True},
+    "ventyellow":      {"o": "collectables.o",     "o_only": True},
+    "ecoventrock":     {"o": "beach-obs.o",        "o_only": True},
+    # New platforms
+    "orbit-plat":      {"o": "orbit-plat.o",       "o_only": True},
+    "square-platform": {"o": "square-platform.o",  "o_only": True},
+    "ropebridge":      {"o": "ropebridge.o",       "o_only": True},
+    "lavaballoon":     {"o": "lavatube-obs.o",     "o_only": True},
+    "darkecobarrel":   {"o": "lavatube-obs.o",     "o_only": True},
+    "caveelevator":    {"o": "maincave-obs.o",     "o_only": True},
+    "caveflamepots":   {"o": "maincave-obs.o",     "o_only": True},
+    "cavetrapdoor":    {"o": "maincave-obs.o",     "o_only": True},
+    "cavespatula":     {"o": "maincave-obs.o",     "o_only": True},
+    "cavespatulatwo":  {"o": "maincave-obs.o",     "o_only": True},
+    "ogre-bridge":     {"o": "ogre-obs.o",         "o_only": True},
+    "ogre-bridgeend":  {"o": "ogre-obs.o",         "o_only": True},
+    "pontoon":         {"o": "village2-obs.o",     "o_only": True},
+    "tra-pontoon":     {"o": "training-obs.o",     "o_only": True},
+    "mis-bone-bridge": {"o": "misty-obs.o",        "o_only": True},
+    "breakaway-left":  {"o": "misty-obs.o",        "o_only": True},
+    "breakaway-mid":   {"o": "misty-obs.o",        "o_only": True},
+    "breakaway-right": {"o": "misty-obs.o",        "o_only": True},
+    # New objects / interactables
+    "water-vol":       {"o": "water.o",            "o_only": True},
+    "swingpole":       {"o": "generic-obs.o",      "o_only": True},
+    "springbox":       {"o": "bouncer.o",          "o_only": True},
+    "eco-door":        {"o": "baseplat.o",         "o_only": True},
+    "launcherdoor":    {"o": "launcherdoor.o",     "o_only": True},
+    "shover":          {"o": "shover.o",           "o_only": True},
+    "swampgate":       {"o": "swamp-obs.o",        "o_only": True},
+    "ceilingflag":     {"o": "village2-obs.o",     "o_only": True},
+    "windturbine":     {"o": "misty-obs.o",        "o_only": True},
+    "boatpaddle":      {"o": "misty-obs.o",        "o_only": True},
+    "accordian":       {"o": "jungle-obs.o",       "o_only": True},
+    "lavafall":        {"o": "lavatube-obs.o",     "o_only": True},
+    "lavafallsewera":  {"o": "lavatube-obs.o",     "o_only": True},
+    "lavafallsewerb":  {"o": "lavatube-obs.o",     "o_only": True},
+    "lavabase":        {"o": "lavatube-obs.o",     "o_only": True},
+    "lavayellowtarp":  {"o": "lavatube-obs.o",     "o_only": True},
+    "chainmine":       {"o": "lavatube-obs.o",     "o_only": True},
+    "balloon":         {"o": "firecanyon-obs.o",   "o_only": True},
+    "crate-darkeco-cluster": {"o": "firecanyon-obs.o", "o_only": True},
+    "swamp-tetherrock":{"o": "swamp-blimp.o",      "o_only": True},
+    "fishermans-boat": {"o": "fishermans-boat.o",  "o_only": True},
+    # New NPCs
+    "oracle":          {"o": "oracle.o",           "o_only": True},
+    "minershort":      {"o": "miners.o",           "o_only": True},
+    "minertall":       {"o": "miners.o",           "o_only": True},
 
     # NPCs — vanilla, inject .o only
     "flutflut":        {"o": "flutflut.o",         "o_only": True},
@@ -462,6 +601,75 @@ ETYPE_CODE = {
     "warrior":         {"o": "warrior.o",          "o_only": True},
     "gambler":         {"o": "gambler.o",          "o_only": True},
     "ogreboss":        {"o": "ogreboss.o",         "o_only": True},
+
+    # ── Quick fix: missing from previous batch ──────────────────────────────
+    "baby-spider":     {"o": "baby-spider.o",      "o_only": True},
+    "cavecrusher":     {"o": "maincave-obs.o",     "o_only": True},
+    "dark-crystal":    {"o": "dark-crystal.o",     "o_only": True},
+    "mother-spider":   {"o": "mother-spider.o",    "o_only": True},
+
+    # ── Old eco-placeholder types — map to always-loaded collectables.o ─────
+    # These are legacy entries superseded by ecovent/ventblue/red/yellow.
+    # Keeping them alive so old scenes don't break.
+    "eco-blue":        {"in_game_cgo": True},  # collectables.o always loaded
+    "eco-red":         {"in_game_cgo": True},
+    "eco-yellow":      {"in_game_cgo": True},
+    "eco-green":       {"in_game_cgo": True},
+
+    # ── warp-gate / warpgate — in game.gd / villagep-obs.gd ─────────────────
+    "warp-gate":       {"in_game_cgo": True},  # basebutton.o in game.gd
+    "warpgate":        {"o": "villagep-obs.o",     "o_only": True},
+
+    # ── Enemies needing both .o + tpages ────────────────────────────────────
+    "fireboulder":     {"o": "village2-obs.o",     "o_only": True},
+    "green-eco-lurker":{"o": "green-eco-lurker.o", "o_only": True},
+    "ice-cube":        {"o": "ice-cube.o",         "o_only": True},
+    "lightning-mole":  {"o": "rolling-lightning-mole.o", "o_only": True},
+    "plunger-lurker":  {"o": "flying-lurker.o",    "o_only": True},
+    "ram":             {"o": "snow-ram.o",          "o_only": True},
+
+    # ── Bosses ───────────────────────────────────────────────────────────────
+    "plant-boss":      {"o": "plant-boss.o",       "o_only": True},
+    "robotboss":       {"o": "robotboss-h.o",      "o_only": True},
+
+    # ── NPCs ─────────────────────────────────────────────────────────────────
+    "pelican":         {"o": "pelican.o",          "o_only": True},
+    "robber":          {"o": "rolling-robber.o",   "o_only": True},
+    "seagull":         {"o": "seagull.o",          "o_only": True},
+
+    # ── Pickups ──────────────────────────────────────────────────────────────
+    "powercellalt":    {"o": "final-door.o",       "o_only": True},
+
+    # ── Platforms ────────────────────────────────────────────────────────────
+    "balance-plat":    {"o": "swamp-obs.o",        "o_only": True},
+    "launcher":        {"o": "floating-launcher.o","o_only": True},
+    "plat-flip":       {"o": "plat-flip.o",        "o_only": True},
+    "revcycle":        {"o": "village-obs.o",      "o_only": True},
+    "side-to-side-plat":{"o": "sunken-obs.o",     "o_only": True},
+    "tar-plat":        {"o": "swamp-obs.o",        "o_only": True},
+    "teetertotter":    {"o": "misty-teetertotter.o","o_only": True},
+    "wall-plat":       {"o": "wall-plat.o",        "o_only": True},
+    "wedge-plat":      {"o": "wedge-plats.o",      "o_only": True},
+
+    # ── Objects ──────────────────────────────────────────────────────────────
+    "cavecrystal":     {"o": "darkcave-obs.o",     "o_only": True},
+    "cavegem":         {"o": "miners.o",           "o_only": True},
+    "ecoclaw":         {"o": "robotboss-misc.o",   "o_only": True},
+    "gondola":         {"o": "village3-obs.o",     "o_only": True},
+    "shortcut-boulder":{"o": "ogre-obs.o",         "o_only": True},
+    "spike":           {"o": "firecanyon-obs.o",   "o_only": True},
+    "steam-cap":       {"o": "steam-cap.o",        "o_only": True},
+    "swamp-blimp":     {"o": "swamp-blimp.o",      "o_only": True},
+    "swamp-rock":      {"o": "swamp-obs.o",        "o_only": True},
+    "swamp-rope":      {"o": "swamp-blimp.o",      "o_only": True},
+    "swamp-spike":     {"o": "swamp-obs.o",        "o_only": True},
+    "tntbarrel":       {"o": "ogre-obs.o",         "o_only": True},
+    "whirlpool":       {"o": "whirlpool.o",        "o_only": True},
+    "windmill-one":    {"o": "beach-obs.o",        "o_only": True},
+
+    # ── Props ─────────────────────────────────────────────────────────────────
+    "dark-plant":      {"o": "rolling-obs.o",      "o_only": True},
+    "evilplant":       {"o": "village-obs.o",      "o_only": True},
 }
 
 
@@ -493,6 +701,16 @@ ROBOCAVE_TPAGES= ["tpage-1318.go", "tpage-1319.go", "tpage-1317.go", "tpage-1316
 DARK_TPAGES    = ["tpage-1306.go", "tpage-1307.go", "tpage-1305.go", "tpage-1304.go"]             # dar.gd  (darkcave spiders — NOT maincave)
 OGRE_TPAGES    = ["tpage-875.go",  "tpage-967.go",  "tpage-884.go",  "tpage-1117.go"]             # ogr.gd  (flying-lurker)
 MISTY_TPAGES   = ["tpage-516.go",  "tpage-521.go",  "tpage-518.go",  "tpage-520.go"]              # mis.gd  (quicksandlurker, muse, bonelurker, balloonlurker)
+LAVATUBE_TPAGES= ["tpage-1119.go", "tpage-1338.go", "tpage-1340.go", "tpage-1339.go", "tpage-1337.go"] # lav.gd
+FIRECANYON_TPAGES=["tpage-1119.go","tpage-815.go",  "tpage-822.go",  "tpage-854.go",  "tpage-1123.go"] # fic.gd
+VILLAGE1_TPAGES= ["tpage-398.go",  "tpage-400.go",  "tpage-399.go",  "tpage-401.go",  "tpage-1470.go"] # vi1.gd
+VILLAGE2_TPAGES= ["tpage-919.go",  "tpage-922.go",  "tpage-920.go",  "tpage-921.go",  "tpage-1476.go"] # vi2.gd
+VILLAGE3_TPAGES= ["tpage-1208.go", "tpage-1210.go", "tpage-1209.go", "tpage-1194.go"]                  # vi3.gd
+ROLLING_TPAGES = ["tpage-1119.go", "tpage-923.go",  "tpage-926.go",  "tpage-924.go",  "tpage-925.go",  "tpage-1353.go"] # rol.gd
+TRAINING_TPAGES= ["tpage-1309.go", "tpage-1311.go", "tpage-1310.go", "tpage-1308.go", "tpage-775.go"]  # tra.gd
+JUNGLEB_TPAGES = ["tpage-485.go",  "tpage-510.go",  "tpage-507.go",  "tpage-966.go"]                   # jub.gd  (plant-boss, plat-flip)
+FINALBOSS_TPAGES=["tpage-1419.go", "tpage-1420.go", "tpage-634.go",  "tpage-1418.go", "tpage-545.go"]  # fin.gd  (robotboss, green-eco-lurker, ecoclaw)
+CITADEL_TPAGES = ["tpage-1415.go", "tpage-1417.go", "tpage-1416.go", "tpage-1414.go"]                  # cit.gd
 
 ETYPE_TPAGES = {
     # Beach (bea.gd)
@@ -530,6 +748,138 @@ ETYPE_TPAGES = {
     "muse":            MISTY_TPAGES,
     "bonelurker":      MISTY_TPAGES,
     "balloonlurker":   MISTY_TPAGES,
+    "mis-bone-bridge": MISTY_TPAGES,
+    "breakaway-left":  MISTY_TPAGES,
+    "breakaway-mid":   MISTY_TPAGES,
+    "breakaway-right": MISTY_TPAGES,
+    "windturbine":     MISTY_TPAGES,
+    "boatpaddle":      MISTY_TPAGES,
+    # Jungle (jun.gd) — new
+    "darkvine":        JUNGLE_TPAGES,
+    "junglefish":      JUNGLE_TPAGES,
+    "springbox":       JUNGLE_TPAGES,
+    "ropebridge":      JUNGLE_TPAGES,
+    "accordian":       JUNGLE_TPAGES,
+    # Swamp (swa.gd) — new
+    "swamp-rat-nest":  SWAMP_TPAGES,
+    "sharkey":         SWAMP_TPAGES,
+    "swampgate":       SWAMP_TPAGES,
+    # Sunken (sun.gd) — new
+    "sunkenfisha":     SUNKEN_TPAGES,
+    "orbit-plat":      SUNKEN_TPAGES,
+    "square-platform": SUNKEN_TPAGES,
+    "shover":          SUNKEN_TPAGES,
+    # Maincave (mai.gd) — new
+    "cave-trap":       CAVE_TPAGES,
+    "spider-egg":      CAVE_TPAGES,
+    "spider-vent":     CAVE_TPAGES,
+    "caveelevator":    CAVE_TPAGES,
+    "caveflamepots":   CAVE_TPAGES,
+    "cavetrapdoor":    CAVE_TPAGES,
+    "cavespatula":     CAVE_TPAGES,
+    "cavespatulatwo":  CAVE_TPAGES,
+    # Lavatube (lav.gd) — new
+    "lavafall":        LAVATUBE_TPAGES,
+    "lavafallsewera":  LAVATUBE_TPAGES,
+    "lavafallsewerb":  LAVATUBE_TPAGES,
+    "lavabase":        LAVATUBE_TPAGES,
+    "lavayellowtarp":  LAVATUBE_TPAGES,
+    "chainmine":       LAVATUBE_TPAGES,
+    "lavaballoon":     LAVATUBE_TPAGES,
+    "darkecobarrel":   LAVATUBE_TPAGES,
+    # Firecanyon (fic.gd) — new
+    "balloon":         FIRECANYON_TPAGES,
+    "crate-darkeco-cluster": FIRECANYON_TPAGES,
+    # Village1 (vi1.gd) — new
+    "villa-starfish":  VILLAGE1_TPAGES,
+    "oracle":          VILLAGE1_TPAGES,
+    "fishermans-boat": VILLAGE1_TPAGES,
+    "ecoventrock":     BEACH_TPAGES,
+    # Village2 (vi2.gd) — new
+    "pontoon":         VILLAGE2_TPAGES,
+    "swamp-tetherrock":VILLAGE2_TPAGES,
+    "ceilingflag":     VILLAGE2_TPAGES,
+    # Village3 (vi3.gd) — new
+    "minershort":      VILLAGE3_TPAGES,
+    "minertall":       VILLAGE3_TPAGES,
+    # Rolling (rol.gd) — new
+    "peeper":          ROLLING_TPAGES,
+    # Training (tra.gd) — new
+    "tra-pontoon":     TRAINING_TPAGES,
+    # Ogre (ogr.gd) — new
+    "ogre-bridge":     OGRE_TPAGES,
+    "ogre-bridgeend":  OGRE_TPAGES,
+
+    # ── Quick fix: NPCs missing tpages ────────────────────────────────────
+    # Village1 NPCs
+    "farmer":          VILLAGE1_TPAGES,
+    "mayor":           VILLAGE1_TPAGES,
+    "yakow":           VILLAGE1_TPAGES,
+    "explorer":        VILLAGE1_TPAGES,
+    "evilplant":       VILLAGE1_TPAGES,
+    "revcycle":        VILLAGE1_TPAGES,
+    # Village2 NPCs
+    "gambler":         VILLAGE2_TPAGES,
+    "geologist":       VILLAGE2_TPAGES,
+    "warrior":         VILLAGE2_TPAGES,
+    "fireboulder":     VILLAGE2_TPAGES,
+    "warpgate":        VILLAGE2_TPAGES,
+    # Jungle NPCs
+    "fisher":          JUNGLE_TPAGES,
+    # Swamp NPC
+    "billy":           SWAMP_TPAGES,
+    "flutflut":        SWAMP_TPAGES,
+    # Beach NPCs
+    "sculptor":        BEACH_TPAGES,
+    "pelican":         BEACH_TPAGES,
+    "seagull":         BEACH_TPAGES,
+    "windmill-one":    BEACH_TPAGES,
+    # Rolling (rol.gd)
+    "robber":          ROLLING_TPAGES,
+    "lightning-mole":  ROLLING_TPAGES,
+    "dark-plant":      ROLLING_TPAGES,
+    # Ogre boss
+    "ogreboss":        OGRE_TPAGES,
+    "tntbarrel":       OGRE_TPAGES,
+    "shortcut-boulder":OGRE_TPAGES,
+    "plunger-lurker":  OGRE_TPAGES,
+
+    # ── Needs Both — tpages now added ────────────────────────────────────
+    # Snow (sno.gd)
+    "ice-cube":        SNOW_TPAGES,
+    "ram":             SNOW_TPAGES,
+    # Swamp (swa.gd)
+    "balance-plat":    SWAMP_TPAGES,
+    "tar-plat":        SWAMP_TPAGES,
+    "swamp-rock":      SWAMP_TPAGES,
+    "swamp-spike":     SWAMP_TPAGES,
+    # Village2 (vi2.gd)
+    "swamp-blimp":     VILLAGE2_TPAGES,
+    "swamp-rope":      VILLAGE2_TPAGES,
+    # Village3 (vi3.gd)
+    "cavegem":         VILLAGE3_TPAGES,
+    "gondola":         VILLAGE3_TPAGES,
+    # Sunken (sun.gd)
+    "launcher":        SUNKEN_TPAGES,
+    "side-to-side-plat": SUNKEN_TPAGES,
+    "wall-plat":       SUNKEN_TPAGES,
+    "wedge-plat":      SUNKEN_TPAGES,
+    "steam-cap":       SUNKEN_TPAGES,
+    "whirlpool":       SUNKEN_TPAGES,
+    # Jungleb (jub.gd)
+    "plant-boss":      JUNGLEB_TPAGES,
+    "plat-flip":       JUNGLEB_TPAGES,
+    # Finalboss (fin.gd)
+    "green-eco-lurker":FINALBOSS_TPAGES,
+    "robotboss":       FINALBOSS_TPAGES,
+    "ecoclaw":         FINALBOSS_TPAGES,
+    "powercellalt":    FINALBOSS_TPAGES,
+    # Darkcave (dar.gd)
+    "cavecrystal":     DARK_TPAGES,
+    # Misty (mis.gd)
+    "teetertotter":    MISTY_TPAGES,
+    # Firecanyon (fic.gd)
+    "spike":           FIRECANYON_TPAGES,
 }
 
 def needed_tpages(actors):
@@ -3330,6 +3680,34 @@ def collect_actors(scene):
         if is_enemy and "vis-dist" not in lump:
             lump["vis-dist"] = ["meters", 200.0]
 
+        # ── Entity links (alt-actor, water-actor, state-actor, etc.) ─────────
+        # Build string-array lumps from og_actor_links CollectionProperty.
+        # These are merged before custom lump rows so rows can override them.
+        link_lumps = _build_actor_link_lumps(o, etype)
+        for lkey, lval in link_lumps.items():
+            lump[lkey] = lval
+            names = lval[1:]  # strip "string" prefix
+            log(f"  [entity-link] {o.name}  '{lkey}' → {names}")
+
+        # Warn about required slots that are unset
+        for (lkey, sidx, label, _accepted, required) in _actor_link_slots(etype):
+            if required and not _actor_get_link(o, lkey, sidx):
+                log(f"  [WARNING] {o.name} required link '{lkey}[{sidx}]' ({label}) is not set — may crash at runtime!")
+
+        # ── Custom lump rows (assisted panel) ────────────────────────────────
+        # Merge OGLumpRow entries into the lump dict. Rows take priority over
+        # hardcoded values above — any conflict logs a warning but the row wins.
+        for row in getattr(o, "og_lump_rows", []):
+            value, err = _parse_lump_row(row.key, row.ltype, row.value)
+            if err:
+                log(f"  [WARNING] {o.name} lump row '{row.key}': {err} — skipped")
+                continue
+            key = row.key.strip()
+            if key in _LUMP_HARDCODED_KEYS and key in lump:
+                log(f"  [WARNING] {o.name} lump row '{key}' overrides addon default")
+            lump[key] = value
+            log(f"  [lump-row] {o.name}  '{key}' = {value}")
+
         out.append({
             "trans":     [gx, gy, gz],
             "etype":     etype,
@@ -5422,6 +5800,889 @@ def _actor_supports_aggro_trigger(etype):
 
 
 # ===========================================================================
+# LUMP REFERENCE TABLE
+# ---------------------------------------------------------------------------
+# Per-actor lump reference data. Each entry is:
+#   (key, ltype, description)
+# Used by OG_PT_SelectedLumpReference to auto-populate a read-only reference
+# panel and to pre-fill new rows when the user clicks "Use This".
+#
+# UNIVERSAL_LUMPS apply to every actor.
+# LUMP_REFERENCE maps etype → list of actor-specific entries.
+# ===========================================================================
+
+UNIVERSAL_LUMPS = [
+    ("vis-dist",      "meters",  "Distance at which entity stays active/visible. Enemies default 200m."),
+    ("idle-distance", "meters",  "Player must be closer than this to wake the enemy. Default 80m."),
+    ("shadow-mask",   "uint32",  "Which shadow layers render for this entity. e.g. 255 = all."),
+    ("light-index",   "uint32",  "Index into the level's light array. Controls entity illumination."),
+    ("lod-dist",      "meters",  "Distance threshold for LOD switching. Array of floats per LOD level."),
+    ("texture-bucket","int32",   "Texture bucket for draw calls. Default 1."),
+    ("options",       "enum-uint32", "fact-options bitfield e.g. '(fact-options has-power-cell)'."),
+    ("visvol",        "vector4m","Visibility bounding box — two vector4m entries (min corner, max corner)."),
+]
+
+# Format: etype → [(key, ltype, description), ...]
+LUMP_REFERENCE = {
+    # ── Enemies (universal to all enemies/bosses) ─────────────────────────
+    # Applied via _actor_is_enemy check in the panel draw, not listed per-type.
+    # Listed here under a special sentinel key "_enemy" for draw logic.
+    "_enemy": [
+        ("nav-mesh-sphere", "vector4m", "Fallback nav sphere: 'x y z radius_m'. Auto-injected for nav-unsafe enemies."),
+        ("nav-max-users",   "int32",    "Max nav-control users sharing this navmesh. Default 32."),
+    ],
+
+    # ── Nav-unsafe enemies (specific) ─────────────────────────────────────
+    "babak":          [],
+    "lurkercrab":     [],
+    "lurkerpuppy":    [],
+    "hopper":         [],
+    "swamp-rat":      [],
+    "kermit":         [],
+    "snow-bunny":     [
+        ("mode", "uint32", "Variant selector — controls snow-bunny behaviour variant."),
+    ],
+    "double-lurker":  [],
+    "bonelurker":     [],
+    "muse":           [],
+    "baby-spider":    [],
+    "green-eco-lurker":[],
+
+    # ── Process-drawable enemies ───────────────────────────────────────────
+    "lurkerworm":     [],
+    "junglesnake":    [],
+    "swamp-bat": [
+        ("num-lurkers", "int32",  "Number of bat slaves spawned. Range 2–8, default 6."),
+    ],
+    "yeti": [
+        ("num-lurkers",  "int32",  "Number of yeti children. Default = path vertex count."),
+        ("notice-dist",  "meters", "Distance at which yeti notices player. Default 50m."),
+    ],
+    "bully":          [],
+    "puffer": [
+        ("distance", "float", "Min/max notice distance in internal units: 'min max'. e.g. '40960 81920' = 10–20m."),
+        ("options",  "enum-uint32", "Use '(fact-options instant-collect)' for instant-kill puffer."),
+    ],
+    "flying-lurker":  [],
+    "plunger-lurker": [],
+    "mother-spider":  [],
+    "gnawer": [
+        ("extra-count",  "int32", "Two values: gnawer spawn counts."),
+        ("gnawer",       "int32", "Bitmask controlling gnawer behaviour variants."),
+        ("trans-offset", "float", "Position offset from base trans: 'dx dy dz' internal units."),
+    ],
+    "driller-lurker": [],
+    "dark-crystal": [
+        ("mode",     "int32", "1 = underwater dark crystal variant."),
+        ("extra-id", "int32", "Crystal number / identifier."),
+        ("extra-radius", "float", "Collision/activation radius override."),
+    ],
+    "cavecrusher":    [],
+    "quicksandlurker":[],
+    "ram":            [],
+    "lightning-mole": [],
+    "ice-cube":       [],
+    "fireboulder":    [],
+
+    # ── Bosses ─────────────────────────────────────────────────────────────
+    "ogreboss":       [],
+    "plant-boss":     [],
+    "robotboss":      [],
+
+    # ── NPCs ───────────────────────────────────────────────────────────────
+    "yakow": [
+        ("alt-vector", "vector3m", "Yakow wander target position: 'x y z'."),
+    ],
+    "flutflut":  [],
+    "mayor":     [],
+    "farmer":    [],
+    "fisher":    [],
+    "explorer":  [],
+    "geologist": [],
+    "warrior":   [],
+    "gambler":   [],
+    "sculptor":  [],
+    "billy":     [],
+    "pelican":   [],
+    "seagull":   [],
+    "robber":    [],
+
+    # ── Pickups ────────────────────────────────────────────────────────────
+    "fuel-cell": [
+        ("movie-pos", "movie-pos", "Cutscene landing position: 'x y z rot_deg'."),
+    ],
+    "money":         [],
+    "buzzer":        [],
+    "crate": [
+        ("crate-type", "string", "Crate variant: steel / wood / metal / darkeco / iron."),
+        ("eco-info",   "eco-info","Pickup contents: '(pickup-type money) amount'."),
+    ],
+    "orb-cache-top": [
+        ("orb-cache-count", "int32", "Number of orbs the cache releases when activated."),
+    ],
+    "powercellalt":  [],
+    "eco-yellow":    [],
+    "eco-red":       [],
+    "eco-blue":      [],
+    "eco-green":     [],
+
+    # ── Platforms ──────────────────────────────────────────────────────────
+    "plat": [
+        ("sync", "float", "Path timing: 'period_sec phase [ease_out ease_in]'. e.g. '4.0 0.0 0.15 0.15'."),
+    ],
+    "plat-eco": [
+        ("sync",        "float",  "Path timing: 'period_sec phase [ease_out ease_in]'."),
+        ("notice-dist", "meters", "Blue eco activation range. -1 = always active."),
+    ],
+    "plat-button": [
+        ("camera-name",   "string", "Name of camera to activate when button pressed."),
+        ("bidirectional", "symbol", "Set to 'true' to allow platform to return."),
+    ],
+    "plat-flip": [
+        ("delay",        "float", "Two values: 'before_down_sec before_up_sec'."),
+        ("sync-percent", "float", "Phase offset for sync."),
+    ],
+    "wall-plat":        [],
+    "balance-plat":     [],
+    "teetertotter":     [],
+    "side-to-side-plat":[
+        ("sync", "float", "Path timing: 'period_sec phase [ease_out ease_in]'."),
+    ],
+    "wedge-plat":   [],
+    "tar-plat":     [],
+    "revcycle":     [],
+    "launcher": [
+        ("spring-height", "meters", "Launch height. Default from art."),
+        ("alt-vector",    "vector3m", "Override launch direction: 'x y z'."),
+        ("mode",          "int32",  "Camera mode selector."),
+        ("art-name",      "symbol", "Art group override."),
+    ],
+    "warpgate": [],
+
+    # ── Objects / Interactables ────────────────────────────────────────────
+    "cavecrystal": [],
+    "cavegem":     [],
+    "tntbarrel":   [],
+    "shortcut-boulder": [],
+    "spike":       [],
+    "steam-cap": [
+        ("percent", "float", "Completion percentage threshold."),
+    ],
+    "windmill-one": [],
+    "ecoclaw":      [],
+    "ecovalve":     [],
+    "swamp-rock":   [],
+    "gondola":      [],
+    "swamp-blimp":  [],
+    "swamp-rope":   [],
+    "swamp-spike":  [],
+    "whirlpool": [
+        ("speed", "float", "Two values: 'base_speed random_range' in internal units."),
+    ],
+    "warp-gate":    [],
+    # ── New enemies ────────────────────────────────────────────────────────
+    "balloonlurker": [],  # no lumps; alt-actor 0 = partner entity for kill-state check
+    "darkvine":      [],  # no lumps
+    "junglefish": [
+        ("water-height", "float", "Y-coordinate of water surface in raw game units (not meters). Fish positions itself 1m below. Required."),
+    ],
+    "peeper":        [],  # no lumps; shares lightning-mole art group
+    "cave-trap": [
+        # alt-actor links to spider-egg entities are set via Waypoints (path) + actor links in JSONC
+        ("path", "vector3m", "Patrol path for spawned spiders. Required — export at least 2 waypoints."),
+    ],
+    "spider-egg": [
+        # alt-actor 0 = optional notify-actor (set via actor link, not a lump)
+    ],
+    "spider-vent":   [],  # no lumps; invisible spawner, just a position
+    "swamp-rat-nest": [
+        ("num-lurkers", "uint32", "Max rats active at once. Range 1–4. Default 3. Needs 'path' waypoints set."),
+    ],
+    "sunkenfisha": [
+        ("count",            "uint32", "Number of fish in the school (spawns count-1 extra children). Default 1."),
+        ("speed",            "float",  "Speed range in game units/frame: 'lo hi'. Defaults: '8192 26624' (2–6.5 m/s)."),
+        ("path-max-offset",  "float",  "Max wander from path: 'x_units y_units'. Defaults: '16384 28672' (4m, 7m)."),
+        ("path-trans-offset","float",  "Offset the entire path: 'x y z' in raw game units. Default 0 0 0."),
+    ],
+    "sharkey": [
+        ("scale",        "float",  "Uniform scale multiplier. Affects size and collision. Default 1.0."),
+        ("water-height", "float",  "Y-coordinate of water surface in raw game units. Required (defaults to 0)."),
+        ("delay",        "float",  "Seconds before shark re-engages after losing player. Default 1.0."),
+        ("distance",     "meters", "Player trigger radius — how far away shark can spawn. Default 30m."),
+        ("speed",        "meters", "Chase speed in meters/sec. Default ~12m/s."),
+    ],
+    "villa-starfish": [
+        ("num-lurkers", "uint32", "Number of starfish children. Range 1–8. Default 3. Needs path waypoints."),
+    ],
+
+    # ── New pickups ────────────────────────────────────────────────────────
+    "eco-pill":  [],  # no lumps; type/amount hardcoded
+    "ecovent":   [
+        # alt-actor 0 = optional blocker entity (set via actor link in JSONC, not a lump key)
+    ],
+    "ventblue":  [],  # identical to ecovent
+    "ventred":   [],  # type hardcoded to eco-red
+    "ventyellow":[],  # type hardcoded to eco-yellow
+    "ecoventrock":[],  # no lumps
+    "water-vol": [
+        ("water-height", "water-height", "Water surface definition: 'water_m wade_m swim_m [flags] [bottom_m]'. Required."),
+        ("attack-event", "symbol",       "Event fired when player drowns. Default 'drown. Bare string: \"'drown\"."),
+    ],
+
+    # ── New platforms ──────────────────────────────────────────────────────
+    "orbit-plat": [
+        ("scale",   "float", "Uniform scale of the platform mesh. Default 1.0."),
+        ("timeout", "float", "Seconds to wait before starting orbit. Default 10.0."),
+        # alt-actor 0 = center entity to orbit around (required — set via actor link)
+    ],
+    "square-platform": [
+        ("distance", "float", "Travel range: 'down_units up_units'. Defaults '-8192 16384' (-2m down, +4m up). Raw units."),
+        # alt-actor 0 = optional water-entity for splash effects
+    ],
+    "ropebridge": [
+        ("art-name", "string", "Bridge variant. Values: ropebridge-32, ropebridge-36, ropebridge-52, ropebridge-70, snow-bridge-36, vil3-bridge-36. Default: ropebridge-32."),
+    ],
+    "lavaballoon": [
+        ("speed", "meters", "Movement speed along path. Default ~3m/s."),
+    ],
+    "darkecobarrel": [
+        ("speed", "meters", "Movement speed along path. Default ~15m/s."),
+        ("delay", "float",  "Optional: array of spawn delay times in seconds. Replaces the 4 hardcoded defaults when set."),
+    ],
+    "caveelevator": [
+        ("trans-offset", "float",   "Position offset applied after placement: 'x y z' raw units. Default 0 0 0."),
+        ("rotoffset",    "degrees", "Y-axis rotation offset in degrees. Default 0."),
+        ("mode",         "uint32",  "Elevator mode variant selector. Default 0."),
+    ],
+    "caveflamepots": [
+        ("shove",       "meters",  "Upward launch force when player touches flame. Default 2m."),
+        ("rotoffset",   "degrees", "Y-axis rotation for flame direction. Default 0."),
+        ("cycle-speed", "float",   "Three floats: 'period_sec phase_fraction pause_sec'. Defaults: '4.0 0.0 2.0'. Phase offsets multiple pots."),
+    ],
+    "cavetrapdoor":   [],  # no lumps
+    "cavespatula":    [],  # no lumps; art group switches by level name automatically
+    "cavespatulatwo": [],  # no lumps
+    "ogre-bridge": [
+        # alt-actor 0 = ogre-bridgeend entity (required — set via actor link)
+    ],
+    "ogre-bridgeend": [],  # no lumps
+    "pontoon": [
+        ("alt-task", "uint32", "Second task ID gate — if this task is complete, pontoon sinks. Default 0 (unused). Main task from entity perm."),
+    ],
+    "tra-pontoon":    [],  # same as pontoon but no alt-task in training context
+    "mis-bone-bridge": [
+        ("animation-select", "uint32", "Selects bone bridge variant and particle group. Values: 1, 2, 3, 7. Default 0 (no particles)."),
+    ],
+    "breakaway-left": [
+        ("height-info", "float", "Two floats controlling fall height offsets: 'h1 h2'. Default 0 0."),
+    ],
+    "breakaway-mid":  [
+        ("height-info", "float", "Two floats controlling fall height offsets: 'h1 h2'. Default 0 0."),
+    ],
+    "breakaway-right":[
+        ("height-info", "float", "Two floats controlling fall height offsets: 'h1 h2'. Default 0 0."),
+    ],
+
+    # ── New objects / interactables ────────────────────────────────────────
+    "swingpole":  [],  # no art, no lumps; position+rotation from entity transform only. Y-axis = pole axis.
+    "springbox": [
+        ("spring-height", "meters", "Launch height in meters. Default ~11m."),
+    ],
+    "eco-door": [
+        ("scale", "float",       "Uniform scale. Default 1.0."),
+        ("flags", "enum-uint32", "Behaviour flags. e.g. '(eco-door-flags auto-close)' or '(eco-door-flags one-way)'. Default 0."),
+        # state-actor link = optional entity whose perm status locks the door
+    ],
+    "launcherdoor": [
+        ("continue-name", "string", "Level continue point name set when door is passed through. e.g. \"village1-hut\"."),
+    ],
+    "shover": [
+        ("shove",              "meters",  "Upward launch force when platform hits player. Default 3m."),
+        ("collision-mesh-id",  "uint32",  "Collision mesh index. Default 0."),
+        ("trans-offset",       "float",   "Position offset: 'x y z' raw units. Default 0 0 0."),
+        ("rotoffset",          "degrees", "Y-axis rotation. Default 0."),
+    ],
+    "swampgate":  [],  # no lumps; open/close driven by entity perm status
+    "ceilingflag":[],  # no lumps; pure prop
+    "windturbine": [
+        ("particle-select", "uint32", "Set to 1 to enable particle effects. Default 0 (off)."),
+    ],
+    "boatpaddle":  [],  # no lumps; ambient animation only
+    "accordian": [
+        # alt-actor 0 = optional task gate entity (entity link, not a lump)
+    ],
+    "lavafall":        [],  # no lumps; pure prop animation
+    "lavafallsewera":  [],  # no lumps
+    "lavafallsewerb":  [],  # no lumps
+    "lavabase":        [],  # no lumps
+    "lavayellowtarp":  [],  # no lumps
+    "chainmine":       [],  # no lumps; auto-kills on contact
+    "balloon":         [],  # no lumps; ambient prop
+    "crate-darkeco-cluster": [],  # no lumps; standard dark eco crate cluster
+    "swamp-tetherrock": [],  # no lumps; task-gated breakable rock
+    "fishermans-boat":  [],  # no lumps; state depends on current-continue level name
+
+    # ── New NPCs ───────────────────────────────────────────────────────────
+    "oracle": [
+        ("alt-task", "uint32", "Second orb task ID (game-task enum value). For two-orb oracle. Default 0 (one orb only). First task from entity perm."),
+    ],
+    "minershort": [
+        # alt-actor 0 = minertall partner (required — must be paired; set via actor link)
+    ],
+    "minertall":  [],  # no lumps; pair link held by minershort
+
+    "test-actor":   [],
+
+    # ── Props ──────────────────────────────────────────────────────────────
+    "dark-plant":   [],  # no lumps; idle animation, task-gated state
+    "evilplant":    [],  # no lumps; idle animation only
+
+    # ── Newly-wired enemies ────────────────────────────────────────────────
+    "baby-spider":     [],  # no lumps; self-aligns to ground, alt-actor optional
+    "cavecrusher":     [],  # no lumps
+    "dark-crystal": [
+        ("mode",         "int32",  "1 = underwater variant. Default 0."),
+        ("extra-id",     "int32",  "Crystal identifier/number."),
+        ("extra-radius", "float",  "Collision/activation radius override."),
+    ],
+    "mother-spider":   [],  # no lumps; path-driven
+    "fireboulder": [
+        ("alt-task", "uint32", "Second task gate ID. Door stays closed until this task is complete."),
+    ],
+    "green-eco-lurker":[],  # no lumps
+    "ice-cube": [
+        ("mode", "uint32", "Variant selector. Default -1 (standard). 0 = alternate behaviour."),
+    ],
+    "lightning-mole":  [],  # no lumps
+    "plunger-lurker":  [],  # no lumps
+    "ram": [
+        ("extra-id", "int32",  "Ram identifier — which ram this is in the sequence (0-based)."),
+        ("mode",     "uint32", "1 = boss-fight mode. Default 0 (normal patrol mode)."),
+    ],
+
+    # ── Newly-wired bosses ─────────────────────────────────────────────────
+    "plant-boss":   [],  # no lumps; level-scripted
+    "robotboss":    [],  # no lumps; level-scripted
+
+    # ── Newly-wired NPCs ───────────────────────────────────────────────────
+    "pelican":      [],  # no lumps; path-driven
+    "robber": [
+        ("initial-spline-pos", "float",  "Starting position along the spline path (0.0–1.0)."),
+        ("water-height",       "float",  "Y-coordinate of water surface in raw units."),
+        ("timeout",            "float",  "Seconds before robber despawns. Default 10.0s."),
+    ],
+    "seagull":      [],  # no lumps
+
+    # ── Newly-wired pickups ────────────────────────────────────────────────
+    "powercellalt":    [],  # no lumps; standard fuel-cell alt art
+    "eco-blue":        [],  # legacy; use ecovent instead
+    "eco-red":         [],  # legacy; use ventred instead
+    "eco-yellow":      [],  # legacy; use ventyellow instead
+    "eco-green":       [],  # legacy; no standard replacement
+
+    # ── Newly-wired platforms ──────────────────────────────────────────────
+    "balance-plat": [
+        ("distance", "meters", "Vertical travel range. Default ~5m."),
+    ],
+    "launcher": [
+        ("spring-height",  "meters", "Launch height. Default ~40m."),
+        ("trigger-height", "meters", "Height above launcher base where Jak gets launched."),
+    ],
+    "plat-flip": [
+        ("delay", "float", "Two floats: 'before_down_sec before_up_sec'. e.g. '2.0 3.0'."),
+        ("sync-percent", "float", "Phase offset as fraction of cycle (0.0–1.0)."),
+    ],
+    "revcycle": [
+        ("sync", "float", "Path timing: 'period_sec phase [ease_out ease_in]'. Period hardcoded ~16s if not set."),
+    ],
+    "side-to-side-plat": [
+        ("sync", "float", "Path timing: 'period_sec phase [ease_out ease_in]'."),
+    ],
+    "tar-plat": [
+        ("scale-factor", "float", "Uniform scale multiplier. Default 1.0."),
+    ],
+    "teetertotter":    [],  # no lumps; physics-driven
+    "wall-plat": [
+        ("tunemeters", "meters", "Z-offset tuning for wall alignment. Default 0."),
+    ],
+    "warpgate":        [],  # no lumps; invisible process-hidden (teleporter activation zone)
+    "wedge-plat": [
+        ("rotspeed",  "degrees", "Rotation speed in degrees/sec."),
+        ("rotoffset", "degrees", "Initial rotation offset."),
+        ("distance",  "meters",  "Travel distance from origin. Default ~9m or ~17m depending on variant."),
+    ],
+
+    # ── Newly-wired objects ────────────────────────────────────────────────
+    "cavecrystal": [
+        ("timeout", "float", "Seconds before crystal deactivates. Default 8.0s."),
+    ],
+    "cavegem":         [],  # no lumps; ambient decoration
+    "ecoclaw":         [],  # no lumps; level-scripted prop
+    "gondola":         [],  # no lumps; animated path prop
+    "shortcut-boulder":[],  # no lumps; destructible boulder
+    "spike": [
+        # spike lumps checked: none found
+    ],
+    "steam-cap": [
+        ("percent", "float", "Completion percentage threshold for cap behaviour."),
+    ],
+    "swamp-blimp":     [],  # no lumps; ambient decoration
+    "swamp-rock": [
+        ("scale-factor", "float", "Uniform scale. Default 1.0."),
+    ],
+    "swamp-rope":      [],  # no lumps
+    "swamp-spike":     [],  # no lumps; static hazard
+    "tntbarrel":       [],  # no lumps; explodes on contact
+    "warp-gate":       [],  # no lumps (basebutton subtype; task-gated automatically)
+    "whirlpool": [
+        ("speed", "float", "Two floats: 'base_speed_units random_range'. Controls spin rate."),
+    ],
+    "windmill-one":    [],  # no lumps; animated decoration
+
+    "test-actor":   [],
+}
+
+
+def _lump_ref_for_etype(etype):
+    """Return (universal_lumps, actor_lumps) for a given etype.
+
+    universal_lumps — always shown for every actor
+    actor_lumps     — specific to this etype, plus shared enemy lumps if applicable
+    """
+    actor_entries = list(LUMP_REFERENCE.get(etype, []))
+    einfo = ENTITY_DEFS.get(etype, {})
+    # Inject enemy-universal lumps for enemies and bosses
+    if einfo.get("cat") in ("Enemies", "Bosses"):
+        actor_entries = list(LUMP_REFERENCE.get("_enemy", [])) + actor_entries
+    return UNIVERSAL_LUMPS, actor_entries
+
+
+# ===========================================================================
+# ACTOR ENTITY LINK SYSTEM
+# ---------------------------------------------------------------------------
+# Many actors reference other actors at runtime via entity-actor-lookup, which
+# reads a named lump key (e.g. "alt-actor", "water-actor", "state-actor") and
+# resolves it to an entity-actor pointer.
+#
+# The engine supports two formats for these references:
+#   - string array:  ["string", "orbit-plat-center-0"]   → entity-by-name
+#   - uint32 array:  ["uint32", <aid>]                    → entity-by-aid
+#
+# We use string format (entity name).  The level builder always assigns names
+# as "{etype}-{uid}", matching what collect_actors writes into lump["name"].
+#
+# ACTOR_LINK_DEFS maps etype → list of slot definitions:
+#   (lump_key, slot_index, label, accepted_etypes, required)
+#
+#   lump_key      — the res-lump key the engine reads (e.g. "alt-actor")
+#   slot_index    — 0-based index within that key's array
+#   label         — human-readable description shown in the panel
+#   accepted_etypes — list of valid target etype strings, or ["any"] for any ACTOR_
+#   required      — True = export warns if unset; False = optional
+#
+# At export, all slots for the same lump_key are collected in slot_index order
+# and written as a single string array lump.
+# ===========================================================================
+
+ACTOR_LINK_DEFS = {
+    # ── Enemies ──────────────────────────────────────────────────────────────
+    "cave-trap": [
+        ("alt-actor", 0, "Spider Egg 0",  ["spider-egg"], False),
+        ("alt-actor", 1, "Spider Egg 1",  ["spider-egg"], False),
+        ("alt-actor", 2, "Spider Egg 2",  ["spider-egg"], False),
+        ("alt-actor", 3, "Spider Egg 3",  ["spider-egg"], False),
+    ],
+    "spider-egg": [
+        ("alt-actor", 0, "Notify actor (messaged on hatch)", ["any"], False),
+    ],
+    "quicksandlurker": [
+        ("water-actor", 0, "Mud surface entity", ["any"], False),
+    ],
+    "balloonlurker": [
+        ("water-actor", 0, "Water surface entity", ["any"], False),
+    ],
+    "swamp-rat-nest": [
+        # No alt-actor — communicates via path + proximity
+    ],
+    "villa-starfish": [
+        # No alt-actor — path-driven
+    ],
+
+    # ── Platforms ─────────────────────────────────────────────────────────────
+    "orbit-plat": [
+        ("alt-actor", 0, "Center entity to orbit around", ["any"], True),
+    ],
+    "square-platform": [
+        ("alt-actor", 0, "Water entity (for splash effects)", ["water-vol"], False),
+    ],
+    "snow-log": [
+        ("alt-actor", 0, "Snow log master controller", ["any"], True),
+    ],
+    "snow-log-button": [
+        ("alt-actor", 0, "Snow log to activate", ["snow-log"], True),
+    ],
+    "ogre-bridge": [
+        ("alt-actor", 0, "Ogre bridge end piece", ["ogre-bridgeend"], True),
+    ],
+    "lavaballoon": [
+        # path-driven; no actor links
+    ],
+    "darkecobarrel": [
+        # path-driven; no actor links
+    ],
+
+    # ── Interactables / Doors ─────────────────────────────────────────────────
+    "eco-door": [
+        ("state-actor", 0, "Lock controller (door locked until this entity's task completes)", ["any"], False),
+    ],
+    "helix-water": [
+        ("alt-actor", 0, "Helix button 0",  ["helix-button"], True),
+        ("alt-actor", 1, "Helix button 1",  ["helix-button"], False),
+        ("alt-actor", 2, "Helix button 2",  ["helix-button"], False),
+        ("alt-actor", 3, "Helix button 3",  ["helix-button"], False),
+    ],
+    "helix-button": [
+        ("alt-actor", 0, "Helix water controller",  ["helix-water"],      True),
+        ("alt-actor", 1, "Helix slide door",         ["helix-slide-door"], True),
+    ],
+    "accordian": [
+        ("alt-actor", 0, "Task gate entity (optional)", ["any"], False),
+    ],
+    "swamp-tetherrock": [
+        ("alt-actor", 0, "Master blimp entity (optional)", ["swamp-blimp"], False),
+    ],
+
+    # ── Pickups / Eco ─────────────────────────────────────────────────────────
+    "ecovent": [
+        ("alt-actor", 0, "Blocker entity (vent blocked until this task completes)", ["any"], False),
+    ],
+    "ventblue": [
+        ("alt-actor", 0, "Blocker entity", ["any"], False),
+    ],
+    "ventred": [
+        ("alt-actor", 0, "Blocker entity", ["any"], False),
+    ],
+    "ventyellow": [
+        ("alt-actor", 0, "Blocker entity", ["any"], False),
+    ],
+
+    # ── NPCs ──────────────────────────────────────────────────────────────────
+    "minershort": [
+        ("alt-actor", 0, "Paired minertall (required)", ["minertall"], True),
+    ],
+}
+
+
+def _actor_link_slots(etype):
+    """Return the list of link slot defs for this etype, or []."""
+    return ACTOR_LINK_DEFS.get(etype, [])
+
+
+def _actor_has_links(etype):
+    """True if this etype has any defined entity link slots."""
+    return bool(_actor_link_slots(etype))
+
+
+def _actor_links(obj):
+    """Return the og_actor_links CollectionProperty on an actor empty."""
+    return getattr(obj, "og_actor_links", None)
+
+
+def _actor_get_link(obj, lump_key, slot_index):
+    """Return the OGActorLink entry for (lump_key, slot_index), or None."""
+    links = _actor_links(obj)
+    if not links:
+        return None
+    for entry in links:
+        if entry.lump_key == lump_key and entry.slot_index == slot_index:
+            return entry
+    return None
+
+
+def _actor_set_link(obj, lump_key, slot_index, target_name):
+    """Set or update a link entry. Creates if missing."""
+    links = _actor_links(obj)
+    if links is None:
+        return
+    for entry in links:
+        if entry.lump_key == lump_key and entry.slot_index == slot_index:
+            entry.target_name = target_name
+            return
+    entry = links.add()
+    entry.lump_key    = lump_key
+    entry.slot_index  = slot_index
+    entry.target_name = target_name
+
+
+def _actor_remove_link(obj, lump_key, slot_index):
+    """Remove a link entry. Returns True if found."""
+    links = _actor_links(obj)
+    if links is None:
+        return False
+    for i, entry in enumerate(links):
+        if entry.lump_key == lump_key and entry.slot_index == slot_index:
+            links.remove(i)
+            return True
+    return False
+
+
+def _build_actor_link_lumps(obj, etype):
+    """Build dict of lump_key → ["string", name0, name1, ...] for all set links.
+
+    Gaps in the index sequence are skipped (sparse arrays not supported by engine).
+    Returns a dict of lump entries to merge into the actor's lump dict at export.
+    """
+    slots = _actor_link_slots(etype)
+    if not slots:
+        return {}
+
+    # Group slots by lump_key, collect target names in slot_index order
+    from collections import defaultdict
+    by_key = defaultdict(dict)  # lump_key → {slot_index: target_name}
+    for (lkey, sidx, _label, _accepted, _required) in slots:
+        by_key[lkey]  # ensure key exists even if no links set
+
+    links = _actor_links(obj)
+    if links:
+        for entry in links:
+            if entry.target_name and entry.lump_key in by_key:
+                by_key[entry.lump_key][entry.slot_index] = entry.target_name
+
+    result = {}
+    for lkey, slot_map in by_key.items():
+        if not slot_map:
+            continue
+        # Build ordered list: slot 0, 1, 2... skipping missing
+        max_idx = max(slot_map.keys())
+        names = []
+        for i in range(max_idx + 1):
+            if i in slot_map:
+                names.append(slot_map[i])
+        if names:
+            result[lkey] = ["string"] + names
+    return result
+
+
+# ===========================================================================
+# LUMP ROW SYSTEM
+# ---------------------------------------------------------------------------
+# ACTOR_ empties can hold a CollectionProperty of OGLumpRow entries.
+# Each row is a (key, ltype, value) triplet that gets injected into the lump
+# dict at export time. The assisted panel is the primary UI for this.
+#
+# Type strings map 1:1 to the 18 valid JSONC lump type strings understood by
+# the C++ level builder (goalc/build_level/common/Entity.cpp).
+#
+# Value field is space-separated for multi-value types:
+#   meters    → "50.0"           → ["meters", 50.0]
+#   float     → "4.0 0.0 0.15"  → ["float", 4.0, 0.0, 0.15]
+#   vector3m  → "1.5 2.0 -3.0"  → ["vector3m", [1.5, 2.0, -3.0]]
+#   symbol    → "thunder"        → ["symbol", "thunder"]
+#   int32     → "3"              → ["int32", 3]
+#
+# Export priority (highest wins per key):
+#   1. Hardcoded addon values (name, path, sync, eco-info, etc.)  — lowest
+#   2. Assisted lump rows (this system)
+# Conflicts are logged as warnings in the export log.
+# ===========================================================================
+
+LUMP_TYPE_ITEMS = [
+    # Numeric scalars / arrays
+    ("float",        "float",        "Raw float array — space-separate multiple values e.g. '4.0 0.0 0.15 0.15'"),
+    ("meters",       "meters",       "Single float, scaled × 4096. Use for distances in metres"),
+    ("degrees",      "degrees",      "Single float, scaled × 182.044. Use for angles in degrees"),
+    ("int32",        "int32",        "Signed 32-bit int array — space-separate multiple values"),
+    ("uint32",       "uint32",       "Unsigned 32-bit int array — space-separate multiple values"),
+    # Enum helpers
+    ("enum-int32",   "enum-int32",   "GOAL enum resolved to int32 e.g. '(game-task village1-yakow)'"),
+    ("enum-uint32",  "enum-uint32",  "GOAL enum resolved to uint32 e.g. '(fact-options has-power-cell)'"),
+    # Vectors
+    ("vector4m",     "vector4m",     "4-component vector, each × 4096 — 'x y z w'"),
+    ("vector3m",     "vector3m",     "3-component vector, each × 4096, w=1 — 'x y z'"),
+    ("vector-vol",   "vector-vol",   "Volume vector: 'x y z radius_m' (xyz raw, w × 4096)"),
+    ("vector",       "vector",       "4-component raw vector — 'x y z w' (no unit scaling)"),
+    ("movie-pos",    "movie-pos",    "Cutscene position: 'x y z rot_deg' (xyz × 4096, w × degrees)"),
+    # Compound
+    ("water-height", "water-height", "Water volumes: 'water wade swim flags [bottom]' (4-5 values)"),
+    ("eco-info",     "eco-info",     "Pickup encoding — use the dedicated eco-info / cell-info / buzzer-info formats"),
+    ("cell-info",    "cell-info",    "Fuel cell: '(game-task none)' — encodes task ID"),
+    ("buzzer-info",  "buzzer-info",  "Scout fly: '(game-task none) index'"),
+    # String-likes
+    ("symbol",       "symbol",       "GOAL symbol reference e.g. 'thunder'"),
+    ("string",       "string",       "Plain string value"),
+    ("type",         "type",         "GOAL type reference e.g. 'process-drawable'"),
+]
+
+# Keys that the hardcoded export system always sets.
+# Lump rows that target these keys will emit a warning but are NOT blocked —
+# the row value takes priority, letting power users override defaults.
+_LUMP_HARDCODED_KEYS = frozenset({
+    "name", "path", "pathb", "sync", "options",
+    "eco-info", "cell-info", "buzzer-info", "crate-type",
+    "nav-mesh-sphere", "idle-distance", "vis-dist", "notice-dist",
+})
+
+
+def _parse_lump_row(key, ltype, value_str):
+    """Parse an OGLumpRow into a JSONC lump value, or return None on error.
+
+    Returns (jsonc_value, error_str) where error_str is None on success.
+    """
+    s = value_str.strip()
+    if not s:
+        return None, "empty value"
+    if not key.strip():
+        return None, "empty key"
+
+    try:
+        # Types that take a single string / enum value
+        if ltype in ("symbol", "string", "type", "enum-int32", "enum-uint32",
+                     "cell-info"):
+            return [ltype, s], None
+
+        if ltype == "buzzer-info":
+            parts = s.split()
+            if len(parts) == 1:
+                return ["buzzer-info", parts[0], 1], None
+            return ["buzzer-info", parts[0], int(parts[1])], None
+
+        if ltype == "eco-info":
+            parts = s.split()
+            if len(parts) < 2:
+                return None, "eco-info needs 'pickup-type amount'"
+            return ["eco-info", parts[0], int(parts[1])], None
+
+        # Numeric scalar types
+        if ltype in ("meters", "degrees"):
+            return [ltype, float(s)], None
+
+        # Multi-float / multi-int types
+        if ltype == "float":
+            nums = [float(x) for x in s.split()]
+            return ["float"] + nums, None
+
+        if ltype == "int32":
+            nums = [int(x) for x in s.split()]
+            return ["int32"] + nums, None
+
+        if ltype == "uint32":
+            nums = [int(x) for x in s.split()]
+            return ["uint32"] + nums, None
+
+        # Vector types — nested list format
+        if ltype == "vector3m":
+            nums = [float(x) for x in s.split()]
+            if len(nums) != 3:
+                return None, f"vector3m needs 3 values, got {len(nums)}"
+            return ["vector3m", nums], None
+
+        if ltype in ("vector4m", "vector", "movie-pos", "vector-vol"):
+            nums = [float(x) for x in s.split()]
+            if len(nums) != 4:
+                return None, f"{ltype} needs 4 values, got {len(nums)}"
+            return [ltype, nums], None
+
+        if ltype == "water-height":
+            parts = s.split()
+            if len(parts) < 4:
+                return None, "water-height needs at least 4 values"
+            return ["water-height"] + [float(p) if i != 3 else p
+                                       for i, p in enumerate(parts)], None
+
+    except (ValueError, IndexError) as e:
+        return None, str(e)
+
+    return None, f"unknown type '{ltype}'"
+
+
+class OGLumpRow(bpy.types.PropertyGroup):
+    """One custom lump entry on an ACTOR_ empty.
+    Stored as a CollectionProperty on the Object (og_lump_rows).
+    Rendered as a scrollable list in OG_PT_SelectedLumps.
+    """
+    key:   StringProperty(
+        name="Key",
+        description="Lump key name (e.g. notice-dist, mode, num-lurkers)",
+        default="",
+    )
+    ltype: EnumProperty(
+        name="Type",
+        items=LUMP_TYPE_ITEMS,
+        default="meters",
+        description="JSONC lump value type",
+    )
+    value: StringProperty(
+        name="Value",
+        description="Value(s) — space-separated for multi-value types",
+        default="",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lump row operators
+# ---------------------------------------------------------------------------
+
+class OG_OT_AddLumpRow(bpy.types.Operator):
+    bl_idname  = "og.add_lump_row"
+    bl_label   = "Add Lump Row"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, ctx):
+        obj = ctx.active_object
+        if obj is None:
+            self.report({"ERROR"}, "No active object"); return {"CANCELLED"}
+        obj.og_lump_rows.add()
+        obj.og_lump_rows_index = len(obj.og_lump_rows) - 1
+        return {"FINISHED"}
+
+
+class OG_OT_RemoveLumpRow(bpy.types.Operator):
+    bl_idname  = "og.remove_lump_row"
+    bl_label   = "Remove Lump Row"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, ctx):
+        obj = ctx.active_object
+        if obj is None:
+            self.report({"ERROR"}, "No active object"); return {"CANCELLED"}
+        rows = obj.og_lump_rows
+        idx  = obj.og_lump_rows_index
+        if not rows or idx < 0 or idx >= len(rows):
+            self.report({"ERROR"}, "Nothing to remove"); return {"CANCELLED"}
+        rows.remove(idx)
+        obj.og_lump_rows_index = max(0, min(idx, len(rows) - 1))
+        return {"FINISHED"}
+
+
+# ---------------------------------------------------------------------------
+# Lump UIList
+# ---------------------------------------------------------------------------
+
+class OG_UL_LumpRows(bpy.types.UIList):
+    """Scrollable list of custom lump rows for an ACTOR_ empty."""
+
+    def draw_item(self, ctx, layout, data, item, icon, active_data,
+                  active_propname, index):
+        row = layout.row(align=True)
+        # Key field — reasonably wide
+        row.prop(item, "key",   text="", emboss=True, placeholder="key")
+        # Type dropdown — compact
+        sub = row.row(align=True)
+        sub.scale_x = 0.9
+        sub.prop(item, "ltype", text="")
+        # Value field
+        row.prop(item, "value", text="", emboss=True, placeholder="value(s)")
+        # Live parse indicator — red dot on bad rows
+        _, err = _parse_lump_row(item.key, item.ltype, item.value)
+        if err:
+            row.label(text="", icon="ERROR")
+
+    def filter_items(self, ctx, data, propname):
+        # No filtering — just return defaults
+        return [], []
+
+
+# ===========================================================================
 # VOLUME LINK SYSTEM
 # ---------------------------------------------------------------------------
 # A trigger volume (VOL_ mesh) holds a CollectionProperty of OGVolLink entries.
@@ -5451,6 +6712,29 @@ def _aggro_event_id(name):
         if n == name:
             return i
     return 0
+
+
+class OGActorLink(bpy.types.PropertyGroup):
+    """One entity link slot on an ACTOR_ empty.
+
+    Stored as og_actor_links CollectionProperty on the Object.
+    Each entry maps (lump_key, slot_index) → target_name.
+    At export these are serialised as  lump_key: ["string", name0, name1, ...]
+    """
+    lump_key:     bpy.props.StringProperty(
+        name="Lump Key",
+        description="The res-lump key this link writes to (e.g. alt-actor, water-actor)",
+    )
+    slot_index:   bpy.props.IntProperty(
+        name="Slot Index",
+        description="Index within the lump array (0 = first element)",
+        default=0,
+        min=0,
+    )
+    target_name:  bpy.props.StringProperty(
+        name="Target",
+        description="Name of the linked ACTOR_ empty",
+    )
 
 
 class OGVolLink(PropertyGroup):
@@ -6048,6 +7332,57 @@ class OG_OT_AddLinkFromSelection(Operator):
         entry.behaviour   = "cue-chase"
         _rename_vol_for_links(vol)
         self.report({"INFO"}, f"Linked {vol.name} → {self.target_name}")
+        return {"FINISHED"}
+
+
+class OG_OT_SetActorLink(Operator):
+    """Set an entity link slot on an ACTOR_ empty.
+
+    Called from the Actor Links panel when the user clicks 'Link →'.
+    source_name = the ACTOR_ empty being edited.
+    lump_key / slot_index = which slot to fill.
+    target_name = the ACTOR_ empty to link to.
+    """
+    bl_idname   = "og.set_actor_link"
+    bl_label    = "Set Actor Link"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    source_name:  bpy.props.StringProperty()
+    lump_key:     bpy.props.StringProperty()
+    slot_index:   bpy.props.IntProperty(default=0)
+    target_name:  bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        obj = ctx.scene.objects.get(self.source_name)
+        if not obj:
+            self.report({"ERROR"}, f"Source '{self.source_name}' not found")
+            return {"CANCELLED"}
+        target = ctx.scene.objects.get(self.target_name)
+        if not target:
+            self.report({"ERROR"}, f"Target '{self.target_name}' not found")
+            return {"CANCELLED"}
+        _actor_set_link(obj, self.lump_key, self.slot_index, self.target_name)
+        self.report({"INFO"}, f"Linked {self.source_name} [{self.lump_key}[{self.slot_index}]] → {self.target_name}")
+        return {"FINISHED"}
+
+
+class OG_OT_ClearActorLink(Operator):
+    """Remove an entity link slot from an ACTOR_ empty."""
+    bl_idname   = "og.clear_actor_link"
+    bl_label    = "Clear Actor Link"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    source_name: bpy.props.StringProperty()
+    lump_key:    bpy.props.StringProperty()
+    slot_index:  bpy.props.IntProperty(default=0)
+
+    def execute(self, ctx):
+        obj = ctx.scene.objects.get(self.source_name)
+        if not obj:
+            self.report({"ERROR"}, f"Source '{self.source_name}' not found")
+            return {"CANCELLED"}
+        _actor_remove_link(obj, self.lump_key, self.slot_index)
+        self.report({"INFO"}, f"Cleared {self.source_name} [{self.lump_key}[{self.slot_index}]]")
         return {"FINISHED"}
 
 
@@ -7720,7 +9055,6 @@ class OG_PT_SelectedObject(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        scene  = ctx.scene
 
         if sel is None:
             layout.label(text="Select an object to inspect", icon="INFO")
@@ -7731,40 +9065,34 @@ class OG_PT_SelectedObject(Panel):
             layout.label(text="Not an OpenGOAL-managed object", icon="INFO")
             return
 
+        # Name + type hint — sub-panels carry all the detail
         name = sel.name
-
-        # Dispatch based on object type
         if name.startswith("ACTOR_") and "_wp_" not in name:
-            _draw_selected_actor(layout, sel, scene)
-
+            parts = name.split("_", 2)
+            etype = parts[1] if len(parts) >= 3 else ""
+            einfo = ENTITY_DEFS.get(etype, {})
+            label = einfo.get("label", etype)
+            cat   = einfo.get("cat", "")
+            row = layout.row()
+            row.label(text=label, icon="OBJECT_DATA")
+            sub = row.row(); sub.enabled = False
+            sub.label(text=f"[{cat}]")
         elif name.startswith("SPAWN_") and not name.endswith("_CAM"):
-            _draw_selected_spawn(layout, sel, scene)
-
+            layout.label(text=name, icon="EMPTY_ARROWS")
         elif name.startswith("CHECKPOINT_") and not name.endswith("_CAM"):
-            _draw_selected_checkpoint(layout, sel, scene)
-
+            layout.label(text=name, icon="EMPTY_SINGLE_ARROW")
         elif name.startswith("AMBIENT_"):
-            _draw_selected_emitter(layout, sel)
-
+            layout.label(text=name, icon="SPEAKER")
         elif name.startswith("CAMERA_") and sel.type == "CAMERA":
-            _draw_selected_camera(layout, sel, scene)
-
+            layout.label(text=name, icon="CAMERA_DATA")
         elif name.startswith("VOL_"):
-            _draw_selected_volume(layout, sel, scene)
-
+            layout.label(text=name, icon="MESH_CUBE")
         elif name.endswith("_CAM"):
-            _draw_selected_cam_anchor(layout, sel, scene)
-
+            layout.label(text=name, icon="CAMERA_DATA")
         elif sel.type == "MESH":
-            # Navmesh mesh header if applicable
-            if sel.get("og_navmesh") or sel.name.startswith("NAVMESH_"):
-                _draw_selected_navmesh(layout, sel)
-            else:
-                layout.label(text=sel.name, icon="MESH_DATA")
-            # Collision, Visibility, Light Baking, NavMesh Tag rendered by sub-panels
-
+            layout.label(text=name, icon="MOD_MESHDEFORM" if (sel.get("og_navmesh") or name.startswith("NAVMESH_")) else "MESH_DATA")
         else:
-            layout.label(text=sel.name, icon="OBJECT_DATA")
+            layout.label(text=name, icon="OBJECT_DATA")
 
         # Universal actions
         layout.separator(factor=0.3)
@@ -7833,6 +9161,657 @@ class OG_PT_SelectedNavMeshTag(Panel):
 
     def draw(self, ctx):
         _draw_selected_mesh_navtag(self.layout, ctx.active_object)
+
+
+# ===========================================================================
+# OBJECT-TYPE SUB-PANELS
+# Each polls on the active object's name prefix/type so it only appears
+# for the relevant object. All carry bl_parent_id="OG_PT_selected_object".
+# ===========================================================================
+
+# ── ACTOR sub-panels ────────────────────────────────────────────────────────
+
+class OG_PT_ActorActivation(Panel):
+    bl_label       = "Activation"
+    bl_idname      = "OG_PT_actor_activation"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and _actor_is_enemy(parts[1])
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        idle_d = float(sel.get("og_idle_distance", 80.0))
+        row = layout.row(align=True)
+        op = row.operator("og.nudge_float_prop", text="-5m", icon="REMOVE")
+        op.prop_name = "og_idle_distance"; op.delta = -5.0; op.val_min = 0.0
+        row.label(text=f"Idle Distance: {idle_d:.0f}m")
+        op = row.operator("og.nudge_float_prop", text="+5m", icon="ADD")
+        op.prop_name = "og_idle_distance"; op.delta = 5.0; op.val_max = 500.0
+        sub = layout.row(); sub.enabled = False
+        sub.label(text="Player must be closer than this to wake the enemy", icon="INFO")
+
+
+class OG_PT_ActorTriggerBehaviour(Panel):
+    bl_label       = "Trigger Behaviour"
+    bl_idname      = "OG_PT_actor_trigger_behaviour"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and _actor_supports_aggro_trigger(parts[1])
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        scene  = ctx.scene
+        linked_vols = _vols_linking_to(scene, sel.name)
+        if linked_vols:
+            for v in linked_vols:
+                entry = _vol_get_link_to(v, sel.name)
+                if not entry: continue
+                row = layout.row(align=True)
+                row.label(text=f"✓ {v.name}", icon="MESH_CUBE")
+                row.prop(entry, "behaviour", text="")
+                op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+                op.obj_name = v.name
+                op = row.operator("og.remove_vol_link", text="", icon="X")
+                op.vol_name = v.name; op.target_name = sel.name
+        else:
+            sub = layout.row(); sub.enabled = False
+            sub.label(text="No trigger volumes linked", icon="INFO")
+        op = layout.operator("og.spawn_aggro_trigger", text="Add Aggro Trigger", icon="ADD")
+        op.target_name = sel.name
+
+
+class OG_PT_ActorNavMesh(Panel):
+    bl_label       = "NavMesh"
+    bl_idname      = "OG_PT_actor_navmesh"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and _actor_uses_navmesh(parts[1])
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        nm_name = sel.get("og_navmesh_link", "")
+        nm_obj  = bpy.data.objects.get(nm_name) if nm_name else None
+        if nm_obj:
+            row = layout.row(align=True)
+            row.label(text=f"✓ {nm_obj.name}", icon="CHECKMARK")
+            row.operator("og.unlink_navmesh", text="", icon="X")
+            try:
+                nm_obj.data.calc_loop_triangles()
+                tc = len(nm_obj.data.loop_triangles)
+                layout.label(text=f"{tc} triangles", icon="MESH_DATA")
+            except Exception:
+                pass
+        else:
+            layout.label(text="No mesh linked", icon="ERROR")
+            sel_meshes = [o for o in bpy.context.selected_objects if o.type == "MESH"]
+            if sel_meshes:
+                layout.label(text=f"Will link to: {sel_meshes[0].name}", icon="INFO")
+                layout.operator("og.link_navmesh", text="Link NavMesh", icon="LINKED")
+            else:
+                layout.label(text="Shift-select a mesh to link", icon="INFO")
+        nav_r = float(sel.get("og_nav_radius", 6.0))
+        layout.label(text=f"Fallback sphere radius: {nav_r:.1f}m", icon="SPHERE")
+
+
+def _draw_actor_links(layout, obj, scene, etype):
+    """Draw the Actor Links panel for an ACTOR_ empty.
+
+    Shows each defined slot with:
+    - Current linked target (name + jump-to button) or 'Not set'
+    - A 'Link →' button when exactly one compatible ACTOR_ is shift-selected
+    - An X (clear) button when a link is set
+    """
+    slots = _actor_link_slots(etype)
+    if not slots:
+        layout.label(text="No entity link slots for this actor type.", icon="INFO")
+        return
+
+    # Gather the currently shift-selected ACTOR_ empties (excluding this one)
+    sel_actors = [
+        o for o in bpy.context.selected_objects
+        if o != obj
+        and o.type == "EMPTY"
+        and o.name.startswith("ACTOR_")
+        and "_wp_" not in o.name
+        and "_wpb_" not in o.name
+    ]
+
+    # Group slots by lump_key for display
+    seen_keys = []
+    for (lkey, sidx, label, accepted, required) in slots:
+        if lkey not in seen_keys:
+            seen_keys.append(lkey)
+
+    for lkey in seen_keys:
+        key_slots = [(sidx, lbl, acc, req) for (lk, sidx, lbl, acc, req) in slots if lk == lkey]
+
+        box = layout.box()
+        box.label(text=lkey, icon="LINKED")
+
+        for (sidx, label, accepted, required) in key_slots:
+            entry = _actor_get_link(obj, lkey, sidx)
+            current_name = entry.target_name if entry else ""
+            current_obj  = scene.objects.get(current_name) if current_name else None
+
+            row = box.row(align=True)
+
+            # Slot label
+            req_mark = " *" if required else ""
+            row.label(text=f"[{sidx}] {label}{req_mark}")
+
+            if current_obj:
+                # Linked — show name, jump-to, clear buttons
+                row2 = box.row(align=True)
+                row2.label(text=current_name, icon="CHECKMARK")
+                op = row2.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+                op.obj_name = current_name
+                op = row2.operator("og.clear_actor_link", text="", icon="X")
+                op.source_name = obj.name
+                op.lump_key    = lkey
+                op.slot_index  = sidx
+            elif current_name:
+                # Name stored but object missing from scene
+                row2 = box.row(align=True)
+                row2.alert = True
+                row2.label(text=f"⚠ missing: {current_name}", icon="ERROR")
+                op = row2.operator("og.clear_actor_link", text="", icon="X")
+                op.source_name = obj.name
+                op.lump_key    = lkey
+                op.slot_index  = sidx
+            else:
+                # Not set
+                row2 = box.row(align=True)
+                row2.enabled = False
+                req_text = "Required — not set" if required else "Optional — not set"
+                row2.label(text=req_text, icon="ERROR" if required else "DOT")
+
+            # Link button: visible when one compatible actor is shift-selected
+            compatible = [
+                o for o in sel_actors
+                if accepted == ["any"] or
+                   (len(o.name.split("_", 2)) >= 3 and o.name.split("_", 2)[1] in accepted)
+            ]
+            if len(compatible) == 1:
+                tgt = compatible[0]
+                op = box.operator("og.set_actor_link",
+                                  text=f"Link → {tgt.name}", icon="LINKED")
+                op.source_name = obj.name
+                op.lump_key    = lkey
+                op.slot_index  = sidx
+                op.target_name = tgt.name
+            elif len(sel_actors) > 0 and len(compatible) == 0:
+                hint = box.row()
+                hint.enabled = False
+                hint.label(text=f"Selected actor not valid for this slot", icon="INFO")
+                hint2 = box.row()
+                hint2.enabled = False
+                hint2.label(text=f"  Accepted: {', '.join(accepted)}")
+            else:
+                hint = box.row()
+                hint.enabled = False
+                hint.label(text="Shift-select target then click Link →", icon="INFO")
+
+
+class OG_PT_ActorLinks(Panel):
+    """Entity link slots — actor-to-actor references exported as alt-actor / water-actor etc."""
+    bl_label       = "Entity Links"
+    bl_idname      = "OG_PT_actor_links"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name:
+            return False
+        parts = sel.name.split("_", 2)
+        return (len(parts) >= 3
+                and parts[0] == "ACTOR"
+                and _actor_has_links(parts[1]))
+
+    def draw(self, ctx):
+        sel   = ctx.active_object
+        etype = sel.name.split("_", 2)[1]
+        _draw_actor_links(self.layout, sel, ctx.scene, etype)
+
+
+class OG_PT_ActorPlatform(Panel):
+    bl_label       = "Platform Settings"
+    bl_idname      = "OG_PT_actor_platform"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and _actor_is_platform(parts[1])
+
+    def draw(self, ctx):
+        _draw_platform_settings(self.layout, ctx.active_object, ctx.scene)
+
+
+class OG_PT_ActorCrate(Panel):
+    bl_label       = "Crate"
+    bl_idname      = "OG_PT_actor_crate"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return len(parts) >= 3 and parts[0] == "ACTOR" and parts[1] == "crate"
+
+    def draw(self, ctx):
+        sel = ctx.active_object
+        ct  = sel.get("og_crate_type", "steel")
+        self.layout.label(text=f"Crate Type: {ct}", icon="PACKAGE")
+
+
+class OG_PT_ActorWaypoints(Panel):
+    bl_label       = "Waypoints"
+    bl_idname      = "OG_PT_actor_waypoints"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        if not sel or "_wp_" in sel.name: return False
+        parts = sel.name.split("_", 2)
+        return (len(parts) >= 3 and parts[0] == "ACTOR"
+                and _actor_uses_waypoints(parts[1]))
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        scene  = ctx.scene
+        parts  = sel.name.split("_", 2)
+        etype  = parts[1]
+        einfo  = ENTITY_DEFS.get(etype, {})
+
+        prefix = sel.name + "_wp_"
+        wps = sorted(
+            [o for o in _level_objects(scene) if o.name.startswith(prefix) and o.type == "EMPTY"],
+            key=lambda o: o.name
+        )
+        layout.label(text=f"Path  ({len(wps)} point{'s' if len(wps) != 1 else ''})", icon="ANIM")
+        if wps:
+            col = layout.column(align=True)
+            for wp in wps:
+                row = col.row(align=True)
+                row.label(text=wp.name, icon="EMPTY_AXIS")
+                op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM"); op.obj_name = wp.name
+                op = row.operator("og.delete_waypoint",  text="", icon="X");        op.wp_name  = wp.name
+        op = layout.operator("og.add_waypoint", text="Add Waypoint at Cursor", icon="PLUS")
+        op.enemy_name = sel.name; op.pathb_mode = False
+        if einfo.get("needs_path") and len(wps) < 1:
+            layout.label(text="⚠ Needs ≥ 1 waypoint or will crash", icon="ERROR")
+
+        if einfo.get("needs_pathb"):
+            layout.separator(factor=0.5)
+            prefixb = sel.name + "_wpb_"
+            wpsb = sorted(
+                [o for o in _level_objects(scene) if o.name.startswith(prefixb) and o.type == "EMPTY"],
+                key=lambda o: o.name
+            )
+            layout.label(text=f"Path B  ({len(wpsb)} points)", icon="ANIM")
+            if wpsb:
+                col2 = layout.column(align=True)
+                for wp in wpsb:
+                    row = col2.row(align=True)
+                    row.label(text=wp.name, icon="EMPTY_AXIS")
+                    op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM"); op.obj_name = wp.name
+                    op = row.operator("og.delete_waypoint",  text="", icon="X");        op.wp_name  = wp.name
+            op = layout.operator("og.add_waypoint", text="Add Path B Waypoint", icon="PLUS")
+            op.enemy_name = sel.name; op.pathb_mode = True
+            if len(wpsb) < 1:
+                layout.label(text="⚠ swamp-bat crashes without Path B", icon="ERROR")
+
+
+# ── SPAWN sub-panel ─────────────────────────────────────────────────────────
+
+class OG_PT_SpawnSettings(Panel):
+    bl_label       = "Spawn Settings"
+    bl_idname      = "OG_PT_spawn_settings"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.name.startswith("SPAWN_")
+                and not sel.name.endswith("_CAM"))
+
+    def draw(self, ctx):
+        _draw_selected_spawn(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── CHECKPOINT sub-panel ────────────────────────────────────────────────────
+
+class OG_PT_CheckpointSettings(Panel):
+    bl_label       = "Checkpoint Settings"
+    bl_idname      = "OG_PT_checkpoint_settings"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.name.startswith("CHECKPOINT_")
+                and not sel.name.endswith("_CAM"))
+
+    def draw(self, ctx):
+        _draw_selected_checkpoint(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── AMBIENT sub-panel ───────────────────────────────────────────────────────
+
+class OG_PT_AmbientEmitter(Panel):
+    bl_label       = "Sound Emitter"
+    bl_idname      = "OG_PT_ambient_emitter"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return sel is not None and sel.name.startswith("AMBIENT_")
+
+    def draw(self, ctx):
+        _draw_selected_emitter(self.layout, ctx.active_object)
+
+
+# ── CAMERA sub-panels ───────────────────────────────────────────────────────
+
+class OG_PT_CameraSettings(Panel):
+    bl_label       = "Camera Settings"
+    bl_idname      = "OG_PT_camera_settings"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.name.startswith("CAMERA_")
+                and sel.type == "CAMERA")
+
+    def draw(self, ctx):
+        _draw_selected_camera(self.layout, ctx.active_object, ctx.scene)
+
+
+class OG_PT_CamAnchorInfo(Panel):
+    bl_label       = "Anchor Info"
+    bl_idname      = "OG_PT_cam_anchor_info"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return sel is not None and sel.name.endswith("_CAM")
+
+    def draw(self, ctx):
+        _draw_selected_cam_anchor(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── VOLUME sub-panel ────────────────────────────────────────────────────────
+
+class OG_PT_VolumeLinks(Panel):
+    bl_label       = "Volume Links"
+    bl_idname      = "OG_PT_volume_links"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return sel is not None and sel.name.startswith("VOL_")
+
+    def draw(self, ctx):
+        _draw_selected_volume(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── NAVMESH INFO sub-panel ──────────────────────────────────────────────────
+
+class OG_PT_NavmeshInfo(Panel):
+    bl_label       = "Navmesh Info"
+    bl_idname      = "OG_PT_navmesh_info"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.type == "MESH"
+                and (sel.get("og_navmesh") or sel.name.startswith("NAVMESH_")))
+
+    def draw(self, ctx):
+        _draw_selected_navmesh(self.layout, ctx.active_object)
+
+
+# ===========================================================================
+# LUMP SUB-PANEL (actor empties only)
+# ===========================================================================
+
+def _draw_lump_panel(layout, obj):
+    """Draw the Custom Lumps assisted-entry list for an ACTOR_ empty."""
+    rows   = obj.og_lump_rows
+    index  = obj.og_lump_rows_index
+
+    # Column header labels
+    hdr = layout.row(align=True)
+    hdr.label(text="Key")
+    hdr.label(text="Type")
+    hdr.label(text="Value")
+
+    # Scrollable UIList  — 5 rows visible, expandable
+    layout.template_list(
+        "OG_UL_LumpRows", "",
+        obj, "og_lump_rows",
+        obj, "og_lump_rows_index",
+        rows=5,
+    )
+
+    # Add / Remove buttons
+    row = layout.row(align=True)
+    row.operator("og.add_lump_row",    text="Add",    icon="ADD")
+    row.operator("og.remove_lump_row", text="Remove", icon="REMOVE")
+
+    # Inline error detail for the currently selected row
+    if rows and 0 <= index < len(rows):
+        item = rows[index]
+        _, err = _parse_lump_row(item.key, item.ltype, item.value)
+        if err:
+            box = layout.box()
+            box.label(text=f"⚠ Row {index+1}: {err}", icon="ERROR")
+        elif item.key.strip() in _LUMP_HARDCODED_KEYS:
+            box = layout.box()
+            box.label(text=f"'{item.key}' overrides addon default", icon="INFO")
+
+    if not rows:
+        sub = layout.row()
+        sub.enabled = False
+        sub.label(text="No custom lumps — click Add to start", icon="INFO")
+
+
+class OG_PT_SelectedLumps(Panel):
+    bl_label       = "Custom Lumps"
+    bl_idname      = "OG_PT_selected_lumps"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.name.startswith("ACTOR_")
+                and "_wp_" not in sel.name)
+
+    def draw(self, ctx):
+        _draw_lump_panel(self.layout, ctx.active_object)
+
+
+# ===========================================================================
+# LUMP REFERENCE SUB-PANEL
+# ===========================================================================
+
+class OG_OT_UseLumpRef(bpy.types.Operator):
+    """Add a new lump row pre-filled with this reference entry's key and type."""
+    bl_idname  = "og.use_lump_ref"
+    bl_label   = "Use This"
+    bl_options = {"REGISTER", "UNDO"}
+
+    lump_key:   bpy.props.StringProperty()
+    lump_ltype: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        obj = ctx.active_object
+        if obj is None:
+            self.report({"ERROR"}, "No active object"); return {"CANCELLED"}
+        row = obj.og_lump_rows.add()
+        row.key   = self.lump_key
+        row.ltype = self.lump_ltype
+        obj.og_lump_rows_index = len(obj.og_lump_rows) - 1
+        return {"FINISHED"}
+
+
+def _draw_lump_ref_section(layout, title, entries, icon="DOT"):
+    """Draw a collapsible read-only reference section."""
+    if not entries:
+        return
+    box = layout.box()
+    box.label(text=title, icon=icon)
+    col = box.column(align=True)
+    for key, ltype, desc in entries:
+        row = col.row(align=True)
+        row.label(text=key, icon="KEYFRAME")
+        sub = row.row(align=True)
+        sub.enabled = False
+        sub.label(text=ltype)
+        op = row.operator("og.use_lump_ref", text="", icon="ADD")
+        op.lump_key   = key
+        op.lump_ltype = ltype
+        # Description as a greyed-out label on the next line
+        desc_row = col.row()
+        desc_row.enabled = False
+        desc_row.label(text=f"  {desc}")
+        col.separator(factor=0.3)
+
+
+class OG_PT_SelectedLumpReference(Panel):
+    bl_label       = "Lump Reference"
+    bl_idname      = "OG_PT_selected_lump_reference"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.name.startswith("ACTOR_")
+                and "_wp_" not in sel.name)
+
+    def draw(self, ctx):
+        layout = self.layout
+        sel    = ctx.active_object
+        parts  = sel.name.split("_", 2)
+        if len(parts) < 3:
+            layout.label(text="Unknown actor type", icon="ERROR")
+            return
+        etype = parts[1]
+        einfo = ENTITY_DEFS.get(etype, {})
+        label = einfo.get("label", etype)
+
+        universal, actor_specific = _lump_ref_for_etype(etype)
+
+        layout.label(text=f"Available lumps for: {label}", icon="INFO")
+        layout.label(text="Click + to add a pre-filled row to Custom Lumps")
+        layout.separator(factor=0.4)
+
+        _draw_lump_ref_section(layout, "Universal (all actors)", universal, icon="WORLD")
+        if actor_specific:
+            _draw_lump_ref_section(layout, f"Specific to {label}", actor_specific, icon="OBJECT_DATA")
+        else:
+            sub = layout.row()
+            sub.enabled = False
+            sub.label(text=f"No additional lumps documented for {label}", icon="INFO")
 
 
 # ===========================================================================
@@ -8597,12 +10576,17 @@ class OG_OT_RefreshLevels(Operator):
 # ---------------------------------------------------------------------------
 
 classes = (
+    OGLumpRow,
+    OGActorLink,
     OGVolLink,
     OGPreferences, OGProperties,
+    OG_OT_AddLumpRow, OG_OT_RemoveLumpRow, OG_OT_UseLumpRef,
+    OG_UL_LumpRows,
     OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
     OG_OT_SpawnPlayer, OG_OT_SpawnCheckpoint, OG_OT_SpawnCamAnchor,
     OG_OT_SpawnVolume, OG_OT_SpawnVolumeAutoLink, OG_OT_LinkVolume, OG_OT_UnlinkVolume, OG_OT_CleanOrphanedLinks,
     OG_OT_RemoveVolLink, OG_OT_AddLinkFromSelection, OG_OT_SpawnAggroTrigger,
+    OG_OT_SetActorLink, OG_OT_ClearActorLink,
     OG_OT_SelectAndFrame, OG_OT_DeleteObject,
     OG_OT_SpawnEntity,
     OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
@@ -8656,6 +10640,24 @@ classes = (
     OG_PT_SelectedCollision,
     OG_PT_SelectedLightBaking,
     OG_PT_SelectedNavMeshTag,
+    # Object-type sub-panels
+    OG_PT_ActorActivation,
+    OG_PT_ActorTriggerBehaviour,
+    OG_PT_ActorNavMesh,
+    OG_PT_ActorLinks,
+    OG_PT_ActorPlatform,
+    OG_PT_ActorCrate,
+    OG_PT_ActorWaypoints,
+    OG_PT_SpawnSettings,
+    OG_PT_CheckpointSettings,
+    OG_PT_AmbientEmitter,
+    OG_PT_CameraSettings,
+    OG_PT_CamAnchorInfo,
+    OG_PT_VolumeLinks,
+    OG_PT_NavmeshInfo,
+    # Lump sub-panels
+    OG_PT_SelectedLumps,
+    OG_PT_SelectedLumpReference,
     OG_PT_Waypoints,
     OG_PT_BuildPlay,
     OG_PT_DevTools,
@@ -8698,6 +10700,15 @@ def register():
     # Each VOL_ mesh holds a list of (target_name, behaviour) entries.
     bpy.types.Object.og_vol_links          = bpy.props.CollectionProperty(type=OGVolLink)
 
+    # Actor entity links — registered after OGActorLink is in classes tuple.
+    # Each ACTOR_ empty holds a list of (lump_key, slot_index, target_name) entries.
+    bpy.types.Object.og_actor_links        = bpy.props.CollectionProperty(type=OGActorLink)
+
+    # Custom lump rows — registered after OGLumpRow is in classes tuple.
+    # Each ACTOR_ empty holds a list of (key, ltype, value) assisted lump entries.
+    bpy.types.Object.og_lump_rows          = bpy.props.CollectionProperty(type=OGLumpRow)
+    bpy.types.Object.og_lump_rows_index    = bpy.props.IntProperty(name="Active Lump Row", default=0)
+
     bpy.types.Collection.og_no_export      = bpy.props.BoolProperty(
         name="Exclude from Export",
         description="When enabled, this collection and its contents are excluded from level export",
@@ -8716,7 +10727,8 @@ def unregister():
         except Exception: pass
     for a in ("set_invisible","set_collision","ignore","noedge","noentity",
               "nolineofsight","nocamera","collide_material","collide_event","collide_mode",
-              "enable_custom_weights","copy_eye_draws","copy_mod_draws","og_vol_links"):
+              "enable_custom_weights","copy_eye_draws","copy_mod_draws","og_vol_links",
+              "og_actor_links","og_lump_rows","og_lump_rows_index"):
         try: delattr(bpy.types.Object, a)
         except Exception: pass
     try: delattr(bpy.types.Collection, "og_no_export")
