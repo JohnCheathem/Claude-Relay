@@ -119,3 +119,46 @@ Quick-add batch of ~55 Tier 1 props identified — could be done in one session.
 - `addons/opengoal_tools.py` — working addon on this branch
 - `scratch/unsupported-actors-draft.md` — actor audit (pending kb promotion)
 - `knowledge-base/opengoal/lump-system.md` — full lump reference (DO NOT overwrite)
+
+---
+
+## Research Session — April 2026
+
+Full non-prop actor research complete. File: `scratch/actor-research.md`
+
+### Key corrections vs the earlier audit
+
+| etype | audit said | reality |
+|---|---|---|
+| `sunkenfisha` | `count, speed, distance, path-max-offset, path-trans-offset` | correct keys, but `speed` is float[2] lo/hi range (not one value), and no `distance` lump |
+| `sharkey` | `water-height, speed, delay, distance` | also reads `scale` (5 lumps total) |
+| `spider-egg` | standard | also reads `alt-actor 0` for notify-actor (optional) |
+| `cave-trap` | standard | reads `'path` + `alt-actor[]` array for spider-egg links |
+| `swamp-rat-nest` | `num-lurkers` | also reads `'path` (required!) |
+| `villa-starfish` | `num-lurkers` | also reads `'path` (required!) |
+| `breakaway-*` | standard | reads `height-info` float[2] |
+| `springbox` | `spring-height, art-name` | NO art-name lump — art group is hardcoded to `bouncer` |
+
+### Zero-lump actors confirmed (just need ENTITY_DEFS entry + art group stem)
+Enemy: `darkvine`, `quicksandlurker`, `peeper`, `spider-vent`
+Platform: `qbert-plat`, `cavetrapdoor`, `ogre-bridgeend`, `swampgate`, `ceilingflag`
+NPC: `bird-lady`, `bird-lady-beach`, `minertall`
+Other: `swingpole` (no art either!), `boatpaddle`, `accordian`, `snow-eggtop`, `snow-switch`
+Lava: `lavafall`, `lavafallsewera`, `lavafallsewerb`, `lavabase`, `lavayellowtarp`, `chainmine`, `balloon`, `crate-darkeco-cluster`
+
+### Actors with surprise lumps (not obvious from type name)
+- `windturbine`: `particle-select` uint (enable particles)
+- `pontoon`: `alt-task` uint (second task gate)
+- `mis-bone-bridge`: `animation-select` uint (1/2/3/7 — bone type)
+- `caveflamepots`: `cycle-speed` float[3] (period, offset, pause) — all 3 packed in one key
+- `snow-bumper`: `rotmin` float[2] (base_ry, max_diff_ry)
+
+### Next step: implementation
+Research complete. Ready to implement in order:
+1. Tier 1 enemies (zero lumps — darkvine, quicksandlurker, peeper, spider-vent, spider-egg)
+2. Then balloonlurker (alt-actor perm check)
+3. Then cave-trap (path + alt-actor array)
+4. Then eco pickups (ecovent/ventblue/red/yellow — alt-actor blocker)
+5. Then springbox, swingpole, oracle (1 lump each)
+6. Then sharkey, sunkenfisha, water-vol (multi-lump water actors)
+7. Then platforms (orbit-plat, square-platform, caveflamepots, etc.)
