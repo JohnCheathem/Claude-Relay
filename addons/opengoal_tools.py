@@ -601,6 +601,75 @@ ETYPE_CODE = {
     "warrior":         {"o": "warrior.o",          "o_only": True},
     "gambler":         {"o": "gambler.o",          "o_only": True},
     "ogreboss":        {"o": "ogreboss.o",         "o_only": True},
+
+    # ── Quick fix: missing from previous batch ──────────────────────────────
+    "baby-spider":     {"o": "baby-spider.o",      "o_only": True},
+    "cavecrusher":     {"o": "maincave-obs.o",     "o_only": True},
+    "dark-crystal":    {"o": "dark-crystal.o",     "o_only": True},
+    "mother-spider":   {"o": "mother-spider.o",    "o_only": True},
+
+    # ── Old eco-placeholder types — map to always-loaded collectables.o ─────
+    # These are legacy entries superseded by ecovent/ventblue/red/yellow.
+    # Keeping them alive so old scenes don't break.
+    "eco-blue":        {"in_game_cgo": True},  # collectables.o always loaded
+    "eco-red":         {"in_game_cgo": True},
+    "eco-yellow":      {"in_game_cgo": True},
+    "eco-green":       {"in_game_cgo": True},
+
+    # ── warp-gate / warpgate — in game.gd / villagep-obs.gd ─────────────────
+    "warp-gate":       {"in_game_cgo": True},  # basebutton.o in game.gd
+    "warpgate":        {"o": "villagep-obs.o",     "o_only": True},
+
+    # ── Enemies needing both .o + tpages ────────────────────────────────────
+    "fireboulder":     {"o": "village2-obs.o",     "o_only": True},
+    "green-eco-lurker":{"o": "green-eco-lurker.o", "o_only": True},
+    "ice-cube":        {"o": "ice-cube.o",         "o_only": True},
+    "lightning-mole":  {"o": "rolling-lightning-mole.o", "o_only": True},
+    "plunger-lurker":  {"o": "flying-lurker.o",    "o_only": True},
+    "ram":             {"o": "snow-ram.o",          "o_only": True},
+
+    # ── Bosses ───────────────────────────────────────────────────────────────
+    "plant-boss":      {"o": "plant-boss.o",       "o_only": True},
+    "robotboss":       {"o": "robotboss-h.o",      "o_only": True},
+
+    # ── NPCs ─────────────────────────────────────────────────────────────────
+    "pelican":         {"o": "pelican.o",          "o_only": True},
+    "robber":          {"o": "rolling-robber.o",   "o_only": True},
+    "seagull":         {"o": "seagull.o",          "o_only": True},
+
+    # ── Pickups ──────────────────────────────────────────────────────────────
+    "powercellalt":    {"o": "final-door.o",       "o_only": True},
+
+    # ── Platforms ────────────────────────────────────────────────────────────
+    "balance-plat":    {"o": "swamp-obs.o",        "o_only": True},
+    "launcher":        {"o": "floating-launcher.o","o_only": True},
+    "plat-flip":       {"o": "plat-flip.o",        "o_only": True},
+    "revcycle":        {"o": "village-obs.o",      "o_only": True},
+    "side-to-side-plat":{"o": "sunken-obs.o",     "o_only": True},
+    "tar-plat":        {"o": "swamp-obs.o",        "o_only": True},
+    "teetertotter":    {"o": "misty-teetertotter.o","o_only": True},
+    "wall-plat":       {"o": "wall-plat.o",        "o_only": True},
+    "wedge-plat":      {"o": "wedge-plats.o",      "o_only": True},
+
+    # ── Objects ──────────────────────────────────────────────────────────────
+    "cavecrystal":     {"o": "darkcave-obs.o",     "o_only": True},
+    "cavegem":         {"o": "miners.o",           "o_only": True},
+    "ecoclaw":         {"o": "robotboss-misc.o",   "o_only": True},
+    "gondola":         {"o": "village3-obs.o",     "o_only": True},
+    "shortcut-boulder":{"o": "ogre-obs.o",         "o_only": True},
+    "spike":           {"o": "firecanyon-obs.o",   "o_only": True},
+    "steam-cap":       {"o": "steam-cap.o",        "o_only": True},
+    "swamp-blimp":     {"o": "swamp-blimp.o",      "o_only": True},
+    "swamp-rock":      {"o": "swamp-obs.o",        "o_only": True},
+    "swamp-rope":      {"o": "swamp-blimp.o",      "o_only": True},
+    "swamp-spike":     {"o": "swamp-obs.o",        "o_only": True},
+    "tntbarrel":       {"o": "ogre-obs.o",         "o_only": True},
+    "whirlpool":       {"o": "whirlpool.o",        "o_only": True},
+    "windmill-one":    {"o": "beach-obs.o",        "o_only": True},
+
+    # ── Props ─────────────────────────────────────────────────────────────────
+    "dark-plant":      {"o": "rolling-obs.o",      "o_only": True},
+    "evilplant":       {"o": "village-obs.o",      "o_only": True},
 }
 
 
@@ -639,6 +708,9 @@ VILLAGE2_TPAGES= ["tpage-919.go",  "tpage-922.go",  "tpage-920.go",  "tpage-921.
 VILLAGE3_TPAGES= ["tpage-1208.go", "tpage-1210.go", "tpage-1209.go", "tpage-1194.go"]                  # vi3.gd
 ROLLING_TPAGES = ["tpage-1119.go", "tpage-923.go",  "tpage-926.go",  "tpage-924.go",  "tpage-925.go",  "tpage-1353.go"] # rol.gd
 TRAINING_TPAGES= ["tpage-1309.go", "tpage-1311.go", "tpage-1310.go", "tpage-1308.go", "tpage-775.go"]  # tra.gd
+JUNGLEB_TPAGES = ["tpage-485.go",  "tpage-510.go",  "tpage-507.go",  "tpage-966.go"]                   # jub.gd  (plant-boss, plat-flip)
+FINALBOSS_TPAGES=["tpage-1419.go", "tpage-1420.go", "tpage-634.go",  "tpage-1418.go", "tpage-545.go"]  # fin.gd  (robotboss, green-eco-lurker, ecoclaw)
+CITADEL_TPAGES = ["tpage-1415.go", "tpage-1417.go", "tpage-1416.go", "tpage-1414.go"]                  # cit.gd
 
 ETYPE_TPAGES = {
     # Beach (bea.gd)
@@ -737,6 +809,77 @@ ETYPE_TPAGES = {
     # Ogre (ogr.gd) — new
     "ogre-bridge":     OGRE_TPAGES,
     "ogre-bridgeend":  OGRE_TPAGES,
+
+    # ── Quick fix: NPCs missing tpages ────────────────────────────────────
+    # Village1 NPCs
+    "farmer":          VILLAGE1_TPAGES,
+    "mayor":           VILLAGE1_TPAGES,
+    "yakow":           VILLAGE1_TPAGES,
+    "explorer":        VILLAGE1_TPAGES,
+    "evilplant":       VILLAGE1_TPAGES,
+    "revcycle":        VILLAGE1_TPAGES,
+    # Village2 NPCs
+    "gambler":         VILLAGE2_TPAGES,
+    "geologist":       VILLAGE2_TPAGES,
+    "warrior":         VILLAGE2_TPAGES,
+    "fireboulder":     VILLAGE2_TPAGES,
+    "warpgate":        VILLAGE2_TPAGES,
+    # Jungle NPCs
+    "fisher":          JUNGLE_TPAGES,
+    # Swamp NPC
+    "billy":           SWAMP_TPAGES,
+    "flutflut":        SWAMP_TPAGES,
+    # Beach NPCs
+    "sculptor":        BEACH_TPAGES,
+    "pelican":         BEACH_TPAGES,
+    "seagull":         BEACH_TPAGES,
+    "windmill-one":    BEACH_TPAGES,
+    # Rolling (rol.gd)
+    "robber":          ROLLING_TPAGES,
+    "lightning-mole":  ROLLING_TPAGES,
+    "dark-plant":      ROLLING_TPAGES,
+    # Ogre boss
+    "ogreboss":        OGRE_TPAGES,
+    "tntbarrel":       OGRE_TPAGES,
+    "shortcut-boulder":OGRE_TPAGES,
+    "plunger-lurker":  OGRE_TPAGES,
+
+    # ── Needs Both — tpages now added ────────────────────────────────────
+    # Snow (sno.gd)
+    "ice-cube":        SNOW_TPAGES,
+    "ram":             SNOW_TPAGES,
+    # Swamp (swa.gd)
+    "balance-plat":    SWAMP_TPAGES,
+    "tar-plat":        SWAMP_TPAGES,
+    "swamp-rock":      SWAMP_TPAGES,
+    "swamp-spike":     SWAMP_TPAGES,
+    # Village2 (vi2.gd)
+    "swamp-blimp":     VILLAGE2_TPAGES,
+    "swamp-rope":      VILLAGE2_TPAGES,
+    # Village3 (vi3.gd)
+    "cavegem":         VILLAGE3_TPAGES,
+    "gondola":         VILLAGE3_TPAGES,
+    # Sunken (sun.gd)
+    "launcher":        SUNKEN_TPAGES,
+    "side-to-side-plat": SUNKEN_TPAGES,
+    "wall-plat":       SUNKEN_TPAGES,
+    "wedge-plat":      SUNKEN_TPAGES,
+    "steam-cap":       SUNKEN_TPAGES,
+    "whirlpool":       SUNKEN_TPAGES,
+    # Jungleb (jub.gd)
+    "plant-boss":      JUNGLEB_TPAGES,
+    "plat-flip":       JUNGLEB_TPAGES,
+    # Finalboss (fin.gd)
+    "green-eco-lurker":FINALBOSS_TPAGES,
+    "robotboss":       FINALBOSS_TPAGES,
+    "ecoclaw":         FINALBOSS_TPAGES,
+    "powercellalt":    FINALBOSS_TPAGES,
+    # Darkcave (dar.gd)
+    "cavecrystal":     DARK_TPAGES,
+    # Misty (mis.gd)
+    "teetertotter":    MISTY_TPAGES,
+    # Firecanyon (fic.gd)
+    "spike":           FIRECANYON_TPAGES,
 }
 
 def needed_tpages(actors):
@@ -5987,6 +6130,114 @@ LUMP_REFERENCE = {
         # alt-actor 0 = minertall partner (required — must be paired; set via actor link)
     ],
     "minertall":  [],  # no lumps; pair link held by minershort
+
+    "test-actor":   [],
+
+    # ── Props ──────────────────────────────────────────────────────────────
+    "dark-plant":   [],  # no lumps; idle animation, task-gated state
+    "evilplant":    [],  # no lumps; idle animation only
+
+    # ── Newly-wired enemies ────────────────────────────────────────────────
+    "baby-spider":     [],  # no lumps; self-aligns to ground, alt-actor optional
+    "cavecrusher":     [],  # no lumps
+    "dark-crystal": [
+        ("mode",         "int32",  "1 = underwater variant. Default 0."),
+        ("extra-id",     "int32",  "Crystal identifier/number."),
+        ("extra-radius", "float",  "Collision/activation radius override."),
+    ],
+    "mother-spider":   [],  # no lumps; path-driven
+    "fireboulder": [
+        ("alt-task", "uint32", "Second task gate ID. Door stays closed until this task is complete."),
+    ],
+    "green-eco-lurker":[],  # no lumps
+    "ice-cube": [
+        ("mode", "uint32", "Variant selector. Default -1 (standard). 0 = alternate behaviour."),
+    ],
+    "lightning-mole":  [],  # no lumps
+    "plunger-lurker":  [],  # no lumps
+    "ram": [
+        ("extra-id", "int32",  "Ram identifier — which ram this is in the sequence (0-based)."),
+        ("mode",     "uint32", "1 = boss-fight mode. Default 0 (normal patrol mode)."),
+    ],
+
+    # ── Newly-wired bosses ─────────────────────────────────────────────────
+    "plant-boss":   [],  # no lumps; level-scripted
+    "robotboss":    [],  # no lumps; level-scripted
+
+    # ── Newly-wired NPCs ───────────────────────────────────────────────────
+    "pelican":      [],  # no lumps; path-driven
+    "robber": [
+        ("initial-spline-pos", "float",  "Starting position along the spline path (0.0–1.0)."),
+        ("water-height",       "float",  "Y-coordinate of water surface in raw units."),
+        ("timeout",            "float",  "Seconds before robber despawns. Default 10.0s."),
+    ],
+    "seagull":      [],  # no lumps
+
+    # ── Newly-wired pickups ────────────────────────────────────────────────
+    "powercellalt":    [],  # no lumps; standard fuel-cell alt art
+    "eco-blue":        [],  # legacy; use ecovent instead
+    "eco-red":         [],  # legacy; use ventred instead
+    "eco-yellow":      [],  # legacy; use ventyellow instead
+    "eco-green":       [],  # legacy; no standard replacement
+
+    # ── Newly-wired platforms ──────────────────────────────────────────────
+    "balance-plat": [
+        ("distance", "meters", "Vertical travel range. Default ~5m."),
+    ],
+    "launcher": [
+        ("spring-height",  "meters", "Launch height. Default ~40m."),
+        ("trigger-height", "meters", "Height above launcher base where Jak gets launched."),
+    ],
+    "plat-flip": [
+        ("delay", "float", "Two floats: 'before_down_sec before_up_sec'. e.g. '2.0 3.0'."),
+        ("sync-percent", "float", "Phase offset as fraction of cycle (0.0–1.0)."),
+    ],
+    "revcycle": [
+        ("sync", "float", "Path timing: 'period_sec phase [ease_out ease_in]'. Period hardcoded ~16s if not set."),
+    ],
+    "side-to-side-plat": [
+        ("sync", "float", "Path timing: 'period_sec phase [ease_out ease_in]'."),
+    ],
+    "tar-plat": [
+        ("scale-factor", "float", "Uniform scale multiplier. Default 1.0."),
+    ],
+    "teetertotter":    [],  # no lumps; physics-driven
+    "wall-plat": [
+        ("tunemeters", "meters", "Z-offset tuning for wall alignment. Default 0."),
+    ],
+    "warpgate":        [],  # no lumps; invisible process-hidden (teleporter activation zone)
+    "wedge-plat": [
+        ("rotspeed",  "degrees", "Rotation speed in degrees/sec."),
+        ("rotoffset", "degrees", "Initial rotation offset."),
+        ("distance",  "meters",  "Travel distance from origin. Default ~9m or ~17m depending on variant."),
+    ],
+
+    # ── Newly-wired objects ────────────────────────────────────────────────
+    "cavecrystal": [
+        ("timeout", "float", "Seconds before crystal deactivates. Default 8.0s."),
+    ],
+    "cavegem":         [],  # no lumps; ambient decoration
+    "ecoclaw":         [],  # no lumps; level-scripted prop
+    "gondola":         [],  # no lumps; animated path prop
+    "shortcut-boulder":[],  # no lumps; destructible boulder
+    "spike": [
+        # spike lumps checked: none found
+    ],
+    "steam-cap": [
+        ("percent", "float", "Completion percentage threshold for cap behaviour."),
+    ],
+    "swamp-blimp":     [],  # no lumps; ambient decoration
+    "swamp-rock": [
+        ("scale-factor", "float", "Uniform scale. Default 1.0."),
+    ],
+    "swamp-rope":      [],  # no lumps
+    "swamp-spike":     [],  # no lumps; static hazard
+    "tntbarrel":       [],  # no lumps; explodes on contact
+    "warp-gate":       [],  # no lumps (basebutton subtype; task-gated automatically)
+    "whirlpool": [
+        ("speed", "float", "Two floats: 'base_speed_units random_range'. Controls spin rate."),
+    ],
+    "windmill-one":    [],  # no lumps; animated decoration
 
     "test-actor":   [],
 }
