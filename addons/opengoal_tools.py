@@ -4155,20 +4155,23 @@ class OG_OT_SelectLevelCollection(Operator):
 
 
 class OG_OT_EditLevel(Operator):
-    """Edit the active level's name and base actor ID."""
+    """Edit the active level's name, base actor ID, and death plane."""
     bl_idname   = "og.edit_level"
     bl_label    = "Edit Level Settings"
     bl_options  = {"REGISTER", "UNDO"}
 
-    level_name: StringProperty(name="Level Name", default="")
-    base_id:    IntProperty(name="Base Actor ID", default=10000, min=1000, max=60000)
+    level_name:   StringProperty(name="Level Name", default="")
+    base_id:      IntProperty(name="Base Actor ID", default=10000, min=1000, max=60000)
+    bottom_height: FloatProperty(name="Death Plane (m)", default=-20.0, min=-500.0, max=-1.0,
+                                 description="Y height below which the player gets an endlessfall death")
 
     def invoke(self, ctx, event):
         col = _active_level_col(ctx.scene)
         if col is None:
             self.report({"ERROR"}, "No active level"); return {"CANCELLED"}
-        self.level_name = str(col.get("og_level_name", col.name))
-        self.base_id    = int(col.get("og_base_id", 10000))
+        self.level_name    = str(col.get("og_level_name", col.name))
+        self.base_id       = int(col.get("og_base_id", 10000))
+        self.bottom_height = float(col.get("og_bottom_height", -20.0))
         return ctx.window_manager.invoke_props_dialog(self)
 
     def execute(self, ctx):
@@ -4184,9 +4187,9 @@ class OG_OT_EditLevel(Operator):
         for c in _all_level_collections(ctx.scene):
             if c.name != col.name and c.get("og_level_name", "") == name:
                 self.report({"ERROR"}, f"A level named '{name}' already exists"); return {"CANCELLED"}
-        old_name = col.get("og_level_name", "")
-        col["og_level_name"] = name
-        col["og_base_id"]    = self.base_id
+        col["og_level_name"]    = name
+        col["og_base_id"]       = self.base_id
+        col["og_bottom_height"] = max(-500.0, min(-1.0, self.bottom_height))
         col.name = name  # Keep collection name in sync
         # Update active_level reference since collection name changed
         ctx.scene.og_props.active_level = col.name
@@ -5882,14 +5885,14 @@ def _draw_platform_settings(layout, sel, scene):
 #    🧍 NPCs              OG_PT_SpawnNPCs      (sub, DEFAULT_CLOSED)
 #    ⭐ Pickups           OG_PT_SpawnPickups   (sub, DEFAULT_CLOSED)
 #    🔊 Sound Emitters    OG_PT_SpawnSounds    (sub, DEFAULT_CLOSED)
+#    📷 Cameras           OG_PT_Camera         (sub, DEFAULT_CLOSED)
+#    🔗 Triggers          OG_PT_Triggers       (sub, DEFAULT_CLOSED)
 #
 #  🔍 Selected Object   OG_PT_SelectedObject (standalone, poll-gated)
 #  〰 Waypoints          OG_PT_Waypoints      (context, poll-gated)
-#  🔗 Triggers           OG_PT_Triggers       (always visible)
-#  📷 Camera             OG_PT_Camera         (DEFAULT_CLOSED)
 #  ▶  Build & Play       OG_PT_BuildPlay      (always visible)
 #  🔧 Developer Tools    OG_PT_DevTools       (DEFAULT_CLOSED)
-#  OpenGOAL Collision    OG_PT_Collision      (object context)
+#  Collision             OG_PT_Collision      (object context)
 # ===========================================================================
 
 def _header_sep(layout):
@@ -6026,9 +6029,6 @@ class OG_PT_Level(Panel):
                 row.label(text=f"ID: {base_id}   ISO: {_iso(name)}   Nick: {_nick(name)}")
 
         layout.separator(factor=0.4)
-
-        # Death plane — direct number input
-        layout.prop(props, "bottom_height")
 
         # Vis nick override
         vnick = str(level_col.get("og_vis_nick_override", ""))
@@ -6290,7 +6290,7 @@ class OG_OT_SortLevelObjects(Operator):
 
 
 class OG_PT_CollectionProperties(Panel):
-    bl_label       = "📂  Collection Properties"
+    bl_label       = "📂  Collections"
     bl_idname      = "OG_PT_collection_props"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
@@ -7244,6 +7244,8 @@ class OG_PT_Triggers(Panel):
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
     bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_options     = {"DEFAULT_CLOSED"}
 
     def draw(self, ctx):
         layout = self.layout
@@ -7334,15 +7336,13 @@ class OG_PT_Triggers(Panel):
 # ===========================================================================
 
 class OG_PT_Camera(Panel):
-    bl_label       = "📷  Camera"
+    bl_label       = "📷  Cameras"
     bl_idname      = "OG_PT_camera"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
     bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
     bl_options     = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, ctx): return True
 
     def draw(self, ctx):
         layout = self.layout
@@ -7673,7 +7673,7 @@ class OG_PT_DevTools(Panel):
 # ── Collision (per-object, separate panel) ────────────────────────────────────
 
 class OG_PT_Collision(Panel):
-    bl_label       = "OpenGOAL Collision"
+    bl_label       = "Collision"
     bl_idname      = "OG_PT_collision"
     bl_space_type  = "VIEW_3D"
     bl_region_type = "UI"
