@@ -864,19 +864,27 @@ def _level_objects(scene, level_col=None, exclude_no_export=True):
 def _ensure_sub_collection(level_col, *path):
     """Find or create nested sub-collections under a level collection.
 
+    Sub-collection names are prefixed with the level name to guarantee
+    global uniqueness when multiple levels share a .blend file.
+
     Example: _ensure_sub_collection(level_col, "Spawnables", "Enemies")
-    creates level_col > Spawnables > Enemies if they don't exist.
+    creates level_col > {level}.Spawnables > {level}.Spawnables.Enemies
     Returns the innermost collection.
     """
+    level_name = str(level_col.get("og_level_name", level_col.name))
     current = level_col
-    for name in path:
+    accumulated = ""
+    for segment in path:
+        # Build a globally unique name: level.Segment or level.Parent.Segment
+        accumulated = f"{level_name}.{segment}" if not accumulated else f"{accumulated}.{segment}"
+        unique_name = accumulated
         child = None
         for c in current.children:
-            if c.name == name:
+            if c.name == unique_name:
                 child = c
                 break
         if child is None:
-            child = bpy.data.collections.new(name)
+            child = bpy.data.collections.new(unique_name)
             current.children.link(child)
         current = child
     return current
@@ -912,6 +920,56 @@ def _col_path_for_entity(etype):
     info = ENTITY_DEFS.get(etype, {})
     cat = info.get("cat", "")
     return _ENTITY_CAT_TO_COL_PATH.get(cat, _COL_PATH_SPAWNABLE_PROPS)
+
+
+def _classify_object(obj):
+    """Return the correct _COL_PATH_* tuple for an object based on name/type.
+
+    Returns None if the object cannot be classified (e.g. unknown empty type).
+    This is used by the Sort Collection Objects operator to route loose objects
+    into the correct sub-collection.
+    """
+    name = obj.name
+    otype = obj.type
+
+    # ── Meshes → Geometry/Solid (default) ───────────────────────────────────
+    # VOL_ meshes are trigger volumes — they live in Triggers, not Geometry
+    if otype == "MESH":
+        if name.startswith("VOL_"):
+            return _COL_PATH_TRIGGERS
+        return _COL_PATH_GEO_SOLID
+
+    # ── Empties by name prefix ───────────────────────────────────────────────
+    if otype == "EMPTY":
+        # Waypoints — must be checked before ACTOR_ since they share the prefix
+        if "_wp_" in name or "_wpb_" in name:
+            return _COL_PATH_WAYPOINTS
+
+        # Actors
+        if name.startswith("ACTOR_"):
+            parts = name.split("_", 2)
+            if len(parts) >= 3:
+                etype = parts[1]
+                return _col_path_for_entity(etype)
+            return _COL_PATH_SPAWNABLE_PROPS
+
+        # Spawn / checkpoint empties and their CAM anchors
+        if name.startswith("SPAWN_") or name.startswith("CHECKPOINT_"):
+            return _COL_PATH_SPAWNS
+
+        # Sound emitters
+        if name.startswith("AMBIENT_"):
+            return _COL_PATH_SOUND_EMITTERS
+
+        return None  # Unknown empty — leave in place
+
+    # ── Cameras ─────────────────────────────────────────────────────────────
+    if otype == "CAMERA":
+        if name.startswith("CAMERA_"):
+            return _COL_PATH_CAMERAS
+        return None
+
+    return None  # Any other type — leave in place
 
 
 def _get_level_prop(scene, key, default=None):
@@ -5813,6 +5871,7 @@ def _draw_platform_settings(layout, sel, scene):
 #    🗂 Level Manager     OG_PT_LevelManagerSub (sub, DEFAULT_CLOSED)
 #    📂 Collection Props  OG_PT_CollectionProperties (sub, DEFAULT_CLOSED, poll-gated)
 #      Disable Export    OG_PT_DisableExport     (sub-sub, DEFAULT_CLOSED)
+#      🧹 Clean          OG_PT_CleanSub          (sub-sub, DEFAULT_CLOSED)
 #    💡 Light Baking      OG_PT_LightBakingSub  (sub, DEFAULT_CLOSED)
 #    🎵 Music             OG_PT_Music           (sub, DEFAULT_CLOSED)
 #
@@ -6149,6 +6208,87 @@ class OG_PT_LevelManagerSub(Panel):
         row.operator("og.assign_collection_as_level", text="Assign Existing", icon="OUTLINER_COLLECTION")
 
 
+# ---------------------------------------------------------------------------
+# OPERATOR — Sort Level Objects
+# ---------------------------------------------------------------------------
+
+class OG_OT_SortLevelObjects(Operator):
+    """Sort all loose objects in the active level into the correct sub-collections.
+
+    'Loose' means either:
+      - Directly in the level collection (no sub-collection), OR
+      - In a sub-collection but the wrong one (e.g. a mesh in Spawnables)
+
+    Classification rules:
+      MESH, not VOL_          → Geometry / Solid
+      VOL_                    → Triggers
+      ACTOR_ empty            → Spawnables / (category)
+      SPAWN_ / CHECKPOINT_    → Spawns
+      *_wp_* / *_wpb_*        → Waypoints
+      AMBIENT_                → Sound Emitters
+      CAMERA_ (camera)        → Cameras
+    Objects that can't be classified are left in place with a warning.
+    """
+    bl_idname   = "og.sort_level_objects"
+    bl_label    = "Sort Collection Objects"
+    bl_options  = {"REGISTER", "UNDO"}
+
+    def execute(self, ctx):
+        scene     = ctx.scene
+        level_col = _active_level_col(scene)
+        if level_col is None:
+            self.report({"ERROR"}, "No active level collection")
+            return {"CANCELLED"}
+
+        # Gather every object in the level (all sub-collections included)
+        all_objs = _recursive_col_objects(level_col, exclude_no_export=False)
+
+        moved   = []
+        skipped = []
+
+        for obj in all_objs:
+            target_path = _classify_object(obj)
+            if target_path is None:
+                skipped.append(obj.name)
+                continue
+
+            # Find where the object currently lives within the level
+            target_col = _ensure_sub_collection(level_col, *target_path)
+
+            # Already in the right collection — skip
+            if obj.name in target_col.objects:
+                continue
+
+            # Link into target
+            target_col.objects.link(obj)
+
+            # Unlink from scene root if present
+            if obj.name in scene.collection.objects:
+                scene.collection.objects.unlink(obj)
+
+            # Unlink from every other collection except the target
+            for col in bpy.data.collections:
+                if col == target_col:
+                    continue
+                if obj.name in col.objects:
+                    col.objects.unlink(obj)
+
+            moved.append(f"{obj.name} → {'/'.join(target_path)}")
+            log(f"[sort] {obj.name} → {target_path}")
+
+        if moved:
+            self.report({"INFO"}, f"Sorted {len(moved)} object(s)")
+            for m in moved:
+                log(f"  [sort] {m}")
+        else:
+            self.report({"INFO"}, "Everything already sorted")
+
+        if skipped:
+            self.report({"WARNING"}, f"Could not classify {len(skipped)} object(s): {', '.join(skipped[:5])}")
+
+        return {"FINISHED"}
+
+
 class OG_PT_CollectionProperties(Panel):
     bl_label       = "📂  Collection Properties"
     bl_idname      = "OG_PT_collection_props"
@@ -6192,6 +6332,26 @@ class OG_PT_DisableExport(Panel):
         else:
             for col in children:
                 layout.prop(col, "og_no_export", text=col.name)
+
+
+class OG_PT_CleanSub(Panel):
+    bl_label       = "🧹  Clean"
+    bl_idname      = "OG_PT_clean_sub"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_collection_props"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        return _active_level_col(ctx.scene) is not None
+
+    def draw(self, ctx):
+        layout = self.layout
+        layout.operator("og.sort_level_objects",
+                        text="Sort Collection Objects",
+                        icon="SORTSIZE")
 
 
 # ---------------------------------------------------------------------------
@@ -7761,6 +7921,7 @@ classes = (
     OG_OT_CreateLevel, OG_OT_AssignCollectionAsLevel,
     OG_OT_SetActiveLevel, OG_OT_NudgeLevelProp,
     OG_OT_DeleteLevel,
+    OG_OT_SortLevelObjects,
     OG_OT_AddCollectionToLevel, OG_OT_RemoveCollectionFromLevel,
     OG_OT_RemoveCollectionFromLevelActive,
     OG_OT_ToggleCollectionNoExport, OG_OT_SelectLevelCollection,
@@ -7772,6 +7933,7 @@ classes = (
     OG_PT_LevelManagerSub,
     OG_PT_CollectionProperties,
     OG_PT_DisableExport,
+    OG_PT_CleanSub,
     OG_PT_LightBakingSub,
     OG_PT_Music,
     # Spawn group
