@@ -765,10 +765,11 @@ _COL_PATH_TRIGGERS            = ("Triggers",)
 _COL_PATH_CAMERAS             = ("Cameras",)
 _COL_PATH_SPAWNS              = ("Spawns",)
 _COL_PATH_SOUND_EMITTERS      = ("Sound Emitters",)
-_COL_PATH_GEO_TERRAIN         = ("Geometry", "Terrain")
+_COL_PATH_GEO_SOLID           = ("Geometry", "Solid")
 _COL_PATH_GEO_COLLISION       = ("Geometry", "Collision Only")
 _COL_PATH_GEO_VISUAL          = ("Geometry", "Visual Only")
 _COL_PATH_GEO_REFERENCE       = ("Geometry", "Reference")
+_COL_PATH_WAYPOINTS           = ("Waypoints",)
 
 # Entity category → sub-collection path
 _ENTITY_CAT_TO_COL_PATH = {
@@ -4208,6 +4209,7 @@ class OG_OT_SpawnCamAnchor(Operator):
         if direction.length > 1e-4:
             rot_quat = direction.to_track_quat('-Z', 'Y')
             o.rotation_euler = rot_quat.to_euler()
+        _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_SPAWNS)
         self.report({"INFO"}, f"Added {cam_name}")
         return {"FINISHED"}
 
@@ -4666,9 +4668,10 @@ class OG_OT_AddWaypoint(Operator):
             return {"CANCELLED"}
 
         # Find next available index for primary (_wp_) or secondary (_wpb_) path
+        # Scope to level objects so multi-level .blends don't cross-count
         suffix = "_wpb_" if self.pathb_mode else "_wp_"
         prefix = self.enemy_name + suffix
-        existing = [o.name for o in bpy.data.objects if o.name.startswith(prefix)]
+        existing = {o.name for o in _level_objects(ctx.scene) if o.name.startswith(prefix)}
         idx = 0
         while f"{prefix}{idx:02d}" in existing:
             idx += 1
@@ -4684,7 +4687,11 @@ class OG_OT_AddWaypoint(Operator):
         # Custom property to link back to enemy
         empty["og_waypoint_for"] = self.enemy_name
 
-        ctx.collection.objects.link(empty)
+        # Link into scene first (required before collection routing)
+        ctx.scene.collection.objects.link(empty)
+
+        # Route into Waypoints sub-collection under the active level
+        _link_object_to_sub_collection(ctx.scene, empty, *_COL_PATH_WAYPOINTS)
 
         # Do NOT change active object — user needs to keep the actor selected
         # so they can quickly add more waypoints without re-selecting.
@@ -5339,6 +5346,7 @@ class OG_OT_SpawnVolumeAutoLink(Operator):
             vol.color = (1.0, 0.85, 0.0, 0.4)
         vol["og_vol_link"] = self.target_name
         vol.name = f"VOL_{self.target_name}"
+        _link_object_to_sub_collection(ctx.scene, vol, *_COL_PATH_TRIGGERS)
         self.report({"INFO"}, f"Added {vol.name} → {self.target_name}")
         return {"FINISHED"}
 
