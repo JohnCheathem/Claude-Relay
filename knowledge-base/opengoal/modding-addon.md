@@ -4,14 +4,14 @@
 
 ## Overview
 
-This skill covers everything tested and confirmed working for creating custom Jak 1 levels using OpenGOAL and the Blender addon (`opengoal_tools_v4.py`). Sections marked **⚠ OPEN QUESTION** are known unknowns — things that need solving but haven't been confirmed yet.
+This skill covers everything tested and confirmed working for creating custom Jak 1 levels using OpenGOAL and the Blender addon (`opengoal_tools.py`). Sections marked **⚠ OPEN QUESTION** are known unknowns — things that need solving but haven't been confirmed yet.
 
 ---
 
 ## Environment
 
 - **Engine**: OpenGOAL `jak-project` (cloned from `github.com/open-goal/jak-project`)
-- **Blender addon**: `opengoal_tools_v4.py` — handles GLB export, JSONC/GD/GC file writing, game.gp patching, level-info.gc patching, GOALC launch, GK launch
+- **Blender addon**: `opengoal_tools.py` — handles GLB export, JSONC/GD/GC file writing, game.gp patching, level-info.gc patching, GOALC launch, GK launch
 - **ISO**: Jak and Daxter: The Precursor Legacy (USA) dumped from physical disc
 - **Blender version**: 4.4+
 - **OpenGOAL version**: v0.2.29+
@@ -83,15 +83,48 @@ active/jak1/data/
 Blender Y-up → game Z-up. Addon converts: game `(x, y, z)` = Blender `(x, z, -y)`.
 
 ### Entity categories
-All selectable from one dropdown labeled `[Category] Name`:
+The Spawn panel has separate sub-panels per category, each with its own filtered dropdown:
 
-- **Enemies** (31 types)
-- **Bosses** (3: Klaww, Plant Boss, Metal Head Boss)
-- **NPCs** (15: Yakow, Flut Flut, Mayor, Farmer, Fisher, Explorer, Geologist, Warrior, Gambler, Sculptor, Billy, Muse, Pelican, Seagull, Robber)
-- **Pickups** (10: Power Cell, Orb, Scout Fly, Crate, Orb Cache, eco vents ×4, alt cell)
-- **Platforms** (13: floating, eco, button, flip, wall, balance, teeter totter, side-to-side, wedge, tar, rotating, launcher, warp gate)
-- **Objects** (16: cave crystal, cave gem, TNT barrel, shortcut boulder, spike, steam cap, windmill, eco claw, eco valve, swamp rock, gondola, swamp blimp, swamp rope, swamp spike, whirlpool, warp gate switch)
-- **Debug** (test-actor)
+- **⚔ Enemies** — 33 types (Enemies + Bosses), grouped by tpage source level e.g. `[Beach] Babak [nav]`
+- **🟦 Platforms** — 13 types, separate spawn controls with sync/path settings per actor
+- **📦 Props & Objects** — 18 types (Props + Objects + Debug)
+- **🧍 NPCs** — 14 types (Yakow, Flut Flut, Mayor, Farmer, Fisher, Explorer, Geologist, Warrior, Gambler, Sculptor, Billy, Muse, Pelican, Seagull)
+- **⭐ Pickups** — 10 types (Power Cell, Orb, Scout Fly, Crate, Orb Cache, eco vents ×4, alt cell)
+- **🔊 Sound Emitters** — not entity types; ambient sound placement with bank/sound picker
+
+Each enemy dropdown entry shows `[TpageGroup] Label [nav]` to remind about navmesh/OOM requirements. Clicking **Add Entity** spawns the type selected in whichever sub-panel you used and syncs `entity_type` for export.
+
+### Addon Panel Layout (v1.1.0)
+
+The N-panel tab "OpenGOAL" has this hierarchy:
+
+| Panel | Type | Purpose |
+|---|---|---|
+| ⚙ Level | parent, always open | Level name, base ID, death plane |
+| └ 🗺 Level Flow | sub, collapsed | Spawns, checkpoints, bsphere |
+| └ 🗂 Level Manager | sub, collapsed | Discovered levels list |
+| └ 💡 Light Baking | sub, collapsed | Samples + bake button |
+| └ 🎵 Music | sub, collapsed | Music bank, sound banks |
+| ➕ Spawn Objects | parent, collapsed | (content in sub-panels) |
+| └ ⚔ Enemies | sub, collapsed | Per-category dropdown, Add Entity |
+| └ 🟦 Platforms | sub, collapsed | Platform type, Add Platform |
+| └ 📦 Props & Objects | sub, collapsed | Per-category dropdown, Add Entity |
+| └ 🧍 NPCs | sub, collapsed | Per-category dropdown, Add Entity |
+| └ ⭐ Pickups | sub, collapsed | Per-category dropdown, Add Entity |
+| └ 🔊 Sound Emitters | sub, collapsed | Pick sound, Add Emitter |
+| 🔍 Selected Object | standalone, poll-gated | Context-aware settings for active object |
+| 〰 Waypoints | standalone, poll-gated | Waypoint list + add/delete |
+| 🔗 Triggers | standalone, always visible | Volume linking, volume list |
+| 📷 Camera | standalone, collapsed | Camera list, mode/blend/FOV per camera |
+| ▶ Build & Play | standalone, always visible | Export, Build, Play buttons |
+| 🔧 Developer Tools | standalone, collapsed | Quick open, reload addon |
+| Collision | standalone, poll-gated | Per-object collision/visibility flags |
+
+**Selected Object panel** is the primary edit hub — select any OG-managed object
+and it shows all relevant settings (navmesh link/unlink, platform sync, waypoints,
+camera mode/blend/FOV/look-at, volume linking, collision, light baking, navmesh
+tagging). Spawn sub-panels are for *placing* new objects; Selected Object is for
+*editing* placed objects.
 
 ### Bsphere radius
 - Enemies and Bosses: **120 meters** — required so `draw-status was-drawn` gets set, enabling AI logic
