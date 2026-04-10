@@ -1,6 +1,6 @@
 # Jak 1 Custom Level — Entity Spawning & NavMesh Reference
 *Everything learned the hard way. Every rule here cost a crash to discover.*
-*Last updated: April 2026. Tpage numbers verified against game.gp copy-textures calls.*
+*Last updated: April 10 2026. Tpage numbers verified against game.gp copy-textures calls.*
 
 Rockpool reference mod (real working custom level example):
 https://github.com/dallmeyer/OG-ModBase-Rockpool
@@ -529,18 +529,20 @@ Results from testing in `april-2026` custom level. Updated as tests are run.
 | `baby-spider` | nav-enemy | Spawns but idles, no chase/collision | Nav-enemy without navmesh — needs entity.gc navmesh patch to activate. Spawning itself works. |
 | `plunger-lurker` | process-drawable | Idles only, no player interaction | **Task-gated**: `init-from-entity!` checks `(get-task-status (game-task plunger-lurker-hit))` — if task is `invalid` (never completed), immediately goes to `plunger-lurker-die` and deactivates. If task is active/completed, goes to `plunger-lurker-idle` which DOES trigger on proximity (`distance² < 6710886400` = ~81m). Needs game task to be set to make it activate. |
 | `cavecrusher` | process-drawable | Idles only, collision but no attack | `cavecrusher-idle` only has one state. The `:event` handler responds to `'touch`/`'attack` with `deadlyup` knockback — but only if Jak's collision shape triggers it. In the maincave level it moves on a scripted path triggered by a `maincavecam` entity. Without that camera/trigger setup it just idles. It is a **set-piece obstacle**, not a free-roaming enemy. |
+| `gnawer` | process-drawable | Partially works | Animates, damages Jak, travels path. Spawns slightly off-position and path-following causes circular motion rather than clean point-to-point. Functional for use but path tuning needed. |
+| `swamp-bat` | process-drawable | Broken — requires investigation | Confirmed not working despite `path` + `pathb` lumps. Likely slave-spawn or path init issue. Do not use until root cause found. |
+| `mother-spider` | process-drawable | Broken — does not spawn children | Loads but does not spawn `baby-spider` children. Root cause unknown — may be task-gated or require a `spider-vent` actor to function. Do not use until investigated. |
+| `dark-crystal` | process-drawable | Decorative only | Spawns and displays animated texture correctly. No collision, no behaviour, no AI. Usable purely as a visual prop. |
 
 ### 🔲 Untested
 | Enemy | Group | Notes |
 |---|---|---|
-| `gnawer` | Maincave | Needs path |
-| `driller-lurker` | Maincave | Needs path (min 2 points) |
-| `dark-crystal` | Maincave | Unknown trigger requirements |
-| `mother-spider` | Maincave | Spawns baby-spider children |
 | `cavecrusher` (fully) | Robocave | Needs `maincavecam` trigger setup |
 
 ### ❌ Known Broken / Not Viable for Custom Levels
-*(none confirmed permanently broken yet)*
+| Enemy | Type | Status | Notes |
+|---|---|---|---|
+| `driller-lurker` | process-drawable | **Hard crash on level load** | Game crashes immediately when level loads. Path lump present with ≥ 2 points. Root cause unknown — may be a code init issue or tpage conflict. Do not use. |
 
 ---
 
