@@ -498,6 +498,93 @@ class OG_PT_Spawn(Panel):
 
 
 # ---------------------------------------------------------------------------
+# Operator — select a search result (sets entity_search_selected)
+# ---------------------------------------------------------------------------
+
+class OG_OT_SearchSelectEntity(bpy.types.Operator):
+    bl_idname      = "og.search_select_entity"
+    bl_label       = "Select Entity"
+    bl_description = "Select this entity as the spawn target"
+    bl_options     = {"INTERNAL", "UNDO"}
+
+    etype: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        ctx.scene.og_props.entity_search_selected = self.etype
+        try:
+            ctx.scene.og_props.entity_type = self.etype
+        except Exception:
+            pass
+        return {"FINISHED"}
+
+
+# ---------------------------------------------------------------------------
+# Spawn > Quick Search  (sub-panel — always open, pinned to top)
+# ---------------------------------------------------------------------------
+
+class OG_PT_SpawnSearch(Panel):
+    bl_label       = "Quick Search"
+    bl_idname      = "OG_PT_spawn_search"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_order       = 0
+
+    def draw(self, ctx):
+        layout = self.layout
+        props  = ctx.scene.og_props
+
+        row = layout.row(align=True)
+        row.prop(props, "entity_search", icon="VIEWZOOM", text="")
+
+        query = props.entity_search.strip().lower()
+
+        if query:
+            matches = [
+                (etype, info)
+                for etype, info in ENTITY_DEFS.items()
+                if query in info["label"].lower() or query in etype.lower()
+            ]
+            matches.sort(key=lambda x: x[1]["label"].lower())
+
+            if matches:
+                box = layout.box()
+                selected = props.entity_search_selected
+
+                for etype, info in matches[:20]:
+                    cat    = info.get("cat", "")
+                    label  = info["label"]
+                    is_sel = (etype == selected)
+                    row2   = box.row(align=True)
+                    op = row2.operator(
+                        "og.search_select_entity",
+                        text=f"{'▶ ' if is_sel else ''}{label}  [{cat}]",
+                        emboss=is_sel,
+                    )
+                    op.etype = etype
+
+                if len(matches) > 20:
+                    layout.label(text=f"… {len(matches) - 20} more — refine your search", icon="INFO")
+
+                layout.separator(factor=0.3)
+                sel = props.entity_search_selected
+                if sel and sel in ENTITY_DEFS:
+                    col = layout.column()
+                    col.scale_y = 1.4
+                    op  = col.operator("og.spawn_entity", text=f"Spawn  {ENTITY_DEFS[sel]['label']}", icon="ADD")
+                    op.source_prop = "entity_search_selected"
+                else:
+                    sub = layout.column()
+                    sub.enabled = False
+                    sub.operator("og.spawn_entity", text="Spawn", icon="ADD")
+            else:
+                layout.label(text="No results found.", icon="QUESTION")
+        else:
+            layout.label(text="Type to search all spawnable objects…", icon="INFO")
+
+
+# ---------------------------------------------------------------------------
 # Spawn > Enemies  (sub-panel, with inline navmesh)
 # ---------------------------------------------------------------------------
 

@@ -142,7 +142,8 @@ from .panels import (
     OG_PT_Level, OG_PT_SpawnLevelFlow, OG_PT_LevelManagerSub,
     OG_PT_CollectionProperties, OG_PT_DisableExport,
     OG_PT_CleanSub, OG_PT_LightBakingSub, OG_PT_Music,
-    OG_PT_Spawn, OG_PT_SpawnEnemies, OG_PT_SpawnPlatforms,
+    OG_PT_Spawn, OG_PT_SpawnSearch, OG_OT_SearchSelectEntity,
+    OG_PT_SpawnEnemies, OG_PT_SpawnPlatforms,
     OG_PT_SpawnProps, OG_PT_SpawnNPCs, OG_PT_SpawnPickups, OG_PT_SpawnSounds,
     OG_PT_Camera, OG_PT_Triggers,
     OG_PT_SelectedObject, OG_PT_SelectedCollision,
@@ -234,6 +235,8 @@ classes = (
     OG_PT_Music,
     # Spawn group
     OG_PT_Spawn,
+    OG_OT_SearchSelectEntity,
+    OG_PT_SpawnSearch,
     OG_PT_SpawnEnemies,
     OG_PT_SpawnPlatforms,
     OG_PT_SpawnProps,

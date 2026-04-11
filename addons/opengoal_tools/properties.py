@@ -59,6 +59,9 @@ class OGProperties(PropertyGroup):
                                  description="Select which level collection is active")
     level_name:  StringProperty(name="Name", description="Lowercase with dashes", default="my-level")
     entity_type:    EnumProperty(name="Entity Type",    items=ENTITY_ENUM_ITEMS)
+    # Search bar (Spawn Objects panel)
+    entity_search:          StringProperty(name="", description="Search all spawnable objects by name", default="")
+    entity_search_selected: StringProperty(name="", description="Currently selected search result", default="")
     platform_type:  EnumProperty(name="Platform Type",  items=PLATFORM_ENUM_ITEMS)
     crate_type:  EnumProperty(name="Crate Type",  items=CRATE_ITEMS)
     # Per-category entity pickers — each Spawn sub-panel uses its own prop
