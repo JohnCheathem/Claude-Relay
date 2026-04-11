@@ -4,7 +4,8 @@
 # ---------------------------------------------------------------------------
 
 import bpy
-from bpy.types import Panel
+from bpy.types import Panel, Operator
+from pathlib import Path
 from .data import (
     ENTITY_DEFS, ENTITY_WIKI, ENTITY_ENUM_ITEMS, ENEMY_ENUM_ITEMS,
     PROP_ENUM_ITEMS, NPC_ENUM_ITEMS, PICKUP_ENUM_ITEMS, PLATFORM_ENUM_ITEMS,
@@ -12,27 +13,37 @@ from .data import (
     LUMP_REFERENCE, ACTOR_LINK_DEFS, LUMP_TYPE_ITEMS,
     NAV_UNSAFE_TYPES, NEEDS_PATH_TYPES, IS_PROP_TYPES, ETYPE_AG,
     _lump_ref_for_etype, _actor_link_slots, _actor_has_links,
-    _actor_links, AGGRO_TRIGGER_EVENTS,
+    _actor_links, _actor_get_link, AGGRO_TRIGGER_EVENTS,
+    _parse_lump_row, _LUMP_HARDCODED_KEYS,
 )
 from .collections import (
     _get_level_prop, _set_level_prop, _level_objects, _active_level_col,
     _all_level_collections, _classify_object, _col_path_for_entity,
-    _recursive_col_objects, _COL_PATH_NAVMESHES, _COL_PATH_WAYPOINTS,
+    _recursive_col_objects, _ensure_sub_collection,
+    _COL_PATH_NAVMESHES, _COL_PATH_WAYPOINTS,
     _COL_PATH_TRIGGERS, _COL_PATH_CAMERAS, _COL_PATH_SOUND_EMITTERS,
     _COL_PATH_SPAWNABLE_ENEMIES, _COL_PATH_GEO_SOLID,
 )
 from .export import (
-    _nick, _lname, _actor_uses_waypoints, _actor_uses_navmesh,
+    _nick, _iso, _lname, _ldir, _goal_src, _level_info, _game_gp,
+    _levels_dir, _entity_gc,
+    _actor_uses_waypoints, _actor_uses_navmesh,
     _actor_is_platform, _actor_is_launcher, _actor_is_spawner,
     _actor_is_enemy, _actor_supports_aggro_trigger,
     _vol_links, _vols_linking_to, _classify_target,
+    _vol_get_link_to, _vol_has_link_to,
     collect_cameras, collect_aggro_triggers,
 )
 from .build import (
-    _BUILD_STATE, _PLAY_STATE, goalc_ok, kill_gk,
-    _exe_root, _data_root,
+    _EXE, _BUILD_STATE, _PLAY_STATE, goalc_ok, kill_gk,
+    _exe_root, _data_root, _data, _goalc, _user_dir,
 )
 from .properties import OGLumpRow
+from .operators import (
+    _draw_entity_sub, _draw_platform_settings, _header_sep,
+    _is_linkable, _is_aggro_target, _vol_for_target,
+    _ENEMY_CATS, _NPC_CATS, _PICKUP_CATS, _PROP_CATS,
+)
 
 class OG_PT_Level(Panel):
     bl_label       = "⚙  Level"
@@ -3663,3 +3674,73 @@ class OG_PT_Collision(Panel):
             r2.prop(ob, "nolineofsight"); r2.prop(ob, "nocamera")
 
 
+
+
+# ---------------------------------------------------------------------------
+# Preview collection and wiki draw helper
+# ---------------------------------------------------------------------------
+
+_preview_collections: dict = {}
+
+
+def _load_previews():
+    """Load all enemy images into a PreviewCollection. Called from register()."""
+    import bpy.utils.previews, os
+    pcoll = bpy.utils.previews.new()
+    img_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'enemy-images')
+    if os.path.isdir(img_dir):
+        for etype, wiki in ENTITY_WIKI.items():
+            fname = wiki.get('img')
+            if not fname:
+                continue
+            fpath = os.path.join(img_dir, fname)
+            if os.path.exists(fpath) and etype not in pcoll:
+                pcoll.load(etype, fpath, 'IMAGE')
+    _preview_collections['wiki'] = pcoll
+
+
+def _unload_previews():
+    """Remove preview collection. Called from unregister()."""
+    import bpy.utils.previews
+    for pcoll in _preview_collections.values():
+        bpy.utils.previews.remove(pcoll)
+    _preview_collections.clear()
+
+
+def _draw_wiki_preview(layout, etype: str, ctx=None):
+    """Draw image + description preview for the selected entity. Call from panel draw()."""
+    wiki = ENTITY_WIKI.get(etype)
+    if not wiki:
+        return
+
+    pcoll = _preview_collections.get('wiki')
+    box = layout.box()
+
+    # ── Image ─────────────────────────────────────────────────────────────
+    # layout.label(icon_value=) is the standard Blender addon pattern for
+    # custom images. scale_y enlarges the row so the icon renders big.
+    if pcoll and etype in pcoll:
+        icon_id = pcoll[etype].icon_id
+        col = box.column(align=True)
+        col.template_icon(icon_value=icon_id, scale=8.0)
+    elif wiki.get('img'):
+        box.label(text="Image not found — check enemy-images/ folder", icon="ERROR")
+    else:
+        box.label(text="No image available", icon="IMAGE_DATA")
+
+    # ── Description ────────────────────────────────────────────────────────
+    desc = wiki.get('desc', '').strip()
+    if desc:
+        col = box.column(align=True)
+        words = desc.split()
+        line, out = [], []
+        for w in words:
+            if sum(len(x) + 1 for x in line) + len(w) > 52:
+                out.append(' '.join(line))
+                line = [w]
+            else:
+                line.append(w)
+        if line:
+            out.append(' '.join(line))
+        for ln in out:
+            col.label(text=ln)

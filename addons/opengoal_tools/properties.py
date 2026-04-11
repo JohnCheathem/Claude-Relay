@@ -13,8 +13,12 @@ from .data import (
     ENEMY_ENUM_ITEMS, PROP_ENUM_ITEMS, NPC_ENUM_ITEMS, PICKUP_ENUM_ITEMS,
     LUMP_TYPE_ITEMS, AGGRO_EVENT_ENUM_ITEMS, ALL_SFX_ITEMS,
     LEVEL_BANKS, SBK_SOUNDS,
+    _parse_lump_row,
 )
-from .collections import _active_level_items, _on_active_level_changed
+from .collections import (
+    _active_level_items, _on_active_level_changed,
+    _get_death_plane, _set_death_plane,
+)
 
 # --- OGPreferences ---
 class OGPreferences(AddonPreferences):

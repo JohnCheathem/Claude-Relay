@@ -18,6 +18,7 @@ from .export import (
     _nick, _iso, _lname, _ldir, _goal_src, _level_info,
     _game_gp, _levels_dir, _entity_gc,
     _clean_orphaned_vol_links,
+    _navmesh_to_goal,
 )
 
 # PATH HELPERS
@@ -412,6 +413,8 @@ def _bg_build(name, scene):
 
 
 _PLAY_STATE = {"done":False, "error":None, "status":""}
+_GEO_REBUILD_STATE = {"done": False, "status": "", "error": None, "ok": False}
+_BUILD_PLAY_STATE  = {"done": False, "status": "", "error": None, "ok": False}
 
 
 

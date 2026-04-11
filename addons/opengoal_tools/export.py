@@ -14,6 +14,7 @@ from .data import (
     _actor_links, _actor_get_link, _actor_set_link,
     _actor_remove_link, _build_actor_link_lumps,
     _parse_lump_row, _aggro_event_id, AGGRO_TRIGGER_EVENTS,
+    _LUMP_HARDCODED_KEYS,
 )
 from .collections import (
     _get_level_prop, _level_objects,
@@ -21,6 +22,22 @@ from .collections import (
     _ensure_sub_collection, _recursive_col_objects,
     _COL_PATH_WAYPOINTS, _COL_PATH_NAVMESHES,
 )
+
+# _data_root reads the addon pref — duplicated here to avoid circular import with build.py
+def _data_root():
+    import bpy as _bpy
+    prefs = _bpy.context.preferences.addons.get(__name__)
+    p = prefs.preferences.data_path if prefs else ""
+    from pathlib import Path as _Path
+    return _Path(p.strip().rstrip("\\").rstrip("/")) if p.strip() else _Path(".")
+
+def _data():       return _data_root() / "data"
+def _levels_dir(): return _data() / "custom_assets" / "jak1" / "levels"
+def _goal_src():   return _data() / "goal_src" / "jak1"
+def _level_info(): return _goal_src() / "engine" / "level" / "level-info.gc"
+def _game_gp():    return _goal_src() / "game.gp"
+def _ldir(name):   return _levels_dir() / name
+def _entity_gc():  return _goal_src() / "engine" / "entity" / "entity.gc"
 
 # ---------------------------------------------------------------------------
 # NAV MESH — geometry processing and GOAL code generation
@@ -1027,12 +1044,7 @@ def _classify_target(target_name):
 # (will move to build.py when that module is extracted)
 # ---------------------------------------------------------------------------
 
-def _levels_dir(): return _data() / "custom_assets" / "jak1" / "levels"
-def _goal_src():   return _data() / "goal_src" / "jak1"
-def _level_info(): return _goal_src() / "engine" / "level" / "level-info.gc"
-def _game_gp():    return _goal_src() / "game.gp"
-def _ldir(name):   return _levels_dir() / name
-def _entity_gc():  return _goal_src() / "engine" / "entity" / "entity.gc" 
+# _levels_dir, _goal_src, _level_info, _game_gp, _ldir, _entity_gc → imported from build
 
 def _lname(ctx):
     col = _active_level_col(ctx.scene)

@@ -12,7 +12,8 @@ from .data import (
     ENTITY_DEFS, ENTITY_ENUM_ITEMS, ENEMY_ENUM_ITEMS, PROP_ENUM_ITEMS,
     NPC_ENUM_ITEMS, PICKUP_ENUM_ITEMS, PLATFORM_ENUM_ITEMS, CRATE_ITEMS,
     ALL_SFX_ITEMS, SBK_SOUNDS, LEVEL_BANKS, LUMP_REFERENCE, ACTOR_LINK_DEFS,
-    NAV_UNSAFE_TYPES, NEEDS_PATH_TYPES, IS_PROP_TYPES, ETYPE_AG, ETYPE_CODE,
+    NAV_UNSAFE_TYPES, NEEDS_PATH_TYPES, NEEDS_PATHB_TYPES, IS_PROP_TYPES,
+    ETYPE_AG, ETYPE_CODE,
     needed_tpages, _lump_ref_for_etype, _actor_link_slots, _actor_has_links,
     _actor_links, _actor_get_link, _actor_set_link, _actor_remove_link,
     _build_actor_link_lumps, _parse_lump_row, _LUMP_HARDCODED_KEYS,
@@ -27,6 +28,7 @@ from .collections import (
     _COL_PATH_SOUND_EMITTERS, _COL_PATH_SPAWNABLE_ENEMIES,
     _COL_PATH_SPAWNABLE_PLATFORMS, _COL_PATH_SPAWNABLE_PROPS,
     _COL_PATH_SPAWNABLE_NPCS, _COL_PATH_SPAWNABLE_PICKUPS,
+    _COL_PATH_GEO_SOLID,
     _set_blender_active_collection, _LEVEL_COL_DEFAULTS,
 )
 from .export import (
@@ -41,11 +43,13 @@ from .export import (
     patch_level_info, patch_game_gp, discover_custom_levels, remove_level,
 )
 from .build import (
-    _EXE, _BUILD_STATE, _PLAY_STATE, _exe_root, _data_root, _data,
+    _EXE, _BUILD_STATE, _PLAY_STATE, _GEO_REBUILD_STATE, _BUILD_PLAY_STATE, _exe_root, _data_root, _data,
     _gk, _goalc, _user_dir, kill_gk, launch_gk, goalc_send, goalc_ok,
     launch_goalc, _bg_build, _bg_play, _bg_geo_rebuild, _bg_build_and_play,
 )
 from .properties import OGLumpRow, OGActorLink, OGVolLink
+# panels import — only the draw helper needed here (avoid circular by importing just this)
+from .panels import _draw_wiki_preview
 
 class OG_OT_CreateLevel(Operator):
     """Create a new level collection with default settings."""
@@ -907,7 +911,6 @@ class OG_OT_OpenFile(Operator):
 # Skips all GOAL (.gc) recompilation — fastest iteration for geo/placement changes.
 # ---------------------------------------------------------------------------
 
-_GEO_REBUILD_STATE = {"done": False, "status": "", "error": None, "ok": False}
 
 
 class OG_OT_GeoRebuild(Operator):
@@ -959,7 +962,6 @@ class OG_OT_GeoRebuild(Operator):
         ctx.workspace.status_text_set(None)
 
 
-_BUILD_PLAY_STATE = {"done": False, "status": "", "error": None, "ok": False}
 
 
 class OG_OT_ExportBuildPlay(Operator):
@@ -1024,16 +1026,6 @@ class OG_OT_ExportBuildPlay(Operator):
 # LUMP_REFERENCE maps etype → list of actor-specific entries.
 # ===========================================================================
 
-UNIVERSAL_LUMPS = [
-    ("vis-dist",      "meters",  "Distance at which entity stays active/visible. Enemies default 200m."),
-    ("idle-distance", "meters",  "Player must be closer than this to wake the enemy. Default 80m."),
-    ("shadow-mask",   "uint32",  "Which shadow layers render for this entity. e.g. 255 = all."),
-    ("light-index",   "uint32",  "Index into the level's light array. Controls entity illumination."),
-    ("lod-dist",      "meters",  "Distance threshold for LOD switching. Array of floats per LOD level."),
-    ("texture-bucket","int32",   "Texture bucket for draw calls. Default 1."),
-    ("options",       "enum-uint32", "fact-options bitfield e.g. '(fact-options has-power-cell)'."),
-    ("visvol",        "vector4m","Visibility bounding box — two vector4m entries (min corner, max corner)."),
-]
 
 # Format: etype → [(key, ltype, description), ...]
 

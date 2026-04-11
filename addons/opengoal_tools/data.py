@@ -2330,6 +2330,17 @@ LUMP_REFERENCE = {
 }
 
 
+UNIVERSAL_LUMPS = [
+    ("vis-dist",      "meters",  "Distance at which entity stays active/visible. Enemies default 200m."),
+    ("idle-distance", "meters",  "Player must be closer than this to wake the enemy. Default 80m."),
+    ("shadow-mask",   "uint32",  "Which shadow layers render for this entity. e.g. 255 = all."),
+    ("light-index",   "uint32",  "Index into the level's light array. Controls entity illumination."),
+    ("lod-dist",      "meters",  "Distance threshold for LOD switching. Array of floats per LOD level."),
+    ("texture-bucket","int32",   "Texture bucket for draw calls. Default 1."),
+    ("options",       "enum-uint32", "fact-options bitfield e.g. '(fact-options has-power-cell)'."),
+    ("visvol",        "vector4m","Visibility bounding box — two vector4m entries (min corner, max corner)."),
+]
+
 def _lump_ref_for_etype(etype):
     """Return (universal_lumps, actor_lumps) for a given etype.
 
