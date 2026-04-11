@@ -138,7 +138,7 @@ from .operators import (
 )
 from .panels import (
     OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
-    OG_OT_UseLumpRef,
+    OG_OT_UseLumpRef, OG_OT_SortLevelObjects,
     OG_PT_Level, OG_PT_SpawnLevelFlow, OG_PT_LevelManagerSub,
     OG_PT_CollectionProperties, OG_PT_DisableExport,
     OG_PT_CleanSub, OG_PT_LightBakingSub, OG_PT_Music,

@@ -16,7 +16,7 @@ from .data import (
     _parse_lump_row, _aggro_event_id, AGGRO_TRIGGER_EVENTS,
 )
 from .collections import (
-    _get_level_prop, _level_objects, _canonical_actor_objects,
+    _get_level_prop, _level_objects,
     _active_level_col, _classify_object, _col_path_for_entity,
     _ensure_sub_collection, _recursive_col_objects,
     _COL_PATH_WAYPOINTS, _COL_PATH_NAVMESHES,
