@@ -411,3 +411,58 @@ To get it working:
   Option B — Build a custom version of jak-project with the change
   Option C — As a workaround: bake all 8 slots to the same lighting (what users already do),
               and accept that geometry color doesn't change with TOD (only fog/sky/actor lighting does)
+
+---
+
+## Session 6 — April 11 — DEFINITIVE ANSWER: geometry TOD not implemented in builder
+
+### Official confirmation
+`custom_assets/jak1/levels/test-zone/test-zone.jsonc` comment (OpenGOAL devs):
+> "For now, only the first vertex color group is used, so make sure you only have 1."
+
+This is the ground truth. Multi-slot geometry vertex color TOD is explicitly NOT implemented.
+It is a future/planned feature. The builder reads COLOR_0 only. Full stop.
+
+### What community members "have working"
+Mood-based TOD only:
+- Fog color/distance changes with time → works (GOAL mood system, unrelated to GLB)
+- Sky texture/color changes → works (GOAL mood system)
+- Actor/enemy lighting changes → works (mood-tables.gc light groups)
+- Jak's lighting changes → works (target-interp in mood callback)
+- Level GEOMETRY vertex colors changing with time → NOT WORKING for anyone
+  The community is calling "TOD working" when they see fog+sky+actor changes.
+  Nobody has per-vertex geometry light interpolation on custom levels.
+
+### Why the _NAME attributes and 8-slot baking are irrelevant
+- `export_attributes=True` exports `_SUNRISE` etc. as glTF custom attributes
+- `gltf_vertices()` in gltf_util.cpp reads `COLOR_0` only — zero code reads `_NAME` attrs
+- `pack_time_of_day()` takes one palette and copies it 8× — structure exists, not populated
+- The `gltf2_blender_extract.py` in custom_assets/blender_plugins/ patches Blender's exporter
+  to write all color_attributes as `COLOR_0`, `COLOR_1`, etc. — but builder still reads only `COLOR_0`
+
+### What DOES work right now — and what we should tell users
+The current addon correctly handles:
+1. Mood selection (fog/sky/actor lighting) — patch_level_info writes correct :mood/:mood-func
+2. Sky toggle — :sky #t/#f
+3. Sun fade — :sun-fade
+4. Single vertex color bake (COLOR_0) — exported as active color attribute → works
+
+The TOD panel (8-slot baking, slot picker, BakeAllToDSlots) is infrastructure for a feature
+that doesn't exist yet in the builder. It does no harm but has no effect on geometry in-game.
+
+### What the actual fix requires
+A C++ change to jak-project:
+- `gltf_mesh_extract.cpp` — read COLOR_0..COLOR_7 (if present) per primitive
+- `gltf_util.cpp` — new `pack_time_of_day` overload taking array<palette, 8>
+- Color quantization must use shared indices across all 8 slots
+
+The custom `gltf2_blender_extract.py` in the official repo already outputs COLOR_0..COLOR_7
+in attribute order. So the Blender side of the fix is: install that plugin and order attributes
+correctly. The builder side is still the missing piece.
+
+### Recommended next actions (choose one)
+A) File/contribute a PR to jak-project implementing multi-slot builder support — real fix
+B) Remove/hide the TOD geometry panel from our addon (it sets false expectations)
+C) Keep the TOD panel but document it as "future feature, requires builder update"
+D) Provide a workaround: bake all 8 slots to the same lighting → at least export is clean
+   and the level will look correct (just won't change with time of day for geometry)
