@@ -2015,26 +2015,30 @@ def write_gc(name, has_triggers=False, boundaries=None, has_aggro_triggers=False
         ]
 
         for bd in boundaries:
-            cp       = bd["cp_name"]
-            top      = bd["top"]
-            bot      = bd["bot"]
-            pts      = bd["points"]   # list of (bx, bz) raw game units
-            n_pts    = len(pts)
-            n_floats = 2 + n_pts * 2
+            cp    = bd["cp_name"]
+            top   = bd["top"]
+            bot   = bd["bot"]
+            pts   = bd["points"]   # list of (bx, bz) raw game units
+            n_pts = len(pts)
 
-            floats_str = f"{top:.1f} {bot:.1f}"
-            for bx, bz in pts:
-                floats_str += f" {bx:.1f} {bz:.1f}"
+            # Flat XZ pairs for :points  e.g. "x0 z0 x1 z1 ..."
+            pts_str = " ".join(f"{x:.1f} {z:.1f}" for x, z in pts)
 
+            # Use the static-load-boundary macro directly.
+            # This is the same form used by load-boundary-data.gc for all 170
+            # vanilla boundaries. The macro evaluates (the binteger ...) at
+            # compile time, producing correct boxed integers in the static data.
+            # Emitting (new 'static 'boxed-array ...) with quoted pairs would
+            # leave (the binteger N) as an unevaluated list — a compile-time bug.
             lines += [
                 f";; checkpoint '{cp}'  ({bd['mode']}, {n_pts} pts)",
                 f"(load-boundary-from-template",
-                f"  (new 'static 'boxed-array :type array :length 4 :allocated-length 4",
-                f"    (the binteger 3)",
-                f"    (new 'static 'boxed-array :type float :length {n_floats} :allocated-length {n_floats}",
-                f"      {floats_str})",
-                f"    '((the binteger 6) \"{cp}\" #f)",
-                f"    '((the binteger 0) #f #f)))",
+                f"  (static-load-boundary",
+                f"    :flags (player closed)",
+                f"    :top {top:.1f} :bot {bot:.1f}",
+                f"    :points ({pts_str})",
+                f"    :fwd (checkpt \"{cp}\" #f)",
+                f"    :bwd (invalid #f #f)))",
                 f"",
             ]
             log(f"  [write_gc] load-boundary '{cp}' ({bd['mode']}, {n_pts} pts)")
