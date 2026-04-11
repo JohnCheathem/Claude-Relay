@@ -499,3 +499,48 @@ plugin, OR pre-sort color_attributes to slot order and export all of them.
 
 ### Commit
 5887953 on feature/lighting
+
+---
+
+## Session 8 — Stop point / reality check
+
+### User situation
+- Running official OpenGOAL binary release (v0.3.1)
+- Has game data extracted to active/jak1/ but NOT the jak-project C++ source repo
+- The TOD geometry patch requires cloning jak-project + CMake + C++ compiler to rebuild goalc
+- That's too much setup — stopping here
+
+### What was actually accomplished across all sessions
+1. Identified root cause: `pack_time_of_day()` in gltf_util.cpp reads COLOR_0 only,
+   duplicates it into all 8 palette slots — geometry TOD has never worked for anyone
+2. Confirmed via official test-zone.jsonc comment: "only the first vertex color group is used"
+3. Designed and wrote the C++ fix (scratch/tod_geometry_fix.patch)
+4. Built in-addon patcher (Apply TOD Patch button in Developer Tools) that string-patches
+   the 6 C++ source files in-place with backup/restore safety
+5. Built GLB post-processor (_glb_remap_tod_slots) that renames _NAME attrs to COLOR_N
+   after export so the patched builder can read them — hooks into export_glb() automatically
+6. All of this is gated behind _tod_patch_status() — zero effect on stock builds
+
+### What works RIGHT NOW without any of this
+- Mood system: fog color/distance, sky texture, sun fade change with time of day ✓
+- Actor/enemy lighting changes with time of day ✓  
+- Jak's lighting changes with time of day ✓
+- All controlled via the mood dropdown + sky toggle + sun_fade in Level Settings ✓
+
+### What doesn't work without the patch
+- Level geometry vertex colors do NOT interpolate between TOD slots
+- The 8-slot baking UI (TOD panel) bakes correctly but has no effect in-game
+- This is a known limitation of the official builder, not a bug in the addon
+
+### If someone DOES have the source repo
+The full pipeline is ready:
+1. Developer Tools → Apply TOD Patch
+2. cmake --build build --target goalc -j$(nproc)
+3. Bake 8 TOD slots in Blender (TOD panel)
+4. Export — GLB remapper handles COLOR_N renaming automatically
+5. Build & Play — geometry now interpolates with time of day
+
+### Recommendation for the TOD panel
+Consider either hiding it or adding a note that geometry TOD requires a custom
+goalc build. Users on official binaries shouldn't spend time baking 8 slots
+that won't have any effect in-game.
