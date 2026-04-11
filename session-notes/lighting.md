@@ -114,3 +114,49 @@ Ready to test after re-export.
 
 ### Stop point
 Signing off for the night. Resume by: install latest addon → re-export level → rebuild → test set-time-of-day.
+
+---
+
+## Session — April 11 2026 (evening) — Diagnostic run, hypothesis narrowed
+
+### GLB diagnostic ran on user-supplied my-level.glb
+- All 8 `_NAME` slots present on all 28/28 primitives ✓
+- Export side is NOT dropping ToD attributes
+- BUT: COLOR_0 through COLOR_8 (nine numbered streams) also present
+
+### Why that's suspicious
+Per Blender bug tracker #118563 and upstream glTF-Blender-IO #1740/#2063,
+modern Blender (4.0+) glTF exporter does NOT emit COLOR_1 and above. Color
+attributes beyond COLOR_0 are only reachable as `_NAME` custom attributes.
+Addon export call uses `export_vertex_color="ACTIVE"` at lines 4422/4440,
+which reinforces that only one COLOR_N stream should exist.
+
+The presence of COLOR_1..COLOR_8 in the uploaded GLB contradicts both.
+Either:
+  (a) the GLB was not produced by current feature/lighting addon code, or
+  (b) the user's Blender version has different exporter behavior, or
+  (c) something in the bake setup is causing numbered exports despite ACTIVE
+
+### Hypothesis status
+- H1 (export drops _NAME): DISPROVEN
+- H3 (importer reads only COLOR_0, ignores _NAME): STRONGLY ELEVATED
+  → would explain perfectly the "stuck on one slot" symptom
+- H5 (Blender < 3.4): DISPROVEN
+- H7 (NEW: numbered COLOR_N exist contrary to docs): needs answer
+- H8 (NEW: COLOR_0 != _NOON despite addon resetting active to _NOON): worth checking
+
+### Next-session next actions (in order)
+1. Confirm with user: was uploaded GLB exported by CURRENT feature/lighting addon?
+2. Extend diagnostic: dump first-vertex bytes of COLOR_0 and each _NAME to identify
+   which named slot COLOR_0 actually equals. Also dump per-prim attribute domain/type.
+3. Search jak-project source for level GLB importer to confirm whether it reads
+   by name or by COLOR_N index. This is the central unknown.
+4. Only then propose fix.
+
+### Open questions for user
+- Was my-level.glb re-exported with c1a1f37 or later? (Critical)
+- In-game flat lighting: does it match _NOON in Blender viewport, or different slot?
+
+### Stop point
+End of session 2. NO fix proposed yet, NO changes to addons/opengoal_tools.py.
+Diagnostic data captured. Awaiting user answers + session 3.
