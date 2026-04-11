@@ -227,3 +227,53 @@ B) Embrace the indexed pipeline — explicitly set up the 8 attributes such
 
 Option A is cleaner if achievable. Option B is a guaranteed-working
 fallback. Need to test which Blender does what.
+
+---
+
+## Session 4 — April 11 — REFRAME after user "why is this easy for others"
+
+### Critical user insight
+Others bake to _NAME attributes the same way and it works for them.
+This contradicts the session 3 "importer reads by index" hypothesis if
+taken at face value — others' GLBs would have the same problem.
+
+### Key finding from OpenGOAL Jan 2024 progress report
+"Previously, only .glb files that were exported using versions of Blender
+older than 4.0 would be supported for custom levels due to the way the
+GLB exporter for Blender 4.0 would store vertex colors."
+Source: https://opengoal.dev/blog/progress-report-jan-2024/
+
+### What this tells us
+1. OpenGOAL importer is Blender-version-aware re: vertex colors
+2. Blender < 4.0 stores color attrs as clean COLOR_N (no _NAME leak,
+   no duplicates, no dropouts) — this is what most community users have
+3. Blender 4.0+ broke this; OpenGOAL added a compat patch in Jan 2024
+4. Our GLB is 4.0+ AND has BOTH COLOR_N (broken/miscoded) AND _NAME
+   (clean and complete). The importer may be picking the wrong one.
+
+### Revised hypothesis (HIGH CONFIDENCE)
+The OpenGOAL level importer has fallback logic: prefer COLOR_N if
+present, fall back to _NAME. Our GLB has COLOR_N present (in the
+miscoded form) so the importer never reads the clean _NAME data.
+
+### Why "others" don't hit this
+They're likely on Blender 3.x. Their GLB has clean COLOR_N (in correct
+slot order, no dupes/dropouts) and may not even have _NAME variants.
+Importer reads COLOR_N, all good.
+
+### Verification needed (session 5)
+Pull jak-project source for the level extractor (likely tools/build_level
+or goalc/build_level) and read the exact attribute lookup logic. Confirm:
+- Does it prefer COLOR_N over _NAME, or vice versa?
+- What name pattern does it look for? Exact match? Case sensitive?
+- Is there a Blender 4.0 compat path and what does it check for?
+
+### Possible fixes (NOT YET PROPOSED — pending source verification)
+A) Pin community to Blender 3.6 LTS — matches what works for others
+B) On 4.0+, suppress COLOR_N leak so importer falls back to _NAME path
+C) On 4.0+, manually arrange attributes so COLOR_N comes out in correct
+   engine slot order
+
+### Stop point
+Session 4 end. NO fix yet. NO addon changes. Need to read jak-project
+importer source before proposing anything.
