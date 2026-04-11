@@ -500,8 +500,6 @@ TOD_SLOTS = [
 ]
 
 # Human-readable display names for collection creation
-TOD_COLLECTION_NAMES = [s[1] for s in TOD_SLOTS]   # ["Sunrise", "Morning", …]
-TOD_SLOT_IDS         = [s[0] for s in TOD_SLOTS]   # ["_SUNRISE", "_MORNING", …]
 
 # Platform-only enum for the Platforms panel spawn dropdown
 PLATFORM_ENUM_ITEMS = [
@@ -4153,7 +4151,7 @@ def patch_level_info(name, spawns, scene=None):
              f"       :mood-func 'update-mood-{_mood_func}\n"
              f"       :ocean #f\n"
              f"       :sky {'#t' if _sky else '#f'}\n"
-             f"       :sun-fade {_sun_fade:.1f}\n"
+             f"       :sun-fade {_sun_fade:.4g}\n"
              f"       :continues\n"
              f"       {_make_continues(name, spawns)}\n"
              f"       :tasks '()\n"
@@ -4416,13 +4414,14 @@ def export_glb(ctx, name):
         if export_objs:
             ctx.view_layer.objects.active = export_objs[0]
 
+        _ea_kwargs = {"export_attributes": True} if bpy.app.version >= (3, 4, 0) else {}
         bpy.ops.export_scene.gltf(
             filepath=str(d / f"{name}.glb"), export_format="GLB",
             export_vertex_color="ACTIVE", export_normals=True,
             export_materials="EXPORT", export_texcoords=True,
             export_apply=True, use_selection=True,
             export_yup=True, export_skins=False, export_animations=False,
-            export_extras=True)
+            export_extras=True, **_ea_kwargs)
 
         # Restore selection state
         for o in ctx.scene.objects:
@@ -4433,13 +4432,14 @@ def export_glb(ctx, name):
 
     else:
         # Fallback: v1.1.0 behaviour — export entire scene
+        _ea_kwargs = {"export_attributes": True} if bpy.app.version >= (3, 4, 0) else {}
         bpy.ops.export_scene.gltf(
             filepath=str(d / f"{name}.glb"), export_format="GLB",
             export_vertex_color="ACTIVE", export_normals=True,
             export_materials="EXPORT", export_texcoords=True,
             export_apply=True, use_selection=False,
             export_yup=True, export_skins=False, export_animations=False,
-            export_extras=True)
+            export_extras=True, **_ea_kwargs)
 
     log("Exported GLB")
 
@@ -10632,9 +10632,8 @@ class OG_OT_SetupTOD(Operator):
         if tod_col is None:
             tod_col = bpy.data.collections.new(tod_parent_name)
             level_col.children.link(tod_col)
-
-        # Ensure it's linked in the scene hierarchy
-        if tod_col.name not in [c.name for c in scene.collection.children_recursive]:
+        elif tod_col.name not in [c.name for c in level_col.children]:
+            # Exists in bpy.data but not linked under this level — re-link it
             level_col.children.link(tod_col)
 
         created = []
@@ -10672,42 +10671,56 @@ class OG_OT_BakeToDSlot(Operator):
             return {"CANCELLED"}
 
         prev_engine  = scene.render.engine
-        prev_samples = scene.cycles.samples if hasattr(scene, "cycles") else 128
+        prev_samples = scene.cycles.samples
         prev_active  = ctx.view_layer.objects.active
+        prev_selected = [o for o in ctx.scene.objects if o.select_get()]
 
-        scene.render.engine    = "CYCLES"
-        scene.cycles.samples   = samples
-        bpy.ops.object.select_all(action="DESELECT")
+        scene.render.engine  = "CYCLES"
+        scene.cycles.samples = samples
 
-        baked = []
-        for obj in targets:
-            ctx.view_layer.objects.active = obj
-            obj.select_set(True)
+        baked  = []
+        failed = []
 
-            # Ensure the attribute exists
-            if obj.data.color_attributes.get(slot) is None:
-                obj.data.color_attributes.new(name=slot, type="BYTE_COLOR", domain="CORNER")
+        try:
+            for obj in targets:
+                bpy.ops.object.select_all(action="DESELECT")
+                ctx.view_layer.objects.active = obj
+                obj.select_set(True)
 
-            # Make it the active render/bake target
-            idx = obj.data.color_attributes.find(slot)
-            obj.data.color_attributes.active_index = idx
+                # Ensure the attribute exists
+                mesh = obj.data
+                if mesh.color_attributes.get(slot) is None:
+                    mesh.color_attributes.new(name=slot, type="BYTE_COLOR", domain="CORNER")
 
-            bpy.ops.object.bake(type="DIFFUSE", pass_filter={"COLOR"}, target="ACTIVE_COLOR_ATTRIBUTE")
-            baked.append(obj.name)
-            obj.select_set(False)
+                # Set as active color for bake target
+                mesh.color_attributes.active_color = mesh.color_attributes[slot]
 
-        # Restore
-        scene.render.engine  = prev_engine
-        if hasattr(scene, "cycles"):
+                try:
+                    bpy.ops.object.bake(
+                        type="DIFFUSE",
+                        pass_filter={"COLOR", "DIRECT", "INDIRECT"},
+                        target="VERTEX_COLORS",
+                        save_mode="INTERNAL",
+                    )
+                    baked.append(obj.name)
+                except Exception as exc:
+                    failed.append(f"{obj.name}: {exc}")
+
+        finally:
+            # Always restore — even if bake raised
+            scene.render.engine  = prev_engine
             scene.cycles.samples = prev_samples
-        ctx.view_layer.objects.active = prev_active
-        for obj in targets:
-            obj.select_set(True)
+            bpy.ops.object.select_all(action="DESELECT")
+            for o in prev_selected:
+                o.select_set(True)
+            ctx.view_layer.objects.active = prev_active
 
-        # Show display name in report
-        display = next((d for i, d, _ in TOD_SLOTS if i == slot), slot)
-        self.report({"INFO"}, f"Baked '{display}' on: {', '.join(baked)}")
-        return {"FINISHED"}
+        display = next((disp for sid, disp, _ in TOD_SLOTS if sid == slot), slot)
+        if baked:
+            self.report({"INFO"}, f"Baked '{display}' on: {', '.join(baked)}")
+        if failed:
+            self.report({"WARNING"}, f"Failed: {'; '.join(failed)}")
+        return {"FINISHED"} if baked else {"CANCELLED"}
 
 
 class OG_OT_BakeAllToDSlots(Operator):
@@ -10728,45 +10741,65 @@ class OG_OT_BakeAllToDSlots(Operator):
             self.report({"ERROR"}, "Select at least one mesh object to bake.")
             return {"CANCELLED"}
 
-        prev_engine  = scene.render.engine
-        prev_samples = scene.cycles.samples if hasattr(scene, "cycles") else 128
-        prev_active  = ctx.view_layer.objects.active
+        prev_engine   = scene.render.engine
+        prev_samples  = scene.cycles.samples
+        prev_active   = ctx.view_layer.objects.active
+        prev_selected = [o for o in ctx.scene.objects if o.select_get()]
 
         scene.render.engine  = "CYCLES"
         scene.cycles.samples = samples
 
-        bpy.ops.object.select_all(action="DESELECT")
+        baked  = []
+        failed = []
 
-        for obj in targets:
-            ctx.view_layer.objects.active = obj
-            obj.select_set(True)
+        try:
+            for obj in targets:
+                mesh = obj.data
+                obj_failed = []
 
-            for slot_id, _, _ in TOD_SLOTS:
-                if obj.data.color_attributes.get(slot_id) is None:
-                    obj.data.color_attributes.new(name=slot_id, type="BYTE_COLOR", domain="CORNER")
-                idx = obj.data.color_attributes.find(slot_id)
-                obj.data.color_attributes.active_index = idx
-                bpy.ops.object.bake(type="DIFFUSE", pass_filter={"COLOR"}, target="ACTIVE_COLOR_ATTRIBUTE")
+                for slot_id, slot_display, _ in TOD_SLOTS:
+                    bpy.ops.object.select_all(action="DESELECT")
+                    ctx.view_layer.objects.active = obj
+                    obj.select_set(True)
 
-            obj.select_set(False)
+                    if mesh.color_attributes.get(slot_id) is None:
+                        mesh.color_attributes.new(name=slot_id, type="BYTE_COLOR", domain="CORNER")
 
-        # Reset active_color to _NOON for clean viewport display
-        for obj in targets:
-            noon_idx = obj.data.color_attributes.find("_NOON")
-            if noon_idx >= 0:
-                obj.data.color_attributes.active_index = noon_idx
+                    mesh.color_attributes.active_color = mesh.color_attributes[slot_id]
 
-        # Restore
-        scene.render.engine  = prev_engine
-        if hasattr(scene, "cycles"):
+                    try:
+                        bpy.ops.object.bake(
+                            type="DIFFUSE",
+                            pass_filter={"COLOR", "DIRECT", "INDIRECT"},
+                            target="VERTEX_COLORS",
+                            save_mode="INTERNAL",
+                        )
+                    except Exception as exc:
+                        obj_failed.append(f"{slot_display}: {exc}")
+
+                # Reset active_color to _NOON for clean viewport display
+                noon_attr = mesh.color_attributes.get("_NOON")
+                if noon_attr:
+                    mesh.color_attributes.active_color = noon_attr
+
+                if obj_failed:
+                    failed.append(f"{obj.name} ({', '.join(obj_failed)})")
+                else:
+                    baked.append(obj.name)
+
+        finally:
+            scene.render.engine  = prev_engine
             scene.cycles.samples = prev_samples
-        ctx.view_layer.objects.active = prev_active
-        for obj in targets:
-            obj.select_set(True)
+            bpy.ops.object.select_all(action="DESELECT")
+            for o in prev_selected:
+                o.select_set(True)
+            ctx.view_layer.objects.active = prev_active
 
-        self.report({"INFO"},
-            f"Baked all 8 ToD slots on {len(targets)} mesh(es). Active slot reset to _NOON.")
-        return {"FINISHED"}
+        if baked:
+            self.report({"INFO"}, f"Baked all 8 ToD slots on: {', '.join(baked)}. Active slot reset to _NOON.")
+        if failed:
+            self.report({"WARNING"}, f"Partial failures: {'; '.join(failed)}")
+        return {"FINISHED"} if baked else {"CANCELLED"}
 
 # ---------------------------------------------------------------------------
 # OPERATOR — Light Bake (Cycles → Vertex Color)
