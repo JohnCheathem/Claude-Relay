@@ -11024,7 +11024,10 @@ class OG_PT_DevTools(Panel):
         status = _tod_patch_status(root)
         if status == "missing":
             tod_box.label(text="jak-project source not found", icon="ERROR")
-            tod_box.label(text="Set Data Path in preferences", icon="INFO")
+            tod_box.label(text="Requires the jak-project git repo", icon="INFO")
+            tod_box.label(text="(not the official binary release)", icon="INFO")
+            op = tod_box.operator("wm.url_open", text="jak-project on GitHub", icon="URL")
+            op.url = "https://github.com/open-goal/jak-project"
         elif status == "patched":
             tod_box.label(text="✓ Patch applied — rebuild goalc", icon="CHECKMARK")
             row = tod_box.row(align=True)
