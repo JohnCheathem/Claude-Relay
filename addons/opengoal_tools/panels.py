@@ -36,9 +36,9 @@ from .export import (
 )
 from .build import (
     _EXE, _BUILD_STATE, _PLAY_STATE, goalc_ok, kill_gk,
-    _exe_root, _data_root, _data, _goalc, _user_dir,
+    _exe_root, _data_root, _data, _goalc, _gk, _user_dir,
 )
-from .properties import OGLumpRow
+from .properties import OGLumpRow, OG_UL_LumpRows
 from .utils import (
     _is_linkable, _is_aggro_target, _vol_for_target,
     _ENEMY_CATS, _NPC_CATS, _PICKUP_CATS, _PROP_CATS,

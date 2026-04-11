@@ -18,6 +18,7 @@ from .data import (
     _actor_links, _actor_get_link, _actor_set_link, _actor_remove_link,
     _build_actor_link_lumps, _parse_lump_row, _LUMP_HARDCODED_KEYS,
     _aggro_event_id, AGGRO_EVENT_ENUM_ITEMS, LUMP_TYPE_ITEMS,
+    UNIVERSAL_LUMPS,
 )
 from .collections import (
     _get_level_prop, _set_level_prop, _level_objects, _active_level_col,
@@ -47,7 +48,7 @@ from .build import (
     _gk, _goalc, _user_dir, kill_gk, launch_gk, goalc_send, goalc_ok,
     launch_goalc, _bg_build, _bg_play, _bg_geo_rebuild, _bg_build_and_play,
 )
-from .properties import OGLumpRow, OGActorLink, OGVolLink
+from .properties import OGLumpRow, OGActorLink, OGVolLink, OGProperties
 from .utils import (
     _is_linkable, _is_aggro_target, _vol_for_target,
     _ENEMY_CATS, _NPC_CATS, _PICKUP_CATS, _PROP_CATS,

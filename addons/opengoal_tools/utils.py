@@ -18,8 +18,10 @@ from .collections import (
 from .export import (
     _actor_supports_aggro_trigger, _actor_is_platform, _actor_is_launcher,
     _actor_is_spawner, _actor_is_enemy, _actor_uses_waypoints,
-    _vol_links, _vol_has_link_to, _lname,
+    _actor_uses_navmesh,
+    _vol_links, _vol_has_link_to, _vols_linking_to, _lname,
 )
+from .properties import OGProperties
 
 def _is_linkable(obj):
     """True if this object type can accept a trigger volume link.
