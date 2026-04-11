@@ -2020,7 +2020,7 @@ def write_gc(name, has_triggers=False, boundaries=None, has_aggro_triggers=False
                 f";; checkpoint '{cp}'  ({bd['mode']}, {n_pts} pts)",
                 f"(load-boundary-from-template",
                 f"  (static-load-boundary",
-                f"    :flags (player closed)",
+                f"    :flags (player)",
                 f"    :top {top:.1f} :bot {bot:.1f}",
                 f"    :points ({pts_str})",
                 f"    :fwd (checkpt \"{cp}\" #f)",
