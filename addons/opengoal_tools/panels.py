@@ -3564,9 +3564,8 @@ class OG_PT_DevTools(Panel):
         layout = self.layout
 
         # ── Reload / Clean ───────────────────────────────────────────────────
-        row = layout.row(align=True)
+        row = layout.row()
         row.scale_y = 1.4
-        row.operator("og.reload_addon",       text="🔄  Reload Addon", icon="FILE_REFRESH")
         row.operator("og.clean_level_files",  text="🗑  Clean Files",  icon="TRASH")
         layout.separator(factor=0.5)
 
