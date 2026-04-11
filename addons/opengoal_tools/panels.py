@@ -39,10 +39,12 @@ from .build import (
     _exe_root, _data_root, _data, _goalc, _user_dir,
 )
 from .properties import OGLumpRow
-from .operators import (
-    _draw_entity_sub, _draw_platform_settings, _header_sep,
+from .utils import (
     _is_linkable, _is_aggro_target, _vol_for_target,
     _ENEMY_CATS, _NPC_CATS, _PICKUP_CATS, _PROP_CATS,
+    _draw_platform_settings, _header_sep, _draw_entity_sub,
+    _draw_wiki_preview,
+    _preview_collections, _load_previews, _unload_previews,
 )
 
 class OG_PT_Level(Panel):
@@ -3680,67 +3682,3 @@ class OG_PT_Collision(Panel):
 # Preview collection and wiki draw helper
 # ---------------------------------------------------------------------------
 
-_preview_collections: dict = {}
-
-
-def _load_previews():
-    """Load all enemy images into a PreviewCollection. Called from register()."""
-    import bpy.utils.previews, os
-    pcoll = bpy.utils.previews.new()
-    img_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'enemy-images')
-    if os.path.isdir(img_dir):
-        for etype, wiki in ENTITY_WIKI.items():
-            fname = wiki.get('img')
-            if not fname:
-                continue
-            fpath = os.path.join(img_dir, fname)
-            if os.path.exists(fpath) and etype not in pcoll:
-                pcoll.load(etype, fpath, 'IMAGE')
-    _preview_collections['wiki'] = pcoll
-
-
-def _unload_previews():
-    """Remove preview collection. Called from unregister()."""
-    import bpy.utils.previews
-    for pcoll in _preview_collections.values():
-        bpy.utils.previews.remove(pcoll)
-    _preview_collections.clear()
-
-
-def _draw_wiki_preview(layout, etype: str, ctx=None):
-    """Draw image + description preview for the selected entity. Call from panel draw()."""
-    wiki = ENTITY_WIKI.get(etype)
-    if not wiki:
-        return
-
-    pcoll = _preview_collections.get('wiki')
-    box = layout.box()
-
-    # ── Image ─────────────────────────────────────────────────────────────
-    # layout.label(icon_value=) is the standard Blender addon pattern for
-    # custom images. scale_y enlarges the row so the icon renders big.
-    if pcoll and etype in pcoll:
-        icon_id = pcoll[etype].icon_id
-        col = box.column(align=True)
-        col.template_icon(icon_value=icon_id, scale=8.0)
-    elif wiki.get('img'):
-        box.label(text="Image not found — check enemy-images/ folder", icon="ERROR")
-    else:
-        box.label(text="No image available", icon="IMAGE_DATA")
-
-    # ── Description ────────────────────────────────────────────────────────
-    desc = wiki.get('desc', '').strip()
-    if desc:
-        col = box.column(align=True)
-        words = desc.split()
-        line, out = [], []
-        for w in words:
-            if sum(len(x) + 1 for x in line) + len(w) > 52:
-                out.append(' '.join(line))
-                line = [w]
-            else:
-                line.append(w)
-        if line:
-            out.append(' '.join(line))
-        for ln in out:
-            col.label(text=ln)

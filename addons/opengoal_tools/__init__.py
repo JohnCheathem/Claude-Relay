@@ -137,7 +137,6 @@ from .operators import (
     OG_OT_RemoveLevel, OG_OT_RefreshLevels,
 )
 from .panels import (
-    _preview_collections, _load_previews, _unload_previews, _draw_wiki_preview,
     OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
     OG_OT_UseLumpRef, OG_OT_SortLevelObjects,
     OG_PT_Level, OG_PT_SpawnLevelFlow, OG_PT_LevelManagerSub,
@@ -165,6 +164,8 @@ from .panels import (
     OG_PT_SelectedLumps, OG_PT_SelectedLumpReference,
     OG_PT_Waypoints, OG_PT_BuildPlay, OG_PT_DevTools, OG_PT_Collision,
 )
+
+from .utils import _preview_collections, _load_previews, _unload_previews
 
 # bpy.utils.previews is the correct Blender API for custom images in panels.
 # icon_id is just an integer texture lookup — zero overhead in draw().

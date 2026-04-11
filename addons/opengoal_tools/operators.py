@@ -48,8 +48,12 @@ from .build import (
     launch_goalc, _bg_build, _bg_play, _bg_geo_rebuild, _bg_build_and_play,
 )
 from .properties import OGLumpRow, OGActorLink, OGVolLink
-# panels import — only the draw helper needed here (avoid circular by importing just this)
-from .panels import _draw_wiki_preview
+from .utils import (
+    _is_linkable, _is_aggro_target, _vol_for_target,
+    _ENEMY_CATS, _NPC_CATS, _PICKUP_CATS, _PROP_CATS,
+    _draw_platform_settings, _header_sep, _draw_entity_sub,
+    _draw_wiki_preview,
+)
 
 class OG_OT_CreateLevel(Operator):
     """Create a new level collection with default settings."""
@@ -1189,51 +1193,10 @@ class OG_OT_SpawnVolume(Operator):
         return self.execute(ctx)
 
 
-def _is_linkable(obj):
-    """True if this object type can accept a trigger volume link.
-    Cameras, checkpoints, player spawns, and nav-enemy actors are linkable.
-    Process-drawable enemies (Yeti, Bully, etc.) are NOT linkable because
-    they don't respond to 'cue-chase events.
-    """
-    if obj is None:
-        return False
-    if obj.type == "CAMERA" and obj.name.startswith("CAMERA_"):
-        return True
-    if obj.type == "EMPTY":
-        n = obj.name
-        if n.endswith("_CAM"):
-            return False
-        if n.startswith("SPAWN_") or n.startswith("CHECKPOINT_"):
-            return True
-        if n.startswith("ACTOR_") and "_wp_" not in n and "_wpb_" not in n:
-            parts = n.split("_", 2)
-            if len(parts) >= 3 and _actor_supports_aggro_trigger(parts[1]):
-                return True
-    return False
 
 
-def _is_aggro_target(obj):
-    """True if this object is a nav-enemy ACTOR_ empty.
-    Aggro targets allow multiple linked volumes (and multiple links per volume
-    pointing at the same enemy with different behaviours). Cameras and
-    checkpoints are 1:1 (soft-enforced at link time).
-    """
-    if obj is None or obj.type != "EMPTY" or not obj.name.startswith("ACTOR_"):
-        return False
-    if "_wp_" in obj.name or "_wpb_" in obj.name or obj.name.endswith("_CAM"):
-        return False
-    parts = obj.name.split("_", 2)
-    return len(parts) >= 3 and _actor_supports_aggro_trigger(parts[1])
 
 
-def _vol_for_target(scene, target_name):
-    """Return the first VOL_ mesh that has at least one link to target_name, or None.
-    For multi-link enemies, use _vols_linking_to() instead.
-    """
-    for o in _level_objects(scene):
-        if o.type == "MESH" and o.name.startswith("VOL_") and _vol_has_link_to(o, target_name):
-            return o
-    return None
 
 
 
@@ -2050,161 +2013,7 @@ class OG_OT_SpawnPlatform(Operator):
 # ── Platforms panel ───────────────────────────────────────────────────────────
 
 
-def _draw_platform_settings(layout, sel, scene):
-    """Draw per-platform settings for the active platform actor."""
-    etype = sel.name.split("_", 2)[1]
-    einfo = ENTITY_DEFS.get(etype, {})
 
-    layout.label(text=einfo.get("label", etype), icon="CUBE")
-
-    # ── Sync controls (plat, plat-eco, side-to-side-plat) ────────────────────
-    if einfo.get("needs_sync"):
-        box = layout.box()
-        box.label(text="Sync (Path Timing)", icon="TIME")
-
-        wp_prefix = sel.name + "_wp_"
-        wp_count  = sum(1 for o in _level_objects(scene)
-                        if o.name.startswith(wp_prefix) and o.type == "EMPTY")
-
-        if wp_count < 2:
-            box.label(text="⚠ Add ≥2 waypoints to enable movement", icon="INFO")
-        else:
-            box.label(text=f"✓ {wp_count} waypoints — platform will move", icon="CHECKMARK")
-
-        col = box.column(align=True)
-
-        # Period
-        row = col.row(align=True)
-        row.label(text="Period (s):")
-        period = float(sel.get("og_sync_period", 4.0))
-        op = row.operator("og.nudge_float_prop", text="-0.5", icon="REMOVE")
-        op.prop_name = "og_sync_period"; op.delta = -0.5; op.val_min = 0.5
-        row.label(text=f"{period:.1f}s")
-        op = row.operator("og.nudge_float_prop", text="+0.5", icon="ADD")
-        op.prop_name = "og_sync_period"; op.delta = 0.5; op.val_max = 300.0
-
-        # Phase
-        row = col.row(align=True)
-        row.label(text="Phase (0–1):")
-        phase = float(sel.get("og_sync_phase", 0.0))
-        op = row.operator("og.nudge_float_prop", text="-0.1", icon="REMOVE")
-        op.prop_name = "og_sync_phase"; op.delta = -0.1; op.val_min = 0.0
-        row.label(text=f"{phase:.2f}")
-        op = row.operator("og.nudge_float_prop", text="+0.1", icon="ADD")
-        op.prop_name = "og_sync_phase"; op.delta = 0.1; op.val_max = 0.9
-
-        # Ease out
-        row = col.row(align=True)
-        row.label(text="Ease Out:")
-        ease_out = float(sel.get("og_sync_ease_out", 0.15))
-        op = row.operator("og.nudge_float_prop", text="-0.05", icon="REMOVE")
-        op.prop_name = "og_sync_ease_out"; op.delta = -0.05; op.val_min = 0.0
-        row.label(text=f"{ease_out:.2f}")
-        op = row.operator("og.nudge_float_prop", text="+0.05", icon="ADD")
-        op.prop_name = "og_sync_ease_out"; op.delta = 0.05; op.val_max = 0.5
-
-        # Ease in
-        row = col.row(align=True)
-        row.label(text="Ease In:")
-        ease_in = float(sel.get("og_sync_ease_in", 0.15))
-        op = row.operator("og.nudge_float_prop", text="-0.05", icon="REMOVE")
-        op.prop_name = "og_sync_ease_in"; op.delta = -0.05; op.val_min = 0.0
-        row.label(text=f"{ease_in:.2f}")
-        op = row.operator("og.nudge_float_prop", text="+0.05", icon="ADD")
-        op.prop_name = "og_sync_ease_in"; op.delta = 0.05; op.val_max = 0.5
-
-        # Wrap phase toggle
-        wrap = bool(sel.get("og_sync_wrap", 0))
-        row = box.row()
-        icon = "CHECKBOX_HLT" if wrap else "CHECKBOX_DEHLT"
-        label = "Loop (wrap-phase) ✓" if wrap else "Loop (wrap-phase)"
-        row.operator("og.toggle_platform_wrap", text=label, icon=icon)
-
-        box.operator("og.set_platform_defaults", text="Reset to Defaults", icon="LOOP_BACK")
-
-        if wp_count >= 2:
-            box.label(text="Tip: phase staggers multiple platforms", icon="INFO")
-
-    # ── plat-button path info ─────────────────────────────────────────────────
-    if einfo.get("needs_path") and not einfo.get("needs_sync"):
-        box = layout.box()
-        box.label(text="Path (Button Travel)", icon="ANIM")
-        wp_prefix = sel.name + "_wp_"
-        wp_count  = sum(1 for o in _level_objects(scene)
-                        if o.name.startswith(wp_prefix) and o.type == "EMPTY")
-        if wp_count < 2:
-            box.label(text="⚠ Needs ≥2 waypoints (start + end)", icon="ERROR")
-        else:
-            box.label(text=f"✓ {wp_count} waypoints", icon="CHECKMARK")
-        box.label(text="Use Waypoints panel to add points ↓", icon="INFO")
-
-    # ── notice-dist (plat-eco) ────────────────────────────────────────────────
-    if einfo.get("needs_notice_dist"):
-        box = layout.box()
-        box.label(text="Eco Notice Distance", icon="RADIOBUT_ON")
-        notice = float(sel.get("og_notice_dist", -1.0))
-        row = box.row(align=True)
-        op = row.operator("og.nudge_float_prop", text="-5m", icon="REMOVE")
-        op.prop_name = "og_notice_dist"; op.delta = -5.0; op.val_min = 0.0
-        if notice < 0:
-            row.label(text="∞ (always active)")
-        else:
-            row.label(text=f"{notice:.0f}m")
-        op = row.operator("og.nudge_float_prop", text="+5m", icon="ADD")
-        op.prop_name = "og_notice_dist"; op.delta = 5.0; op.val_max = 500.0
-        toggle_row = box.row()
-        if notice < 0:
-            toggle_row.label(text="Moves without eco — click +5m to set range", icon="INFO")
-        else:
-            op = toggle_row.operator("og.nudge_float_prop", text="Set Always Active", icon="RADIOBUT_ON")
-            op.prop_name = "og_notice_dist"; op.delta = -999.0; op.val_min = -1.0
-
-
-# ===========================================================================
-# PANELS — Restructured UI
-# ---------------------------------------------------------------------------
-# Tab: OpenGOAL (N-panel)
-#
-#  📁 Level              OG_PT_Level          (parent, always open)
-#    🗂 Level Manager     OG_PT_LevelManagerSub (sub, DEFAULT_CLOSED)
-#    📂 Collections       OG_PT_CollectionProperties (sub, DEFAULT_CLOSED, poll-gated)
-#      Disable Export    OG_PT_DisableExport     (sub-sub, DEFAULT_CLOSED)
-#      🧹 Clean          OG_PT_CleanSub          (sub-sub, DEFAULT_CLOSED)
-#    💡 Light Baking      OG_PT_LightBakingSub  (sub, DEFAULT_CLOSED)
-#    🎵 Music             OG_PT_Music           (sub, DEFAULT_CLOSED)
-#
-#  📁 Spawn              OG_PT_Spawn          (parent, DEFAULT_CLOSED)
-#    ⚔ Enemies           OG_PT_SpawnEnemies   (sub, DEFAULT_CLOSED)
-#    🟦 Platforms         OG_PT_SpawnPlatforms (sub, DEFAULT_CLOSED)
-#    📦 Props & Objects   OG_PT_SpawnProps     (sub, DEFAULT_CLOSED)
-#    🧍 NPCs              OG_PT_SpawnNPCs      (sub, DEFAULT_CLOSED)
-#    ⭐ Pickups           OG_PT_SpawnPickups   (sub, DEFAULT_CLOSED)
-#    🔊 Sound Emitters    OG_PT_SpawnSounds    (sub, DEFAULT_CLOSED)
-#    🗺 Level Flow        OG_PT_SpawnLevelFlow (sub, DEFAULT_CLOSED)
-#    📷 Cameras           OG_PT_Camera         (sub, DEFAULT_CLOSED)
-#    🔗 Triggers          OG_PT_Triggers       (sub, DEFAULT_CLOSED)
-#
-#  🔍 Selected Object   OG_PT_SelectedObject    (always visible)
-#    Collision          OG_PT_SelectedCollision  (sub, DEFAULT_CLOSED, mesh poll)
-#    Light Baking       OG_PT_SelectedLightBaking(sub, DEFAULT_CLOSED, mesh poll)
-#    NavMesh            OG_PT_SelectedNavMeshTag (sub, DEFAULT_CLOSED, mesh poll)
-#  〰 Waypoints          OG_PT_Waypoints          (context, poll-gated)
-#  ▶  Build & Play       OG_PT_BuildPlay      (always visible)
-#  🔧 Developer Tools    OG_PT_DevTools       (DEFAULT_CLOSED)
-#  Collision             OG_PT_Collision      (object context)
-# ===========================================================================
-
-def _header_sep(layout):
-    layout.separator(factor=0.4)
-
-# ---------------------------------------------------------------------------
-# Helpers — shared entity draw helpers
-# ---------------------------------------------------------------------------
-
-_ENEMY_CATS  = {"Enemies", "Bosses"}
-_PROP_CATS   = {"Props", "Objects", "Debug"}
-_NPC_CATS    = {"NPCs"}
-_PICKUP_CATS = {"Pickups"}
 
 def _entity_enum_for_cats(cats):
     """Return enum items filtered to the given category set, in display order."""
@@ -2215,78 +2024,6 @@ def _entity_enum_for_cats(cats):
         )
     ]
 
-def _draw_entity_sub(layout, ctx, cats, nav_inline=False, prop_name="entity_type"):
-    """Shared draw logic for entity sub-panels.
-    cats:       set of category strings to include.
-    nav_inline: if True, show navmesh status/link inline when a nav-enemy actor is selected.
-    prop_name:  OGProperties prop holding this sub-panel's selected type.
-    """
-    props = ctx.scene.og_props
-    etype = getattr(props, prop_name, props.entity_type)
-    einfo = ENTITY_DEFS.get(etype, {})
-
-    # Filtered dropdown — only shows types for this sub-panel's categories
-    layout.prop(props, prop_name, text="")
-
-    if etype == "crate":
-        layout.prop(props, "crate_type", text="Crate Type")
-
-    _draw_wiki_preview(layout, etype, ctx)
-
-    # ── Spawn requirements info ──────────────────────────────────────────
-    if einfo.get("is_prop"):
-        box = layout.box()
-        box.label(text="Prop — idle animation only", icon="INFO")
-        box.label(text="No AI or combat")
-    elif nav_inline and etype in NAV_UNSAFE_TYPES:
-        box = layout.box()
-        box.label(text="Nav-enemy — needs navmesh", icon="ERROR")
-        box.prop(props, "nav_radius", text="Sphere Radius (m)")
-
-        # ── Inline navmesh link status ───────────────────────────────────
-        # Shows when ANY nav-enemy actor is selected — uses actor's actual type,
-        # not the dropdown (so selecting a babak actor always shows its navmesh
-        # status regardless of what the entity picker currently shows).
-        sel = ctx.active_object
-        if sel and sel.name.startswith("ACTOR_") and "_wp_" not in sel.name:
-            parts = sel.name.split("_", 2)
-            if len(parts) >= 3 and _actor_uses_navmesh(parts[1]):
-                nm_name = sel.get("og_navmesh_link", "")
-                nm_obj  = bpy.data.objects.get(nm_name) if nm_name else None
-                layout.separator(factor=0.3)
-                layout.label(text=f"NavMesh — {sel.name}", icon="MOD_MESHDEFORM")
-                row = layout.row(align=True)
-                if nm_obj:
-                    row.label(text=f"✓ {nm_obj.name}", icon="CHECKMARK")
-                    row.operator("og.unlink_navmesh", text="", icon="X")
-                else:
-                    row.label(text="No mesh linked", icon="ERROR")
-                    # Only show Link button when a mesh is also in the selection
-                    sel_meshes = [o for o in ctx.selected_objects if o.type == "MESH"]
-                    if sel_meshes:
-                        box2 = layout.box()
-                        box2.label(text=f"Will link to: {sel_meshes[0].name}", icon="INFO")
-                        box2.operator("og.link_navmesh", text="Link NavMesh", icon="LINKED")
-                    else:
-                        box2 = layout.box()
-                        box2.label(text="Shift-select a mesh to link", icon="INFO")
-    elif einfo.get("needs_pathb"):
-        box = layout.box()
-        box.label(text="Needs 2 path sets", icon="INFO")
-        box.label(text="Waypoints: _wp_00... and _wpb_00...")
-    elif einfo.get("needs_path"):
-        box = layout.box()
-        box.label(text="Needs waypoints to patrol", icon="INFO")
-
-    layout.separator(factor=0.3)
-    op = layout.operator("og.spawn_entity", text="Add Entity", icon="ADD")
-    op.source_prop = prop_name
-
-
-
-# ---------------------------------------------------------------------------
-# Material draw helper (used in register as MATERIAL_PT_custom_props.prepend)
-# ---------------------------------------------------------------------------
 
 def _draw_mat(self, ctx):
     ob = ctx.object
