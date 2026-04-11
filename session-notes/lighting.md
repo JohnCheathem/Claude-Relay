@@ -160,3 +160,70 @@ Either:
 ### Stop point
 End of session 2. NO fix proposed yet, NO changes to addons/opengoal_tools.py.
 Diagnostic data captured. Awaiting user answers + session 3.
+
+---
+
+## Session 3 — April 11 evening — ROOT CAUSE IDENTIFIED
+
+### Test result from user
+- (set-time-of-day) DOES affect Jak's lighting (mood-tables.gc actor pipeline working)
+- (set-time-of-day) does NOT affect level geometry baked colors
+- Confirms the bug is on the vertex-color palette path, NOT the mood callback path
+
+### Byte-level GLB diagnostic (scratch/inspect_glb_tod_v2.py)
+On user's my-level.glb produced by current feature/lighting addon:
+
+GLB contains BOTH:
+- COLOR_0..COLOR_7 (8 numbered glTF color streams)
+- _SUNRISE.._GREENSUN (8 named custom attributes)
+
+SHA1 byte-comparison shows COLOR_N → _NAME mapping:
+  COLOR_0 == _SUNRISE       (engine expects SUNRISE — OK)
+  COLOR_1 == _MORNING       (engine expects MORNING — OK)
+  COLOR_2 == _AFTERNOON     (engine expects NOON — WRONG)
+  COLOR_3 == _AFTERNOON     (DUPLICATE)
+  COLOR_4 == _SUNSET        (engine expects SUNSET — OK)
+  COLOR_5 == _TWILIGHT      (engine expects TWILIGHT — OK)
+  COLOR_6 == _GREENSUN      (engine expects EVENING — WRONG)
+  COLOR_7 == _GREENSUN      (DUPLICATE)
+
+_NOON and _EVENING never reach the numbered COLOR_N streams at all.
+Only present as named _NAME accessors.
+
+### Root cause
+The OpenGOAL level builder reads vertex colors from COLOR_N by INDEX,
+not from _NAME custom attributes. The Blender glTF exporter is leaking
+custom color-typed _NAME attributes into the COLOR_N numbered slots in
+addition to writing them as named accessors. This contradicts the
+upstream Blender doc claim that "COLOR_1 and above are never exported"
+but the bytes show it's happening. Pattern: alphabetical-ish ordering,
+with 2 duplicates and 2 dropouts. Not random.
+
+The geometry lighting therefore appears frozen near sunrise (because
+COLOR_0 == _SUNRISE) and the engine's interpolation runs between
+miscoded/duplicated slots.
+
+The mood/actor pipeline (Jak responds to set-time-of-day) is unaffected
+because it uses mood-tables.gc light-groups, not the GLB vertex colors.
+
+### Confidence: HIGH
+Byte-perfect SHA1 match on every primitive verifies the mapping.
+Symptoms predicted by hypothesis match symptoms reported by user exactly.
+
+### Outliers to investigate
+- Plane.005 reports COLOR_0 NO MATCH — likely a non-baked stray mesh
+  (sky? water? collider?). Not blocking.
+
+### NEXT (session 4) — fix design, NOT YET IMPLEMENTED
+Two avenues:
+A) Stop the leak — find what export setting / attribute property prevents
+   custom color attrs from also being written as COLOR_N. Possibly: change
+   bake to FLOAT_COLOR/POINT instead of BYTE_COLOR/CORNER, or use a non-
+   color attribute domain entirely so the gltf exporter doesn't see them
+   as color streams.
+B) Embrace the indexed pipeline — explicitly set up the 8 attributes such
+   that they end up in COLOR_0..COLOR_7 in the correct engine slot order,
+   accepting that named accessors are decorative.
+
+Option A is cleaner if achievable. Option B is a guaranteed-working
+fallback. Need to test which Blender does what.
