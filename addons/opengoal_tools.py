@@ -10421,6 +10421,447 @@ class OG_OT_CleanLevelFiles(Operator):
         return {"FINISHED"}
 
 
+# ── TOD Geometry Patcher ──────────────────────────────────────────────────────
+# Inserted before OG_PT_DevTools class definition
+
+class OG_OT_PatchTODGeometry(Operator):
+    """Patch the jak-project C++ source to enable per-slot time-of-day vertex
+color interpolation on level geometry. Modifies 5 files in your jak-project
+source tree. Requires rebuilding goalc afterward."""
+    bl_idname   = "og.patch_tod_geometry"
+    bl_label    = "Patch TOD Geometry"
+    bl_description = (
+        "Patch jak-project C++ source for time-of-day geometry vertex colors. "
+        "Modifies gltf_util.h/.cpp, gltf_mesh_extract.h/.cpp, Tfrag.cpp, Tie.cpp. "
+        "Rebuild goalc after applying."
+    )
+
+    def execute(self, ctx):
+        root = _data_root()
+        results = _apply_tod_geometry_patch(root)
+        if results["already_patched"]:
+            self.report({"INFO"}, "✓ TOD geometry patch already applied — no changes made")
+            return {"FINISHED"}
+        if results["errors"]:
+            self.report({"ERROR"}, "Patch failed: " + "; ".join(results["errors"]))
+            return {"CANCELLED"}
+        changed = results["changed"]
+        self.report({"INFO"}, f"✓ TOD geometry patch applied to {len(changed)} files — rebuild goalc to activate")
+        return {"FINISHED"}
+
+
+class OG_OT_UnpatchTODGeometry(Operator):
+    """Remove the TOD geometry patch from jak-project source files,
+restoring them to their original state."""
+    bl_idname   = "og.unpatch_tod_geometry"
+    bl_label    = "Remove TOD Patch"
+    bl_description = "Revert the TOD geometry patch from jak-project C++ source files"
+
+    def execute(self, ctx):
+        root = _data_root()
+        results = _remove_tod_geometry_patch(root)
+        if results["already_clean"]:
+            self.report({"INFO"}, "TOD geometry patch not present — nothing to revert")
+            return {"FINISHED"}
+        if results["errors"]:
+            self.report({"ERROR"}, "Revert failed: " + "; ".join(results["errors"]))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"TOD geometry patch removed from {len(results['changed'])} files")
+        return {"FINISHED"}
+
+
+def _tod_patch_status(root):
+    """Returns 'patched', 'unpatched', 'partial', or 'missing' (source not found)."""
+    files = _tod_patch_files(root)
+    if not all(p.exists() for p in files.values()):
+        return "missing"
+    checks = {
+        "gltf_util_h":      ("pack_time_of_day_8" in files["gltf_util_h"].read_text(errors="replace")),
+        "gltf_mesh_h":      ("color_palettes" in files["gltf_mesh_h"].read_text(errors="replace")),
+        "gltf_mesh_cpp":    ("all_slot_colors" in files["gltf_mesh_cpp"].read_text(errors="replace")),
+        "tfrag_cpp":        ("pack_time_of_day_8" in files["tfrag_cpp"].read_text(errors="replace")),
+        "tie_cpp":          ("pack_time_of_day_8" in files["tie_cpp"].read_text(errors="replace")),
+        "gltf_util_cpp":    ("pack_time_of_day_8" in files["gltf_util_cpp"].read_text(errors="replace")),
+    }
+    n = sum(checks.values())
+    if n == len(checks):   return "patched"
+    if n == 0:             return "unpatched"
+    return "partial"
+
+
+def _tod_patch_files(root):
+    base = root / "data"
+    goalc = base.parent / "goalc"  # jak-project/goalc (not inside data/)
+    common = base.parent / "common"
+    return {
+        "gltf_util_h":   common / "util" / "gltf_util.h",
+        "gltf_util_cpp": common / "util" / "gltf_util.cpp",
+        "gltf_mesh_h":   goalc  / "build_level" / "common" / "gltf_mesh_extract.h",
+        "gltf_mesh_cpp": goalc  / "build_level" / "common" / "gltf_mesh_extract.cpp",
+        "tfrag_cpp":     goalc  / "build_level" / "common" / "Tfrag.cpp",
+        "tie_cpp":       goalc  / "build_level" / "common" / "Tie.cpp",
+    }
+
+
+def _apply_tod_geometry_patch(root):
+    files  = _tod_patch_files(root)
+    errors = []
+    changed = []
+
+    missing = [k for k, p in files.items() if not p.exists()]
+    if missing:
+        return {"errors": [f"Source file not found: {missing}"], "changed": [], "already_patched": False}
+
+    status = _tod_patch_status(root)
+    if status == "patched":
+        return {"errors": [], "changed": [], "already_patched": True}
+
+    # ── gltf_util.h ──────────────────────────────────────────────────────────
+    OLD_UTIL_H = "tfrag3::PackedTimeOfDay pack_time_of_day(const std::vector<math::Vector<u8, 4>>& color_palette);\n\nstruct MercExtractData {"
+    NEW_UTIL_H = (
+        "tfrag3::PackedTimeOfDay pack_time_of_day(const std::vector<math::Vector<u8, 4>>& color_palette);\n"
+        "\n"
+        "// [OpenGOAL Tools TOD] Pack 8 per-slot palettes. Slot order: SUNRISE(0) MORNING(1) NOON(2)\n"
+        "// AFTERNOON(3) SUNSET(4) TWILIGHT(5) EVENING(6) GREENSUN(7). Empty slots fall back to slot 2.\n"
+        "tfrag3::PackedTimeOfDay pack_time_of_day_8(\n"
+        "    const std::array<std::vector<math::Vector<u8, 4>>, 8>& palettes);\n"
+        "\n"
+        "// [OpenGOAL Tools TOD] Read a named vertex color attribute from a GLTF primitive.\n"
+        "// Returns empty vector if absent or vertex count != expected_count.\n"
+        "std::vector<math::Vector<u8, 4>> gltf_read_color_attr(\n"
+        "    const tinygltf::Model& model,\n"
+        "    const std::map<std::string, int>& attributes,\n"
+        "    const std::string& attr_name,\n"
+        "    u32 expected_count);\n"
+        "\n"
+        "struct MercExtractData {"
+    )
+
+    # ── gltf_util.cpp ─────────────────────────────────────────────────────────
+    # Insert new functions right after the closing brace of pack_time_of_day
+    OLD_UTIL_CPP_ANCHOR = "  return colors;\n}\n\nvoid process_normal_merc_draw("
+    NEW_UTIL_CPP_ANCHOR = (
+        "  return colors;\n"
+        "}\n"
+        "\n"
+        "// [OpenGOAL Tools TOD] BEGIN\n"
+        "tfrag3::PackedTimeOfDay pack_time_of_day_8(\n"
+        "    const std::array<std::vector<math::Vector<u8, 4>>, 8>& palettes) {\n"
+        "  const auto& base = palettes[2].empty() ? palettes[0] : palettes[2];\n"
+        "  ASSERT_MSG(!base.empty(), \"pack_time_of_day_8: slots 0 and 2 both empty\");\n"
+        "  tfrag3::PackedTimeOfDay colors;\n"
+        "  colors.color_count = (base.size() + 3) & (~3);\n"
+        "  colors.data.resize(colors.color_count * 8 * 4);\n"
+        "  for (u32 color_index = 0; color_index < base.size(); color_index++) {\n"
+        "    for (u32 palette = 0; palette < 8; palette++) {\n"
+        "      const auto& src = palettes[palette].empty() ? base : palettes[palette];\n"
+        "      for (u32 channel = 0; channel < 4; channel++)\n"
+        "        colors.read(color_index, palette, channel) = src[color_index][channel];\n"
+        "    }\n"
+        "  }\n"
+        "  return colors;\n"
+        "}\n"
+        "\n"
+        "std::vector<math::Vector<u8, 4>> gltf_read_color_attr(\n"
+        "    const tinygltf::Model& model,\n"
+        "    const std::map<std::string, int>& attributes,\n"
+        "    const std::string& attr_name,\n"
+        "    u32 expected_count) {\n"
+        "  const auto it = attributes.find(attr_name);\n"
+        "  if (it == attributes.end()) return {};\n"
+        "  const auto& acc = model.accessors[it->second];\n"
+        "  if ((u32)acc.count != expected_count) return {};\n"
+        "  const auto& bv = model.bufferViews[acc.bufferView];\n"
+        "  const auto& buf = model.buffers[bv.buffer];\n"
+        "  const u8* data_ptr = buf.data.data() + bv.byteOffset + acc.byteOffset;\n"
+        "  const u32 byte_stride = (u32)acc.ByteStride(bv);\n"
+        "  const u32 count = (u32)acc.count;\n"
+        "  switch (acc.type) {\n"
+        "    case TINYGLTF_TYPE_VEC4:\n"
+        "      switch (acc.componentType) {\n"
+        "        case TINYGLTF_COMPONENT_TYPE_FLOAT:\n"
+        "          return extract_color_from_vec4_float(data_ptr, count, byte_stride);\n"
+        "        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:\n"
+        "          return extract_color_from_vec4_u16(data_ptr, count, byte_stride);\n"
+        "        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:\n"
+        "          return extract_color_from_vec4_u8(data_ptr, count, byte_stride);\n"
+        "        default: return {};\n"
+        "      }\n"
+        "    case TINYGLTF_TYPE_VEC3:\n"
+        "      if (acc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT)\n"
+        "        return extract_color_from_vec3_float(data_ptr, count, byte_stride);\n"
+        "      return {};\n"
+        "    default: return {};\n"
+        "  }\n"
+        "}\n"
+        "// [OpenGOAL Tools TOD] END\n"
+        "\n"
+        "void process_normal_merc_draw("
+    )
+
+    # ── gltf_mesh_extract.h ───────────────────────────────────────────────────
+    OLD_MESH_H_TFRAG = (
+        "  std::vector<tfrag3::PreloadedVertex> tfrag_vertices;\n"
+        "  std::vector<math::Vector<u8, 4>> color_palette;\n"
+        "};"
+    )
+    NEW_MESH_H_TFRAG = (
+        "  std::vector<tfrag3::PreloadedVertex> tfrag_vertices;\n"
+        "  // [OpenGOAL Tools TOD] one palette per slot; empty = fall back to slot 2\n"
+        "  std::array<std::vector<math::Vector<u8, 4>>, 8> color_palettes;\n"
+        "};"
+    )
+    OLD_MESH_H_TIE = (
+        "  std::vector<u16> color_indices;\n"
+        "  std::vector<math::Vector<u8, 4>> color_palette;\n"
+        "};"
+    )
+    NEW_MESH_H_TIE = (
+        "  std::vector<u16> color_indices;\n"
+        "  // [OpenGOAL Tools TOD] one palette per slot; empty = fall back to slot 2\n"
+        "  std::array<std::vector<math::Vector<u8, 4>>, 8> color_palettes;\n"
+        "};"
+    )
+
+    # ── gltf_mesh_extract.cpp ─────────────────────────────────────────────────
+    CPP_HELPER = (
+        "\n"
+        "// [OpenGOAL Tools TOD] BEGIN\n"
+        "static const std::array<std::string, 8> kTodColorAttrs = {\n"
+        "    \"COLOR_0\", \"COLOR_1\", \"COLOR_2\", \"COLOR_3\",\n"
+        "    \"COLOR_4\", \"COLOR_5\", \"COLOR_6\", \"COLOR_7\"};\n"
+        "\n"
+        "static void build_slot_palettes(\n"
+        "    const std::array<std::vector<math::Vector<u8, 4>>, 8>& raw,\n"
+        "    const QuantizedColors& q,\n"
+        "    std::array<std::vector<math::Vector<u8, 4>>, 8>& out) {\n"
+        "  const size_t ne = q.final_colors.size(), nv = q.vtx_to_color.size();\n"
+        "  for (int s = 0; s < 8; s++) {\n"
+        "    if (raw[s].empty()) continue;\n"
+        "    ASSERT(raw[s].size() == nv);\n"
+        "    out[s].assign(ne, math::Vector<u8,4>(0,0,0,0));\n"
+        "    std::vector<u32> cnt(ne, 0);\n"
+        "    std::vector<std::array<u32,4>> acc(ne, std::array<u32,4>{0,0,0,0});\n"
+        "    for (size_t v = 0; v < nv; v++) {\n"
+        "      u32 ci = q.vtx_to_color[v];\n"
+        "      for (int ch = 0; ch < 4; ch++) acc[ci][ch] += raw[s][v][ch];\n"
+        "      cnt[ci]++;\n"
+        "    }\n"
+        "    for (size_t ci = 0; ci < ne; ci++) {\n"
+        "      u32 n = cnt[ci] ? cnt[ci] : 1;\n"
+        "      for (int ch = 0; ch < 4; ch++) out[s][ci][ch] = (u8)(acc[ci][ch]/n);\n"
+        "    }\n"
+        "  }\n"
+        "}\n"
+        "\n"
+        "static void collect_tod_colors(\n"
+        "    const tinygltf::Model& model,\n"
+        "    const std::map<std::string,int>& attrs,\n"
+        "    const std::vector<math::Vector<u8,4>>& c0,\n"
+        "    std::array<std::vector<math::Vector<u8,4>>,8>& dst) {\n"
+        "  const u32 n = (u32)c0.size();\n"
+        "  dst[0].insert(dst[0].end(), c0.begin(), c0.end());\n"
+        "  for (int s = 1; s < 8; s++) {\n"
+        "    auto c = gltf_util::gltf_read_color_attr(model, attrs, kTodColorAttrs[s], n);\n"
+        "    if (!c.empty()) dst[s].insert(dst[s].end(), c.begin(), c.end());\n"
+        "  }\n"
+        "}\n"
+        "// [OpenGOAL Tools TOD] END\n"
+    )
+    OLD_CPP_NAMESPACE = "namespace gltf_mesh_extract {\n\nvoid dedup_tfrag_vertices"
+    NEW_CPP_NAMESPACE  = "namespace gltf_mesh_extract {" + CPP_HELPER + "\nvoid dedup_tfrag_vertices"
+
+    # Tfrag replacements in gltf_mesh_extract.cpp
+    OLD_TFRAG_DECL = "  std::vector<math::Vector<u8, 4>> all_vtx_colors;\n  ASSERT(out.tfrag_vertices.empty());"
+    NEW_TFRAG_DECL = "  std::array<std::vector<math::Vector<u8, 4>>, 8> all_slot_colors;  // [OG TOD]\n  ASSERT(out.tfrag_vertices.empty());"
+
+    OLD_TFRAG_INSERT = (
+        "        all_vtx_colors.insert(all_vtx_colors.end(), verts.vtx_colors.begin(),\n"
+        "                              verts.vtx_colors.end());\n"
+        "        ASSERT(all_vtx_colors.size() == out.tfrag_vertices.size());"
+    )
+    NEW_TFRAG_INSERT = (
+        "        collect_tod_colors(model, prim.attributes, verts.vtx_colors, all_slot_colors);  // [OG TOD]\n"
+        "        ASSERT(all_slot_colors[0].size() == out.tfrag_vertices.size());"
+    )
+
+    OLD_TFRAG_QUANT = (
+        "  auto quantized = quantize_colors_kd_tree(all_vtx_colors, kColorTreeDepth);\n"
+        "  for (size_t i = 0; i < out.tfrag_vertices.size(); i++) {\n"
+        "    out.tfrag_vertices[i].color_index = quantized.vtx_to_color[i];\n"
+        "  }\n"
+        "  out.color_palette = std::move(quantized.final_colors);"
+    )
+    NEW_TFRAG_QUANT = (
+        "  const auto& qbase = all_slot_colors[2].empty() ? all_slot_colors[0] : all_slot_colors[2];  // [OG TOD]\n"
+        "  auto quantized = quantize_colors_kd_tree(qbase, kColorTreeDepth);\n"
+        "  for (size_t i = 0; i < out.tfrag_vertices.size(); i++) {\n"
+        "    out.tfrag_vertices[i].color_index = quantized.vtx_to_color[i];\n"
+        "  }\n"
+        "  build_slot_palettes(all_slot_colors, quantized, out.color_palettes);  // [OG TOD]\n"
+        "  out.color_palettes[2] = std::move(quantized.final_colors);"
+    )
+
+    # TIE replacements in gltf_mesh_extract.cpp
+    OLD_TIE_DECL = "  std::vector<math::Vector<u8, 4>> all_vtx_colors;\n\n  struct MaterialInfo {"
+    NEW_TIE_DECL = "  std::array<std::vector<math::Vector<u8, 4>>, 8> all_slot_colors;  // [OG TOD]\n\n  struct MaterialInfo {"
+
+    OLD_TIE_INSERT = (
+        "        all_vtx_colors.insert(all_vtx_colors.end(), verts.vtx_colors.begin(),\n"
+        "                              verts.vtx_colors.end());\n"
+        "        ASSERT(all_vtx_colors.size() == out.vertices.size());"
+    )
+    NEW_TIE_INSERT = (
+        "        collect_tod_colors(model, prim.attributes, verts.vtx_colors, all_slot_colors);  // [OG TOD]\n"
+        "        ASSERT(all_slot_colors[0].size() == out.vertices.size());"
+    )
+
+    OLD_TIE_QUANT = (
+        "  auto quantized = quantize_colors_kd_tree(all_vtx_colors, kColorTreeDepth);\n"
+        "  for (size_t i = 0; i < out.vertices.size(); i++) {\n"
+        "    out.color_indices.push_back(quantized.vtx_to_color[i]);\n"
+        "  }\n"
+        "  out.color_palette = std::move(quantized.final_colors);"
+    )
+    NEW_TIE_QUANT = (
+        "  const auto& qbase = all_slot_colors[2].empty() ? all_slot_colors[0] : all_slot_colors[2];  // [OG TOD]\n"
+        "  auto quantized = quantize_colors_kd_tree(qbase, kColorTreeDepth);\n"
+        "  for (size_t i = 0; i < out.vertices.size(); i++) {\n"
+        "    out.color_indices.push_back(quantized.vtx_to_color[i]);\n"
+        "  }\n"
+        "  build_slot_palettes(all_slot_colors, quantized, out.color_palettes);  // [OG TOD]\n"
+        "  out.color_palettes[2] = std::move(quantized.final_colors);"
+    )
+
+    # ── Tfrag.cpp ──────────────────────────────────────────────────────────────
+    OLD_TFRAG_CALL = "  normal.colors = gltf_util::pack_time_of_day(mesh_extract_out.color_palette);"
+    NEW_TFRAG_CALL = "  normal.colors = gltf_util::pack_time_of_day_8(mesh_extract_out.color_palettes);  // [OG TOD]"
+
+    # ── Tie.cpp ────────────────────────────────────────────────────────────────
+    OLD_TIE_CALL = "  out.colors = gltf_util::pack_time_of_day(mesh_extract_out.color_palette);"
+    NEW_TIE_CALL = "  out.colors = gltf_util::pack_time_of_day_8(mesh_extract_out.color_palettes);  // [OG TOD]"
+
+    def patch_file(path, replacements):
+        """Apply list of (old, new) string replacements to a file. Returns True if changed."""
+        txt = path.read_text(encoding="utf-8")
+        original = txt
+        for old, new in replacements:
+            if old not in txt:
+                errors.append(f"{path.name}: could not find target string (version mismatch?): {old[:60]!r}")
+                return False
+            txt = txt.replace(old, new, 1)
+        if txt != original:
+            path.write_text(txt, encoding="utf-8")
+            changed.append(path.name)
+        return True
+
+    patch_file(files["gltf_util_h"],   [(OLD_UTIL_H, NEW_UTIL_H)])
+    patch_file(files["gltf_util_cpp"], [(OLD_UTIL_CPP_ANCHOR, NEW_UTIL_CPP_ANCHOR)])
+    patch_file(files["gltf_mesh_h"],   [(OLD_MESH_H_TFRAG, NEW_MESH_H_TFRAG),
+                                         (OLD_MESH_H_TIE,   NEW_MESH_H_TIE)])
+    patch_file(files["gltf_mesh_cpp"], [(OLD_CPP_NAMESPACE,  NEW_CPP_NAMESPACE),
+                                         (OLD_TFRAG_DECL,    NEW_TFRAG_DECL),
+                                         (OLD_TFRAG_INSERT,  NEW_TFRAG_INSERT),
+                                         (OLD_TFRAG_QUANT,   NEW_TFRAG_QUANT),
+                                         (OLD_TIE_DECL,      NEW_TIE_DECL),
+                                         (OLD_TIE_INSERT,    NEW_TIE_INSERT),
+                                         (OLD_TIE_QUANT,     NEW_TIE_QUANT)])
+    patch_file(files["tfrag_cpp"],     [(OLD_TFRAG_CALL, NEW_TFRAG_CALL)])
+    patch_file(files["tie_cpp"],       [(OLD_TIE_CALL,   NEW_TIE_CALL)])
+
+    return {"errors": errors, "changed": changed, "already_patched": False}
+
+
+def _remove_tod_geometry_patch(root):
+    """Reverse of _apply_tod_geometry_patch — swaps new↔old strings."""
+    import re
+    files  = _tod_patch_files(root)
+    errors = []
+    changed = []
+
+    if _tod_patch_status(root) == "unpatched":
+        return {"errors": [], "changed": [], "already_clean": True}
+
+    def unpatch_file(path, marker_start, marker_end, extra_pairs=None):
+        txt = path.read_text(encoding="utf-8")
+        original = txt
+        # Remove marker-wrapped blocks
+        pattern = re.compile(
+            re.escape(marker_start) + r".*?" + re.escape(marker_end),
+            re.DOTALL
+        )
+        txt = pattern.sub("", txt)
+        # Apply extra simple reversals
+        if extra_pairs:
+            for new_str, old_str in extra_pairs:
+                txt = txt.replace(new_str, old_str)
+        if txt != original:
+            path.write_text(txt, encoding="utf-8")
+            changed.append(path.name)
+
+    # gltf_util.cpp: remove the marker-wrapped block
+    unpatch_file(files["gltf_util_cpp"],
+                 "// [OpenGOAL Tools TOD] BEGIN\n", "// [OpenGOAL Tools TOD] END\n")
+
+    # gltf_mesh_extract.cpp: remove helper block + revert inline changes
+    unpatch_file(files["gltf_mesh_cpp"],
+                 "// [OpenGOAL Tools TOD] BEGIN\n", "// [OpenGOAL Tools TOD] END\n",
+                 extra_pairs=[
+                     ("  std::array<std::vector<math::Vector<u8, 4>>, 8> all_slot_colors;  // [OG TOD]\n  ASSERT(out.tfrag_vertices.empty());",
+                      "  std::vector<math::Vector<u8, 4>> all_vtx_colors;\n  ASSERT(out.tfrag_vertices.empty());"),
+                     ("  std::array<std::vector<math::Vector<u8, 4>>, 8> all_slot_colors;  // [OG TOD]\n\n  struct MaterialInfo {",
+                      "  std::vector<math::Vector<u8, 4>> all_vtx_colors;\n\n  struct MaterialInfo {"),
+                     ("        collect_tod_colors(model, prim.attributes, verts.vtx_colors, all_slot_colors);  // [OG TOD]\n        ASSERT(all_slot_colors[0].size() == out.tfrag_vertices.size());",
+                      "        all_vtx_colors.insert(all_vtx_colors.end(), verts.vtx_colors.begin(),\n                              verts.vtx_colors.end());\n        ASSERT(all_vtx_colors.size() == out.tfrag_vertices.size());"),
+                     ("        collect_tod_colors(model, prim.attributes, verts.vtx_colors, all_slot_colors);  // [OG TOD]\n        ASSERT(all_slot_colors[0].size() == out.vertices.size());",
+                      "        all_vtx_colors.insert(all_vtx_colors.end(), verts.vtx_colors.begin(),\n                              verts.vtx_colors.end());\n        ASSERT(all_vtx_colors.size() == out.vertices.size());"),
+                     ("  const auto& qbase = all_slot_colors[2].empty() ? all_slot_colors[0] : all_slot_colors[2];  // [OG TOD]\n  auto quantized = quantize_colors_kd_tree(qbase, kColorTreeDepth);\n  for (size_t i = 0; i < out.tfrag_vertices.size(); i++) {\n    out.tfrag_vertices[i].color_index = quantized.vtx_to_color[i];\n  }\n  build_slot_palettes(all_slot_colors, quantized, out.color_palettes);  // [OG TOD]\n  out.color_palettes[2] = std::move(quantized.final_colors);",
+                      "  auto quantized = quantize_colors_kd_tree(all_vtx_colors, kColorTreeDepth);\n  for (size_t i = 0; i < out.tfrag_vertices.size(); i++) {\n    out.tfrag_vertices[i].color_index = quantized.vtx_to_color[i];\n  }\n  out.color_palette = std::move(quantized.final_colors);"),
+                     ("  const auto& qbase = all_slot_colors[2].empty() ? all_slot_colors[0] : all_slot_colors[2];  // [OG TOD]\n  auto quantized = quantize_colors_kd_tree(qbase, kColorTreeDepth);\n  for (size_t i = 0; i < out.vertices.size(); i++) {\n    out.color_indices.push_back(quantized.vtx_to_color[i]);\n  }\n  build_slot_palettes(all_slot_colors, quantized, out.color_palettes);  // [OG TOD]\n  out.color_palettes[2] = std::move(quantized.final_colors);",
+                      "  auto quantized = quantize_colors_kd_tree(all_vtx_colors, kColorTreeDepth);\n  for (size_t i = 0; i < out.vertices.size(); i++) {\n    out.color_indices.push_back(quantized.vtx_to_color[i]);\n  }\n  out.color_palette = std::move(quantized.final_colors);"),
+                 ])
+
+    # gltf_util.h: remove the added declarations (between pack_time_of_day line and struct MercExtractData)
+    txt = files["gltf_util_h"].read_text(encoding="utf-8")
+    # Remove everything between the original declaration and struct MercExtractData that we added
+    pattern = re.compile(
+        r"(tfrag3::PackedTimeOfDay pack_time_of_day\(.*?\);)\n\n// \[OpenGOAL Tools TOD\].*?(?=\nstruct MercExtractData)",
+        re.DOTALL
+    )
+    new_txt = pattern.sub(r"\1\n", txt)
+    if new_txt != txt:
+        files["gltf_util_h"].write_text(new_txt, encoding="utf-8")
+        changed.append(files["gltf_util_h"].name)
+
+    # gltf_mesh_extract.h
+    txt = files["gltf_mesh_h"].read_text(encoding="utf-8")
+    txt = txt.replace(
+        "  // [OpenGOAL Tools TOD] one palette per slot; empty = fall back to slot 2\n"
+        "  std::array<std::vector<math::Vector<u8, 4>>, 8> color_palettes;\n",
+        "  std::vector<math::Vector<u8, 4>> color_palette;\n"
+    )
+    if txt != files["gltf_mesh_h"].read_text(encoding="utf-8"):
+        files["gltf_mesh_h"].write_text(txt, encoding="utf-8")
+        changed.append(files["gltf_mesh_h"].name)
+
+    # Tfrag.cpp and Tie.cpp
+    for key, old_call, new_call in [
+        ("tfrag_cpp",
+         "  normal.colors = gltf_util::pack_time_of_day_8(mesh_extract_out.color_palettes);  // [OG TOD]",
+         "  normal.colors = gltf_util::pack_time_of_day(mesh_extract_out.color_palette);"),
+        ("tie_cpp",
+         "  out.colors = gltf_util::pack_time_of_day_8(mesh_extract_out.color_palettes);  // [OG TOD]",
+         "  out.colors = gltf_util::pack_time_of_day(mesh_extract_out.color_palette);"),
+    ]:
+        txt = files[key].read_text(encoding="utf-8")
+        new_txt = txt.replace(old_call, new_call)
+        if new_txt != txt:
+            files[key].write_text(new_txt, encoding="utf-8")
+            changed.append(files[key].name)
+
+    return {"errors": errors, "changed": changed, "already_clean": False}
+
+
 class OG_PT_DevTools(Panel):
     bl_label       = "🔧  Developer Tools"
     bl_idname      = "OG_PT_dev_tools"
@@ -10449,6 +10890,26 @@ class OG_PT_DevTools(Panel):
         box.label(text=f"goalc{_EXE}: {'✓ OK' if gc_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gc_ok else "ERROR")
         box.label(text=f"game.gp:   {'✓ OK' if gp_ok else '✗ NOT FOUND'}", icon="CHECKMARK" if gp_ok else "ERROR")
         box.operator("preferences.addon_show", text="Set EXE / Data Paths", icon="PREFERENCES").module = __name__
+
+        layout.separator()
+
+        # ── TOD Geometry Patch ───────────────────────────────────────────────
+        layout.label(text="TOD Geometry", icon="SHADING_RENDERED")
+        tod_box = layout.box()
+        root = _data_root()
+        status = _tod_patch_status(root)
+        if status == "missing":
+            tod_box.label(text="jak-project source not found", icon="ERROR")
+            tod_box.label(text="Set Data Path in preferences", icon="INFO")
+        elif status == "patched":
+            tod_box.label(text="✓ Patch applied — rebuild goalc", icon="CHECKMARK")
+            tod_box.operator("og.unpatch_tod_geometry", text="Remove Patch", icon="X")
+        elif status == "partial":
+            tod_box.label(text="⚠ Partial patch — re-apply", icon="ERROR")
+            tod_box.operator("og.patch_tod_geometry",   text="Apply TOD Patch", icon="TOOL_SETTINGS")
+        else:
+            tod_box.label(text="Enables per-slot vertex color TOD", icon="INFO")
+            tod_box.operator("og.patch_tod_geometry",   text="Apply TOD Patch", icon="TOOL_SETTINGS")
 
         layout.separator()
 
@@ -10971,6 +11432,7 @@ classes = (
     OG_OT_AddLumpRow, OG_OT_RemoveLumpRow, OG_OT_UseLumpRef,
     OG_UL_LumpRows,
     OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
+    OG_OT_PatchTODGeometry, OG_OT_UnpatchTODGeometry,
     OG_OT_SpawnPlayer, OG_OT_SpawnCheckpoint, OG_OT_SpawnCamAnchor,
     OG_OT_SpawnVolume, OG_OT_SpawnVolumeAutoLink, OG_OT_LinkVolume, OG_OT_UnlinkVolume, OG_OT_CleanOrphanedLinks,
     OG_OT_RemoveVolLink, OG_OT_AddLinkFromSelection, OG_OT_SpawnAggroTrigger,
