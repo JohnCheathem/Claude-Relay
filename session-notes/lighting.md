@@ -466,3 +466,36 @@ B) Remove/hide the TOD geometry panel from our addon (it sets false expectations
 C) Keep the TOD panel but document it as "future feature, requires builder update"
 D) Provide a workaround: bake all 8 slots to the same lighting → at least export is clean
    and the level will look correct (just won't change with time of day for geometry)
+
+---
+
+## Session 7 — TOD Geometry patch button implemented
+
+### What was built
+In-addon patcher in Developer Tools panel. Patches 6 C++ files in jak-project source.
+
+### How it works
+- `_tod_patch_files(root)` — resolves the 6 file paths relative to _data_root()
+- `_tod_patch_status(root)` — returns 'patched'/'unpatched'/'partial'/'missing'
+- `_apply_tod_geometry_patch(root)` — string-replacement patcher, all OLD strings
+  verified against actual jak-project source (dry-run confirmed all 13 match)
+- `_remove_tod_geometry_patch(root)` — reverses all changes, marker-based for
+  the large injected C++ blocks, exact string reversal for small inline changes
+- `OG_OT_PatchTODGeometry` / `OG_OT_UnpatchTODGeometry` — the Blender operators
+- DevTools panel shows status + the appropriate button
+
+### Panel location
+Developer Tools → TOD Geometry section (between Paths and Quick Open)
+
+### After applying the patch
+User must rebuild goalc:
+  cmake --build build --target goalc -j$(nproc)
+
+### Blender export side
+For the geometry TOD to actually work, Blender must export COLOR_0..COLOR_7
+(one per slot in order). The addon's active_color export only exports COLOR_0.
+Remaining work: fix export_glb() to use the official gltf2_blender_extract.py
+plugin, OR pre-sort color_attributes to slot order and export all of them.
+
+### Commit
+5887953 on feature/lighting
