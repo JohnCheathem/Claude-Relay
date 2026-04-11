@@ -78,3 +78,39 @@ Levels → Light Baking → 🕐 Time of Day
 
 ### Minor Cleanup
 - Removed unused `TOD_COLLECTION_NAMES` / `TOD_SLOT_IDS` constants (SetupTOD iterates TOD_SLOTS directly)
+
+---
+
+## Session — April 11 2026 — Testing & Status
+
+### What was tested
+- Level compiled successfully after sun_fade float fix (`:sun-fade 1` → `:sun-fade 1.0`)
+- Level loaded in-game (`NOTICE: loaded my-level`)
+- `(set-time-of-day 12.0)` etc. commands work — only very subtle change visible
+- Vertex color slots confirmed different in Blender viewport (bakes are correct)
+- In-game geometry appears stuck on what looks like _SUNRISE for all times of day
+
+### Root cause hypothesis
+**export_attributes was missing when the GLB was last exported.**
+The `export_attributes=True` fix (required for Blender 3.4+ to export `_SUNRISE`, `_NOON` etc. custom attributes) was added this session. If the user's last export happened before that patch, the ToD attributes were silently dropped from the GLB. The game would only have whichever slot was `active_color` at export time baked into a single vertex color set — no interpolation possible.
+
+### Next step to confirm
+Re-export from Blender using the patched addon (feature/lighting, commit c1a1f37 or later), rebuild, and test `(set-time-of-day)` again. If ToD variation appears, pipeline is confirmed working end-to-end.
+
+### Collection visibility fix (also this session)
+BakeToDSlot and BakeAllToDSlots now isolate the correct TOD sub-collection during baking:
+- Bake Slot: hides all TOD sub-collections except the active slot's
+- Bake All: steps through each slot, isolating one at a time
+- Both restore original visibility in finally block
+
+### Current branch state
+feature/lighting is clean, syntax OK, all known bugs fixed.
+Ready to test after re-export.
+
+### Remaining unknowns
+- Whether export_attributes fix resolves the in-game flat lighting
+- Whether Blender version on user's machine is >= 3.4 (required for export_attributes)
+  - If <3.4, ToD slots will never export regardless of the fix — would need a different approach
+
+### Stop point
+Signing off for the night. Resume by: install latest addon → re-export level → rebuild → test set-time-of-day.
