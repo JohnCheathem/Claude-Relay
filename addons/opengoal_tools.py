@@ -10600,6 +10600,39 @@ class OG_OT_PickNavMesh(Operator):
 
 
 
+
+def _tod_collection_visibility(scene, level_name, active_slot_id=None):
+    """
+    Manage TOD sub-collection visibility for baking.
+
+    active_slot_id: if given, show only that slot's collection, hide the rest.
+                    if None, returns current hide_render state for all TOD sub-collections
+                    as a dict {col_name: hide_render} for later restoration.
+
+    Returns: dict of {col_name: previous_hide_render} always, for restore.
+    """
+    tod_parent_name = f"{level_name}_TOD"
+    saved = {}
+
+    for slot_id, display_name, _ in TOD_SLOTS:
+        sub_name = f"{tod_parent_name}_{display_name}"
+        col = bpy.data.collections.get(sub_name)
+        if col is None:
+            continue
+        saved[sub_name] = col.hide_render
+        if active_slot_id is not None:
+            col.hide_render = (slot_id != active_slot_id)
+
+    return saved
+
+
+def _tod_restore_visibility(saved):
+    """Restore hide_render states saved by _tod_collection_visibility."""
+    for col_name, state in saved.items():
+        col = bpy.data.collections.get(col_name)
+        if col is not None:
+            col.hide_render = state
+
 # ---------------------------------------------------------------------------
 # OPERATORS — Time-of-Day Setup & Baking
 # ---------------------------------------------------------------------------
@@ -10672,10 +10705,14 @@ class OG_OT_BakeToDSlot(Operator):
             self.report({"ERROR"}, "Select at least one mesh object to bake.")
             return {"CANCELLED"}
 
-        prev_engine  = scene.render.engine
-        prev_samples = scene.cycles.samples
-        prev_active  = ctx.view_layer.objects.active
+        level_name    = getattr(props, "active_level", None) or ""
+        prev_engine   = scene.render.engine
+        prev_samples  = scene.cycles.samples
+        prev_active   = ctx.view_layer.objects.active
         prev_selected = [o for o in ctx.scene.objects if o.select_get()]
+
+        # Isolate this slot's TOD collection (hide all others)
+        saved_vis = _tod_collection_visibility(scene, level_name, active_slot_id=slot)
 
         scene.render.engine  = "CYCLES"
         scene.cycles.samples = samples
@@ -10689,12 +10726,10 @@ class OG_OT_BakeToDSlot(Operator):
                 ctx.view_layer.objects.active = obj
                 obj.select_set(True)
 
-                # Ensure the attribute exists
                 mesh = obj.data
                 if mesh.color_attributes.get(slot) is None:
                     mesh.color_attributes.new(name=slot, type="BYTE_COLOR", domain="CORNER")
 
-                # Set as active color for bake target
                 mesh.color_attributes.active_color = mesh.color_attributes[slot]
 
                 try:
@@ -10709,13 +10744,14 @@ class OG_OT_BakeToDSlot(Operator):
                     failed.append(f"{obj.name}: {exc}")
 
         finally:
-            # Always restore — even if bake raised
+            # Always restore render settings, selection, and collection visibility
             scene.render.engine  = prev_engine
             scene.cycles.samples = prev_samples
             bpy.ops.object.select_all(action="DESELECT")
             for o in prev_selected:
                 o.select_set(True)
             ctx.view_layer.objects.active = prev_active
+            _tod_restore_visibility(saved_vis)
 
         display = next((disp for sid, disp, _ in TOD_SLOTS if sid == slot), slot)
         if baked:
@@ -10743,10 +10779,14 @@ class OG_OT_BakeAllToDSlots(Operator):
             self.report({"ERROR"}, "Select at least one mesh object to bake.")
             return {"CANCELLED"}
 
+        level_name    = getattr(props, "active_level", None) or ""
         prev_engine   = scene.render.engine
         prev_samples  = scene.cycles.samples
         prev_active   = ctx.view_layer.objects.active
         prev_selected = [o for o in ctx.scene.objects if o.select_get()]
+
+        # Save all TOD collection visibility states up-front
+        saved_vis = _tod_collection_visibility(scene, level_name, active_slot_id=None)
 
         scene.render.engine  = "CYCLES"
         scene.cycles.samples = samples
@@ -10755,15 +10795,16 @@ class OG_OT_BakeAllToDSlots(Operator):
         failed = []
 
         try:
-            for obj in targets:
-                mesh = obj.data
-                obj_failed = []
+            for slot_id, slot_display, _ in TOD_SLOTS:
+                # Isolate this slot's collection before baking
+                _tod_collection_visibility(scene, level_name, active_slot_id=slot_id)
 
-                for slot_id, slot_display, _ in TOD_SLOTS:
+                for obj in targets:
                     bpy.ops.object.select_all(action="DESELECT")
                     ctx.view_layer.objects.active = obj
                     obj.select_set(True)
 
+                    mesh = obj.data
                     if mesh.color_attributes.get(slot_id) is None:
                         mesh.color_attributes.new(name=slot_id, type="BYTE_COLOR", domain="CORNER")
 
@@ -10776,26 +10817,26 @@ class OG_OT_BakeAllToDSlots(Operator):
                             target="VERTEX_COLORS",
                             save_mode="INTERNAL",
                         )
+                        if obj.name not in baked:
+                            baked.append(obj.name)
                     except Exception as exc:
-                        obj_failed.append(f"{slot_display}: {exc}")
-
-                # Reset active_color to _NOON for clean viewport display
-                noon_attr = mesh.color_attributes.get("_NOON")
-                if noon_attr:
-                    mesh.color_attributes.active_color = noon_attr
-
-                if obj_failed:
-                    failed.append(f"{obj.name} ({', '.join(obj_failed)})")
-                else:
-                    baked.append(obj.name)
+                        failed.append(f"{obj.name}/{slot_display}: {exc}")
 
         finally:
+            # Restore render settings, selection, and all TOD collection visibility
             scene.render.engine  = prev_engine
             scene.cycles.samples = prev_samples
             bpy.ops.object.select_all(action="DESELECT")
             for o in prev_selected:
                 o.select_set(True)
             ctx.view_layer.objects.active = prev_active
+            _tod_restore_visibility(saved_vis)
+
+        # Reset active_color to _NOON on all targets for clean viewport display
+        for obj in targets:
+            noon_attr = obj.data.color_attributes.get("_NOON")
+            if noon_attr:
+                obj.data.color_attributes.active_color = noon_attr
 
         if baked:
             self.report({"INFO"}, f"Baked all 8 ToD slots on: {', '.join(baked)}. Active slot reset to _NOON.")
