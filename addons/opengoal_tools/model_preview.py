@@ -99,8 +99,8 @@ def _import_glb(ctx, glb_path: Path) -> list:
 
 
 def _strip_and_keep_mesh(new_objs: list) -> bpy.types.Object | None:
-    """From the newly imported objects, keep only the primary mesh
-    (lod0-mg), remove the armature and any other objects cleanly.
+    """From the newly imported objects, keep only the primary mesh,
+    bake the armature rest pose into the geometry, then discard the rig.
     Returns the kept mesh Object, or None if none found."""
 
     mesh_obj  = None
@@ -109,8 +109,6 @@ def _strip_and_keep_mesh(new_objs: list) -> bpy.types.Object | None:
 
     for obj in new_objs:
         if obj.type == "MESH":
-            # Accept ANY mesh from this import as the preview mesh.
-            # The GLB contains exactly one mesh node (the lod0-mg).
             if mesh_obj is None:
                 mesh_obj = obj
             else:
@@ -121,19 +119,32 @@ def _strip_and_keep_mesh(new_objs: list) -> bpy.types.Object | None:
             junk_objs.append(obj)
 
     if mesh_obj is None:
-        # Nothing useful imported — clean up everything
         for obj in new_objs:
             bpy.data.objects.remove(obj, do_unlink=True)
         return None
 
-    # ---- Strip armature modifier from the mesh ----
+    # ---- Bake armature rest pose into mesh geometry ----
+    # Without baking, removing the armature modifier leaves vertices in
+    # bone-local space, collapsing the mesh to an icosphere-like blob.
+    # Setting REST and evaluating via depsgraph bakes the flat/standing
+    # geometry cleanly without needing any bpy.ops context.
+    for arm in arm_objs:
+        arm.data.pose_position = "REST"
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    depsgraph.update()
+    eval_obj   = mesh_obj.evaluated_get(depsgraph)
+    baked_mesh = bpy.data.meshes.new_from_object(eval_obj)
+    old_mesh   = mesh_obj.data
+    mesh_obj.data = baked_mesh
+    if old_mesh.users == 0:
+        bpy.data.meshes.remove(old_mesh)
+
+    # ---- Strip all modifiers (armature is now baked) ----
     for mod in list(mesh_obj.modifiers):
-        if mod.type == "ARMATURE":
-            mesh_obj.modifiers.remove(mod)
+        mesh_obj.modifiers.remove(mod)
 
     # ---- Unparent mesh, preserving world transform ----
-    # Capture current world matrix, clear parent, reapply so the mesh
-    # stays at the same world position (bind pose = world origin for most models).
     if mesh_obj.parent is not None:
         world_mat = mesh_obj.matrix_world.copy()
         mesh_obj.parent = None
@@ -143,7 +154,7 @@ def _strip_and_keep_mesh(new_objs: list) -> bpy.types.Object | None:
     for obj in arm_objs + junk_objs:
         bpy.data.objects.remove(obj, do_unlink=True)
 
-    # ---- Recalculate normals (imported GLBs often have flipped normals) ----
+    # ---- Recalculate normals ----
     bm = bmesh.new()
     bm.from_mesh(mesh_obj.data)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
