@@ -196,3 +196,59 @@ entity_search_results: EnumProperty(items=_search_results_cb, update=<sync lambd
 ### Future: Level Audit (parked, wanted)
 Under Level panel, sub-panel "Level Audit". General scene checker — first use: scan ACTOR_ empties, count distinct non-global tpage groups, warn if > 2. Design to be generalised beyond tpages. Build when requested.
 
+
+---
+
+## Water System Research + feature/water branch
+
+### Status: feature/water — active, awaiting test
+### Branch: feature/water
+### Working file: addons/opengoal_tools/export.py
+
+---
+
+### What was researched (jak-project source)
+
+Full water system documented in `knowledge-base/opengoal/water-system.md`.
+
+Key finding: **water-vol was completely broken** in custom levels. Root cause:
+- `water-vol` uses `vol-control` to define its activation zone
+- `vol-control` reads a `'vol` res-lump: 6 convex hull planes (not the bsphere)
+- Without the `'vol` lump: `pos-vol-count = 0`, `point-in-vol?` always `#f`
+- Jak never enters the zone, no wading/swimming, nothing
+
+Secondary issue: `bsph_r` was hardcoded to `10.0` for all actors. Water-vol needs
+a bsphere that covers its full box or the process gets renderer-culled.
+
+### Fix in export.py
+
+1. **`'vol` lump** — 6 `vector-vol` planes computed from the empty's world scale:
+   - `ws = o.matrix_world.to_scale()`
+   - `hx = abs(ws.x)`, `hz = abs(ws.y)` (game X and Z half-extents)
+   - Normals point INWARD. Inside condition: `dot(P, N) >= d`
+   - top cap: `[0, -1, 0, -surface_y]`
+   - floor:   `[0,  1, 0,  bot_y]`  where `bot_y = surface + bottom_offset`
+   - ±X/Z caps from `gx ± hx`, `gz ± hz`
+
+2. **`bsph_r` override** for water-vol: `sqrt(hx² + hz²)` — XZ half-diagonal
+
+### Usage
+- Place `ACTOR_water-vol` empty
+- Scale it to cover water area (scale = half-extent in meters; scale 10 = 20m wide box)
+- Use selected-object panel to set surface Y, wade, swim depths
+- Sync Surface from Object Y button sets surface from empty's world Z
+- Export → wading/swimming should work
+
+### water-anim (visual water surface) — NOT yet in addon
+- Requires art assets from level-specific DGOs (e.g. training lake needs TRA.DGO)
+- 48 built-in looks via `'look` lump (0–47)
+- Best starting look for custom levels: 36 (training lake)
+- Ripple shader is vertex deformation — needs dense mesh geo (not a single quad)
+- Phase 2 work: water sub-panel, look picker, water-anim entity support
+
+### Plane math reference (for future water-anim or other vol work)
+- lump type: `"vector-vol"` → C++ multiplies w by 4096 automatically
+- format: `[nx, ny, nz, d_meters]`
+- engine test: `dot(P, N) - d < 0` → outside (i.e. inside when `dot(P,N) >= d`)
+- all normals must point inward for convex hull
+
