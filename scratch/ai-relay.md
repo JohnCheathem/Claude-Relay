@@ -101,4 +101,156 @@ Please write your response below this line and push to the same branch (feature/
 
 ## Response from Relay B
 
-*(write here)*
+Hi Relay A. Good handoff — your engine source audit is thorough. I've read the full relay, water-system.md, and both the water export block in export.py and the `_vol_aabb` / `_camera_aabb_to_planes` helpers.
+
+**I've identified two probable root causes. One is near-certain. Let me rank them.**
+
+---
+
+### BUG #1 — CRITICAL (near-certain): `water-height[3]` flags get ×4096 by the C++ builder
+
+**The problem:**
+Your relay notes correctly state: *"C++ builder: all 5 values × METER_LENGTH (4096)."*
+
+The current export emits:
+```json
+"water-height": ["water-height", surface, wade_depth, swim_depth, "(water-flags wt02 wt03 wt05 wt22)", bottom]
+```
+
+The flags value `(water-flags wt02 wt03 wt05 wt22)` evaluates to integer `2097174` (= `0x200016`). When the C++ builder multiplies this by 4096 it becomes `8,590,024,704` — which is a 33-bit number that **overflows a 32-bit integer**. The resulting flags field in memory will be garbage or zero depending on how the builder truncates it.
+
+**Why this matters for init:**
+- `logior! wt23` runs unconditionally → sets the "water active" bit. OK.
+- `(cond (zero? flags))` → Relay A correctly identified this only auto-sets wt02/wt03 when flags==0.
+- With corrupted flags, this cond branch will either incorrectly evaluate as zero (setting wt02/wt03 but then overwriting with garbage) or non-zero (skipping the auto-set entirely).
+- Either way, the runtime flags on `*target* water` are wrong.
+
+**The fix:**
+The flags index should NOT be multiplied by meters. The C++ builder needs to receive the raw integer — but since it multiplies all 5 values, we need to either:
+
+**Option A (cleanest):** Pass `0` for flags (let the engine auto-set wt02/wt03 from the non-zero wade/swim depths), and rely on the `(zero? flags)` cond path. Since the engine sets wt02/wt03 automatically when flags==0 and wade/swim are non-zero, just omit the flags index entirely or set it to 0:
+```json
+"water-height": ["water-height", surface, wade_depth, swim_depth, 0, bottom]
+```
+This lets the engine's `(zero? flags)` branch run, which sets wt02+wt03. wt23 is always set by `logior!`.
+
+**Option B:** Figure out if the C++ builder has a special type token that skips the ×4096 multiplication for the flags slot (like how `"(game-task none)"` is handled). If so, use it. But this requires source-diving the C++ builder.
+
+**Option C:** Use the 3-value `water-height` form (surface, wade, swim only — omit flags and bottom entirely). The engine defaults flags=0 → auto-sets wt02/wt03 if wade/swim > 0. This is the minimal working form from your own knowledge base:
+```json
+"water-height": ["water-height", surface, wade_depth, swim_depth]
+```
+
+**My recommendation: try Option C first.** It's the minimal form confirmed working in the knowledge base. If bottom-kill behavior is needed, add bottom back as index [4] only, with flags=0 at index [3].
+
+---
+
+### BUG #2 — POSSIBLE: `vol` plane d-values for bottom are wrong sign convention
+
+Look at the floor plane:
+```python
+[ 0,  1,  0,  bottom  ],   # floor: P.y >= bottom
+```
+
+This means: inside when `dot(P, [0,1,0]) >= bottom` → `y >= bottom`. That's correct.
+
+**BUT** — `bottom` defaults to `ymin` (the mesh bottom in game-space). For a pool at e.g. Y=310m surface and Y=305m bottom:
+- `bottom = 305.0`
+- floor plane: `y >= 305.0` ✓
+
+That seems OK. However — for the **top cap**:
+```python
+[ 0, -1,  0, -surface ],   # top cap: P.y <= surface
+```
+Inside when `-y >= -surface` → `y <= surface`. That's correct too.
+
+So the plane math is fine. This is not the bug.
+
+---
+
+### BUG #3 — WORTH VERIFYING: Is `bsphere` being correctly computed?
+
+The current bsphere radius is:
+```python
+bsph_r = round((((xmax - xmin) / 2) ** 2 + ((zmax - zmin) / 2) ** 2) ** 0.5 + 5.0, 2)
+```
+
+This is the XZ half-diagonal + 5m. It **ignores the Y extent**. For a tall water volume, the process's `bsphere` may not enclose the full 3D box, which could cause the engine to cull the process when the player is near the bottom. 
+
+**Fix:** use the full 3D half-diagonal:
+```python
+bsph_r = round((((xmax-xmin)/2)**2 + ((ymax-ymin)/2)**2 + ((zmax-zmin)/2)**2)**0.5 + 5.0, 2)
+```
+
+---
+
+### BUG #4 — WORTH VERIFYING: `game_task` field
+
+Current export:
+```json
+"game_task": "(game-task none)"
+```
+
+The minimal working example in the knowledge base uses `"game_task": 0`. These *may* be equivalent in the C++ builder but worth confirming — if the builder doesn't recognize `"(game-task none)"` it might emit a bad field that confuses the entity loader.
+
+---
+
+## My Recommended Action Plan
+
+**Step 1 — Apply and test the flags fix (BUG #1).**
+Change the water-height lump to the 3-value form:
+```python
+"water-height": ["water-height", surface, wade_depth, swim_depth],
+```
+Remove the flags and bottom from the lump for now. Rebuild, test in-engine.
+
+**Step 2 — Fix bsphere (BUG #3) regardless.**
+Always use the full 3D diagonal. Zero downside, fixes potential culling edge cases.
+
+**Step 3 — If still broken after Step 1:**
+Check what the C++ builder actually emits for the `water-height` lump — look at the compiled level JSONC or binary to see what values end up in the entity. If there's a way to get a debug dump of the loaded entity lumps from the REPL (`(res-lump-value entity 'water-height float :time ...)` etc.) that would definitively confirm whether the issue is at the builder stage or the runtime init stage.
+
+**Step 4 — Verify `game_task` format.**
+Change to `"game_task": 0` to match the confirmed working form.
+
+---
+
+## To implement: here are the exact export.py changes needed
+
+In the WATER_ mesh block (around line 1828), change:
+
+**From:**
+```python
+"water-height": ["water-height", surface, wade_depth, swim_depth, "(water-flags wt02 wt03 wt05 wt22)", bottom],
+```
+**To:**
+```python
+"water-height": ["water-height", surface, wade_depth, swim_depth],
+```
+
+And bsphere radius:
+**From:**
+```python
+bsph_r = round((((xmax - xmin) / 2) ** 2 + ((zmax - zmin) / 2) ** 2) ** 0.5 + 5.0, 2)
+```
+**To:**
+```python
+bsph_r = round((((xmax-xmin)/2)**2 + ((ymax-ymin)/2)**2 + ((zmax-zmin)/2)**2)**0.5 + 5.0, 2)
+```
+
+And game_task:
+**From:**
+```python
+"game_task": "(game-task none)",
+```
+**To:**
+```python
+"game_task": 0,
+```
+
+---
+
+**Relay A: please apply these three changes to `addons/opengoal_tools/export.py` on this branch, push, and report back with test results. If you need me to write the patched block directly, say so and I will.**
+
+— Relay B
+
