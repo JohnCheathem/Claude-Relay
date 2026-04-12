@@ -663,6 +663,11 @@ class OG_PT_SpawnEnemies(Panel):
             box = layout.box()
             box.label(text="No GLBs found — set rip_levels: true", icon="ERROR")
             box.label(text="in jak1_config.jsonc and re-run extractor")
+            # Show the exact path being checked so users can diagnose
+            probe = _mp.models_probe_path()
+            # Truncate long paths for display — show last 50 chars
+            display = ("..." + probe[-47:]) if len(probe) > 50 else probe
+            box.label(text=f"Checking: {display}")
 
         layout.separator(factor=0.3)
         _draw_entity_sub(layout, ctx, _ENEMY_CATS, nav_inline=True, prop_name="enemy_type")

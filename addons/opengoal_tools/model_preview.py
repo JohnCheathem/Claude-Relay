@@ -41,6 +41,11 @@ def models_available() -> bool:
     return probe.exists()
 
 
+def models_probe_path() -> str:
+    """Return the path being probed, for display in warning messages."""
+    return str(_glb_path("levels/beach/babak-lod0-mg.glb"))
+
+
 def _get_viewport_override(ctx):
     """Return (window, area, region) for the first VIEW_3D area found,
     or (None, None, None) if none exists.  Required for import_scene.gltf."""
