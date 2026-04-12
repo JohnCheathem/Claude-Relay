@@ -1825,9 +1825,9 @@ def collect_actors(scene, depsgraph=None):
 
         lump = {
             "name":         f"water-vol-{idx}",
-            # Minimal 3-value form: engine auto-sets wt02/wt03 when flags==0 and wade/swim>0
-            # bottom omitted (defaults to 32768.0 = kill floor never triggers)
-            "water-height": ["water-height", surface, wade_depth, swim_depth],
+            # 5-value form with explicit flags — REQUIRED because logior! wt23 always runs
+            # before the (zero? flags) auto-set check, so wt02/wt03 must be set explicitly.
+            "water-height": ["water-height", surface, wade_depth, swim_depth, "(water-flags wt02 wt03 wt05 wt22)"],
             "attack-event": f"'{attack}",
             "vol": [
                 "vector-vol",
