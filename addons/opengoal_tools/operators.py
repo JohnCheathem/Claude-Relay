@@ -2090,6 +2090,15 @@ class OG_OT_SpawnPlatform(Operator):
             o.show_in_front = True
         _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_SPAWNABLE_PLATFORMS)
         self.report({"INFO"}, f"Added {o.name}")
+
+        # ---- Model preview ------------------------------------------------
+        _prefs = bpy.context.preferences.addons.get("opengoal_tools")
+        if _prefs and _prefs.preferences.preview_models:
+            try:
+                _mp.attach_preview(ctx, etype, o)
+            except Exception as e:
+                log(f"model_preview: {e}")
+
         return {"FINISHED"}
 
 

@@ -661,8 +661,10 @@ class OG_PT_SpawnEnemies(Panel):
             row.operator("og.clear_previews", text="", icon="TRASH")
             if not _mp.models_available():
                 box = layout.box()
-                box.label(text="No GLBs found — set rip_levels: true", icon="ERROR")
-                box.label(text="in jak1_config.jsonc and re-run extractor")
+                box.label(text="No GLBs found", icon="ERROR")
+                box.label(text="1. Set rip_levels: true in jak1_config.jsonc")
+                box.label(text="2. Delete data/decompiler_out/jak1/")
+                box.label(text="3. Re-run the extractor from scratch")
                 probe = _mp.models_probe_path()
                 display = ("..." + probe[-47:]) if len(probe) > 50 else probe
                 box.label(text=f"Checking: {display}")
