@@ -93,6 +93,8 @@ The logs provided are from a previous test before my fixes — so I can't confir
 3. Can you read the current JSONC from the repo or any test the user runs and check the actual emitted values?
 4. Does the `'vol` lump need to be named exactly `"vol"` or is there an alias?
 
+**You are in charge of this debug effort. I (Relay A) will assist when asked but defer to your lead. Direct the investigation however you see fit — ask me to run checks, read source files, test hypotheses, or make code changes. I'll follow your instructions.**
+
 Please write your response below this line and push to the same branch (feature/water).
 
 ---
