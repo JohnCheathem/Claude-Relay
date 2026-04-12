@@ -1399,15 +1399,14 @@ def collect_actors(scene, depsgraph=None):
 
             lump["vol"] = [
                 "vector-vol",
-                # Each plane: [nx, ny, nz, d_meters]
-                # Inside condition: dot(P, N) >= d  for all planes.
-                # Normals point INWARD (toward centre of box).
-                [ 0, -1,  0,  -top_y      ],   # top cap:  P.y <= surface
-                [ 0,  1,  0,   bot_y      ],   # floor:    P.y >= bottom_abs
-                [-1,  0,  0, -(gx + hx)   ],   # +X cap:   P.x <= cx+hx
-                [ 1,  0,  0,   gx - hx    ],   # -X cap:   P.x >= cx-hx
-                [ 0,  0, -1, -(gz + hz)   ],   # +Z cap:   P.z <= cz+hz
-                [ 0,  0,  1,   gz - hz    ],   # -Z cap:   P.z >= cz-hz
+                # Normals point OUTWARD. Inside = negative side of each plane.
+                # point-in-vol? returns #f when dot(P,N) - w > 0
+                [ 0,  1,  0,   top_y      ],   # top:   P.y <= surface
+                [ 0, -1,  0,  -bot_y      ],   # floor: P.y >= bottom
+                [ 1,  0,  0,   gx + hx    ],   # +X:    P.x <= cx+hx
+                [-1,  0,  0, -(gx - hx)   ],   # -X:    P.x >= cx-hx
+                [ 0,  0,  1,   gz + hz    ],   # +Z:    P.z <= cz+hz
+                [ 0,  0, -1, -(gz - hz)   ],   # -Z:    P.z >= cz-hz
             ]
             log(f"  [water-vol] {o.name}  surface={surface}m  wade={wade}m  swim={swim}m  "
                 f"bottom={bottom}m  box={hx*2:.1f}x{hz*2:.1f}m")
@@ -1831,13 +1830,14 @@ def collect_actors(scene, depsgraph=None):
             "attack-event": f"'{attack}",
             "vol": [
                 "vector-vol",
-                # Normals point INWARD. Inside: dot(P,N) >= d.
-                [ 0, -1,  0, -surface ],   # top cap:   P.y <= surface
-                [ 0,  1,  0,  bottom  ],   # floor:     P.y >= bottom
-                [-1,  0,  0, -xmax    ],   # +X cap:    P.x <= xmax
-                [ 1,  0,  0,  xmin    ],   # -X cap:    P.x >= xmin
-                [ 0,  0, -1, -zmax    ],   # +Z cap:    P.z <= zmax
-                [ 0,  0,  1,  zmin    ],   # -Z cap:    P.z >= zmin
+                # point-in-vol? returns #f when dot(P,N) - w > 0
+                # So normals must point OUTWARD. Inside = negative side of each plane.
+                [ 0,  1,  0,  surface ],   # top:   outward +Y, inside when P.y <= surface
+                [ 0, -1,  0, -bottom  ],   # floor: outward -Y, inside when P.y >= bottom
+                [ 1,  0,  0,  xmax    ],   # +X:    outward +X, inside when P.x <= xmax
+                [-1,  0,  0, -xmin    ],   # -X:    outward -X, inside when P.x >= xmin
+                [ 0,  0,  1,  zmax    ],   # +Z:    outward +Z, inside when P.z <= zmax
+                [ 0,  0, -1, -zmin    ],   # -Z:    outward -Z, inside when P.z >= zmin
             ],
         }
         out.append({
