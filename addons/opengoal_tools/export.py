@@ -7,7 +7,7 @@
 import bpy, os, re, json, math, mathutils
 from pathlib import Path
 from .data import (
-    ENTITY_DEFS, ETYPE_CODE, ETYPE_TPAGES, ETYPE_AG,
+    ENTITY_DEFS, ETYPE_CODE, ETYPE_TPAGES, ETYPE_AG, VERTEX_EXPORT_TYPES,
     NAV_UNSAFE_TYPES, NEEDS_PATH_TYPES, NEEDS_PATHB_TYPES, IS_PROP_TYPES,
     needed_tpages, LUMP_REFERENCE, ACTOR_LINK_DEFS,
     _lump_ref_for_etype, _actor_link_slots, _actor_has_links,
@@ -1658,6 +1658,44 @@ def collect_actors(scene):
                 "lump":      lump,
             })
             log(f"  [checkpoint] {o.name} → '{cp_name}'  sphere r={r}m")
+
+    # ── Vertex-export meshes ─────────────────────────────────────────────────
+    # Plain MESH objects tagged with og_vertex_export_etype emit one actor per
+    # vertex at world-space position. Only whitelisted simple types (no required
+    # settings) are allowed — see VERTEX_EXPORT_TYPES in data.py.
+    import mathutils as _mu
+    ve_counter = 0
+    for o in _level_objects(scene):
+        if o.type != "MESH":
+            continue
+        etype = str(o.get("og_vertex_export_etype", "")).strip()
+        if not etype or etype not in VERTEX_EXPORT_TYPES:
+            continue
+        einfo = VERTEX_EXPORT_TYPES[etype]
+        mat   = o.matrix_world
+        for v in o.data.vertices:
+            wco  = mat @ v.co
+            gx_v = round(wco.x, 4)
+            gy_v = round(wco.z, 4)
+            gz_v = round(-wco.y, 4)
+            uid  = f"ve{ve_counter}"
+            ve_counter += 1
+            lump_v = {"name": f"{etype}-{uid}"}
+            # Apply the same minimal lump overrides that collect_actors uses
+            if etype == "money":
+                lump_v["eco-info"] = ["eco-info", "(pickup-type money)", 1]
+            elif etype == "buzzer":
+                lump_v["eco-info"] = ["buzzer-info", "(game-task none)", 1]
+            out.append({
+                "trans":     [gx_v, gy_v, gz_v],
+                "etype":     etype,
+                "game_task": "(game-task none)",
+                "quat":      [0, 0, 0, 1],
+                "vis_id":    0,
+                "bsphere":   [gx_v, gy_v, gz_v, 3.0],
+                "lump":      lump_v,
+            })
+        log(f"  [vertex-export] {o.name} → {len(o.data.vertices)} × {etype}")
 
     return out
 

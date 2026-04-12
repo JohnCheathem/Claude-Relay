@@ -7,7 +7,7 @@ import bpy
 from bpy.types import Panel, Operator
 from pathlib import Path
 from .data import (
-    ENTITY_DEFS, ENTITY_WIKI, ENTITY_ENUM_ITEMS, ENEMY_ENUM_ITEMS,
+    ENTITY_DEFS, ENTITY_WIKI, ENTITY_ENUM_ITEMS, ENEMY_ENUM_ITEMS, VERTEX_EXPORT_TYPES,
     PROP_ENUM_ITEMS, NPC_ENUM_ITEMS, PICKUP_ENUM_ITEMS, PLATFORM_ENUM_ITEMS,
     CRATE_ITEMS, ALL_SFX_ITEMS, SBK_SOUNDS, LEVEL_BANKS,
     LUMP_REFERENCE, ACTOR_LINK_DEFS, LUMP_TYPE_ITEMS,
@@ -1380,6 +1380,126 @@ class OG_PT_SelectedObject(Panel):
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Operator — clear vertex-export assignment
+# ---------------------------------------------------------------------------
+
+class OG_OT_ClearVertexExport(bpy.types.Operator):
+    bl_idname      = "og.clear_vertex_export"
+    bl_label       = "Clear Export As"
+    bl_description = "Remove the vertex-export entity assignment from this mesh"
+    bl_options     = {"UNDO"}
+
+    def execute(self, ctx):
+        o = ctx.active_object
+        if o:
+            o["og_vertex_export_etype"]  = ""
+            o["og_vertex_export_search"] = ""
+        return {"FINISHED"}
+
+
+# ---------------------------------------------------------------------------
+# Selected Object > Export As  (sub-panel — only on plain MESH objects)
+# ---------------------------------------------------------------------------
+
+class OG_PT_VertexExport(Panel):
+    bl_label       = "Export As"
+    bl_idname      = "OG_PT_vertex_export"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        o = ctx.active_object
+        return (
+            o is not None
+            and o.type == "MESH"
+            and not o.name.startswith(("ACTOR_", "VOL_", "NAVMESH_", "CPVOL_"))
+            and not o.get("og_navmesh")
+        )
+
+    def draw(self, ctx):
+        layout = self.layout
+        o      = ctx.active_object
+
+        assigned = str(o.get("og_vertex_export_etype", "")).strip()
+        search   = str(o.get("og_vertex_export_search", "")).strip()
+
+        # ── Current assignment ────────────────────────────────────────────
+        if assigned and assigned in VERTEX_EXPORT_TYPES:
+            info = VERTEX_EXPORT_TYPES[assigned]
+            box  = layout.box()
+            row  = box.row(align=True)
+            row.label(text=f"{info['label']}  [{info.get('cat','')}]", icon="CHECKMARK")
+            row.operator("og.clear_vertex_export", text="", icon="X")
+            vcount = len(o.data.vertices)
+            box.label(text=f"{vcount} vert{'ex' if vcount == 1 else 'ices'} → {vcount} actor{'s' if vcount != 1 else ''}", icon="INFO")
+        else:
+            layout.label(text="No entity assigned", icon="INFO")
+
+        layout.separator(factor=0.3)
+
+        # ── Search bar ────────────────────────────────────────────────────
+        row = layout.row(align=True)
+        # Use a temporary scene prop for the search string (Object props
+        # can't drive Blender search fields directly without a UIList).
+        row.prop(ctx.scene.og_props, "entity_search", icon="VIEWZOOM", text="")
+
+        query = ctx.scene.og_props.entity_search.strip().lower()
+
+        if query:
+            matches = [
+                (etype, info)
+                for etype, info in VERTEX_EXPORT_TYPES.items()
+                if query in info["label"].lower() or query in etype.lower()
+            ]
+            matches.sort(key=lambda x: x[1]["label"].lower())
+
+            if matches:
+                box = layout.box()
+                for etype, info in matches[:20]:
+                    cat    = info.get("cat", "")
+                    label  = info["label"]
+                    is_sel = (etype == assigned)
+                    row2   = box.row(align=True)
+                    op = row2.operator(
+                        "og.assign_vertex_export",
+                        text=f"{'▶ ' if is_sel else ''}{label}  [{cat}]",
+                        emboss=is_sel,
+                    )
+                    op.etype = etype
+                if len(matches) > 20:
+                    layout.label(text=f"… {len(matches) - 20} more", icon="INFO")
+            else:
+                layout.label(text="No results", icon="QUESTION")
+        else:
+            layout.label(text="Search to assign an entity type", icon="INFO")
+
+
+# ---------------------------------------------------------------------------
+# Operator — assign vertex-export entity type to active mesh
+# ---------------------------------------------------------------------------
+
+class OG_OT_AssignVertexExport(bpy.types.Operator):
+    bl_idname      = "og.assign_vertex_export"
+    bl_label       = "Assign Entity"
+    bl_description = "Set this entity type as the vertex-export target for this mesh"
+    bl_options     = {"UNDO"}
+
+    etype: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        o = ctx.active_object
+        if o:
+            o["og_vertex_export_etype"]  = self.etype
+            o["og_vertex_export_search"] = ""
+            ctx.scene.og_props.entity_search = ""   # clear the shared search bar
+        return {"FINISHED"}
+
+
 # Selected Object sub-panels  (mesh context, collapsible)
 # ---------------------------------------------------------------------------
 
