@@ -9,6 +9,7 @@
 # ---------------------------------------------------------------------------
 
 import bpy
+import bmesh
 import mathutils
 from pathlib import Path
 
@@ -142,6 +143,14 @@ def _strip_and_keep_mesh(new_objs: list) -> bpy.types.Object | None:
     for obj in arm_objs + junk_objs:
         bpy.data.objects.remove(obj, do_unlink=True)
 
+    # ---- Recalculate normals (imported GLBs often have flipped normals) ----
+    bm = bmesh.new()
+    bm.from_mesh(mesh_obj.data)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh_obj.data)
+    bm.free()
+    mesh_obj.data.update()
+
     return mesh_obj
 
 
@@ -257,3 +266,43 @@ def remove_all_previews(scene) -> int:
             bpy.data.objects.remove(obj, do_unlink=True)
             count += 1
     return count
+
+
+# ---------------------------------------------------------------------------
+# Orphan cleanup — auto-delete preview meshes when their parent is deleted
+# ---------------------------------------------------------------------------
+
+def _cleanup_orphans(names: list) -> None:
+    """Timer callback: remove any preview meshes that lost their parent.
+    Runs outside the depsgraph update so object removal is safe."""
+    for name in names:
+        obj = bpy.data.objects.get(name)
+        if obj and obj.get(_PREVIEW_PROP) and obj.parent is None:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    return None  # don't repeat
+
+
+def _on_depsgraph_update(scene, depsgraph):
+    """Depsgraph handler — detect orphaned preview meshes and schedule removal.
+    Kept intentionally cheap: only scans if there are any preview meshes at all."""
+    orphans = [
+        o.name for o in scene.objects
+        if o.get(_PREVIEW_PROP) and o.parent is None
+    ]
+    if orphans:
+        bpy.app.timers.register(
+            lambda: _cleanup_orphans(orphans),
+            first_interval=0.0,
+        )
+
+
+def register_handler() -> None:
+    """Call from addon register() to enable auto-cleanup."""
+    if _on_depsgraph_update not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
+
+
+def unregister_handler() -> None:
+    """Call from addon unregister() to remove the handler cleanly."""
+    if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)

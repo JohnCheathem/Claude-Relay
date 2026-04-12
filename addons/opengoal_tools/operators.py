@@ -1393,6 +1393,8 @@ class OG_OT_DeleteObject(Operator):
         for o in _level_objects(ctx.scene):
             if o.type == "MESH" and o.name.startswith("VOL_"):
                 _vol_remove_link_to(o, self.obj_name)
+        # Remove preview mesh children (model previews parented to this actor)
+        _mp.remove_preview(obj)
         # Also delete associated _CAM, _ALIGN, _PIVOT, _LOOK_AT empties for cameras
         suffixes = ["_CAM", "_ALIGN", "_PIVOT", "_LOOK_AT"]
         for suf in suffixes:
