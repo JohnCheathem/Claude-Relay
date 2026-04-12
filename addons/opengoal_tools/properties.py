@@ -13,6 +13,9 @@ from .data import (
     ENEMY_ENUM_ITEMS, PROP_ENUM_ITEMS, NPC_ENUM_ITEMS, PICKUP_ENUM_ITEMS,
     LUMP_TYPE_ITEMS, AGGRO_EVENT_ENUM_ITEMS, ALL_SFX_ITEMS,
     LEVEL_BANKS, SBK_SOUNDS,
+    TPAGE_FILTER_ITEMS, GLOBAL_TPAGE_GROUPS,
+    _enemy_enum_cb, _prop_enum_cb, _npc_enum_cb, _pickup_enum_cb, _platform_enum_cb,
+    _search_results_cb,
     _parse_lump_row,
 )
 from .collections import (
@@ -63,17 +66,34 @@ class OGProperties(PropertyGroup):
     entity_search:          StringProperty(name="", description="Search all spawnable objects by name", default="")
     entity_search_selected: StringProperty(name="", description="Currently selected search result", default="")
     show_search_results:    BoolProperty(name="Results", default=True)
-    platform_type:  EnumProperty(name="Platform Type",  items=PLATFORM_ENUM_ITEMS)
+    entity_search_results:  EnumProperty(
+                                name="",
+                                description="Matching spawnable objects — select one then hit Spawn",
+                                items=_search_results_cb,
+                                update=lambda self, ctx: setattr(
+                                    self, "entity_search_selected",
+                                    self.entity_search_results
+                                    if self.entity_search_results != "__empty__" else ""
+                                ),
+                            )
+    tpage_limit_enabled:    BoolProperty(name="Enable Limit Search", default=False,
+                                description="Hide spawnable objects outside the selected tpage groups")
+    tpage_filter_1:         EnumProperty(name="Group 1", items=TPAGE_FILTER_ITEMS, default="NONE",
+                                description="First tpage group to allow")
+    tpage_filter_2:         EnumProperty(name="Group 2", items=TPAGE_FILTER_ITEMS, default="NONE",
+                                description="Second tpage group to allow")
+    platform_type:  EnumProperty(name="Platform Type",  items=_platform_enum_cb)
     crate_type:  EnumProperty(name="Crate Type",  items=CRATE_ITEMS)
     # Per-category entity pickers — each Spawn sub-panel uses its own prop
     # so the dropdown only shows types relevant to that sub-panel.
-    enemy_type:     EnumProperty(name="Enemy Type",   items=ENEMY_ENUM_ITEMS,
+    # items= uses a dynamic callback so the Limit Search tpage filter is respected.
+    enemy_type:     EnumProperty(name="Enemy Type",   items=_enemy_enum_cb,
                                  description="Select an enemy or boss to place")
-    prop_type:      EnumProperty(name="Prop Type",    items=PROP_ENUM_ITEMS,
+    prop_type:      EnumProperty(name="Prop Type",    items=_prop_enum_cb,
                                  description="Select a prop or object to place")
-    npc_type:       EnumProperty(name="NPC Type",     items=NPC_ENUM_ITEMS,
+    npc_type:       EnumProperty(name="NPC Type",     items=_npc_enum_cb,
                                  description="Select an NPC to place")
-    pickup_type:    EnumProperty(name="Pickup Type",  items=PICKUP_ENUM_ITEMS,
+    pickup_type:    EnumProperty(name="Pickup Type",  items=_pickup_enum_cb,
                                  description="Select a pickup to place")
     nav_radius:  FloatProperty(name="Nav Sphere Radius (m)", default=6.0, min=0.5, max=50.0,
                                description="Fallback navmesh sphere radius for nav-unsafe enemies")

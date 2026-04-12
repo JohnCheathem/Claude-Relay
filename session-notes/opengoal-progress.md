@@ -1,10 +1,10 @@
 # OpenGOAL Blender Addon — Session Progress
 
-## Status: v1.3.0 MERGED TO MAIN ✅
+## Status: v1.4.0 MERGED TO MAIN ✅
 ## Active branch: main (depsgraph thread-safety fix merged 2026-04-11)
 
 ## Active Branch: main
-## Addon file: `addons/opengoal_tools.py`
+## Addon file: `addons/opengoal_tools/` (split module)
 ## Backups: `addons/opengoal_tools_v1.0.0_backup.py`, `addons/opengoal_tools_v1.1.0_backup.py`
 
 ---
@@ -128,81 +128,71 @@ qx, qy, qz, qw = -gq.x, -gq.y, -gq.z, gq.w  # conjugate
 
 ---
 
-## Feature: Limit Search (planned, not yet built)
+## v1.4.0 — Limit Search + Quick Search Dropdown (feature/limit-search → main)
 
-### Goal
-Sub-panel under Quick Search in the Spawn Objects panel. User picks up to two tpage groups via dropdowns + a boolean to enable/disable the filter. All spawn sub-panels and Quick Search respect the filter.
+### Status: MERGED TO MAIN ✅
+### Branch: main (merged from feature/limit-search)
 
-### Behaviour rules
-1. **Filter disabled** (default): everything visible, identical to today.
-2. **Filter enabled, tpage groups selected**: only entities whose `tpage_group` is in the selected set are shown. All other entities are hidden from Quick Search results and all sub-panel dropdowns.
-3. **No tpage concern — always visible regardless of filter**: entities with NO `tpage_group` field in ENTITY_DEFS. This covers all NPCs, most Pickups, most Platforms (plat, launcher, etc.), most Objects/Props. Full list below.
-4. **Globally-loaded tpage groups — always visible regardless of filter**: `Village1`, `Village2`, `Village3`, `Training`. These tpages are resident in memory at all times; they incur no heap cost. Entities: Ram, Villa Starfish, Pontoon (V2), Pontoon (Training), Oracle, Miner (Short/Tall), Ceiling Flag, Swamp Tether Rock, Fisherman's Boat.
-5. **Unknown tpage group — always visible regardless of filter**: Lightning Mole, Ice Cube, Fire Boulder. Their heap cost is unconfirmed; don't hide them, let user decide.
-6. **Scope**: filter applies only inside OG_PT_spawn and its children. No other panels affected.
-7. **Filter indicator**: if filter is enabled, parent OG_PT_spawn header shows a small note (e.g. `| Filtered: Jungle + Snow`).
+---
 
-### Global tpage groups (never filtered)
-`GLOBAL_TPAGE_GROUPS = {"Village1", "Village2", "Village3", "Training"}`
+### What was built
 
-### Filter logic (central helper)
+#### Tpage data fixes
+- `lightning-mole` tpage_group: `Unknown` → `Rolling` (confirmed from `rol.gd` / `rolling-lightning-mole.o`)
+- `ice-cube` tpage_group: `Unknown` → `Snow` (confirmed from `textures.gc`: `icecube-*` uses `snow-vis-pris`)
+- `fireboulder` tpage_group: `Unknown` → `Village2` (confirmed from `vi2.gd` / `fireboulder-ag.go`)
+- `Unknown` group is gone entirely — all three resolved from jak-project source
+- `TPAGE_GROUP_ORDER` in `_build_entity_enum` updated to match (added Rolling, Lavatube, Firecanyon, Village2/3, Training; removed Unknown)
+
+#### New: GLOBAL_TPAGE_GROUPS constant
+`{"Village1", "Village2", "Village3", "Training"}` — always resident in memory, never incur heap cost, never filtered.
+
+#### New: Limit Search sub-panel (`OG_PT_SpawnLimitSearch`)
+- Child of Quick Search panel (`bl_parent_id = "OG_PT_spawn_search"`, `DEFAULT_CLOSED`)
+- Toggle checkbox in panel header (`tpage_limit_enabled`, default off)
+- Two dropdowns side by side: `tpage_filter_1`, `tpage_filter_2` — each picks one tpage group from 13 cost groups in world order
+- Slot 2 greyed out when slot 1 is `NONE`
+- Warning label if both slots select the same group
+- Entire dropdown col greyed when toggle is off
+
+#### Filter behaviour
+1. **Toggle off** → everything visible, identical to pre-feature
+2. **Toggle on, both slots NONE** → still show all (no restriction declared)
+3. **Toggle on, slots selected** → only entities whose `tpage_group` is in the selected set are shown
+4. **Always visible regardless**: entities with no `tpage_group` field (pickups, most platforms, props, NPCs), entities in `GLOBAL_TPAGE_GROUPS`
+5. **Scope**: Spawn Objects panel and all children only
+
+#### Filter indicator
+Parent `OG_PT_Spawn.draw()` shows `🔍 Filtered: Group1 + Group2` when filter is active and at least one group selected.
+
+#### Filter implementation
+Three consistent implementations (verified to produce identical results):
+- `_tpage_filter_passes(etype, g1, g2, enabled)` in `data.py` — importable core logic
+- `_entity_passes_filter(etype, props)` in `panels.py` — used by Quick Search
+- Inline in `_search_results_cb` — used by the search enum cache
+
+#### Sub-panel dropdowns
+All five category dropdowns (Enemies, Props, NPCs, Pickups, Platforms) switched from static `items=LIST` to dynamic callbacks (`_enemy_enum_cb` etc.) built via `_make_filtered_enum()`. Callbacks re-run on redraw; only return matching items when filter is active. Blender-safe: built from stable base lists, integer IDs preserved.
+
+#### New: Quick Search scrollable dropdown
+- Replaced manual button list (20-result cap, collapsible) with `entity_search_results: EnumProperty(items=_search_results_cb)`
+- `_search_results_cb`: cached by `(query, enabled, g1, g2)` key — only rebuilds when state changes, stable between redraws (avoids Blender dynamic enum crash pattern)
+- Returns `__empty__` sentinel for empty query and no-match states
+- `update=` lambda syncs `entity_search_selected` on selection change
+- Panel draw: search field → dropdown → spawn button. Three lines, no collapsible, no cap.
+- `OG_OT_SearchSelectEntity` still registered but now dormant (unused by Quick Search; harmless)
+
+#### Known non-issue
+Vertex Export panel (line ~1509 in panels.py) reuses `entity_search` string and still has old 20-result manual list. Intentional — separate feature, not broken.
+
+### New properties
 ```python
-GLOBAL_TPAGE_GROUPS = {"Village1", "Village2", "Village3", "Training"}
-
-def _entity_passes_filter(etype, props):
-    if not props.tpage_limit_enabled:
-        return True
-    info = ENTITY_DEFS.get(etype, {})
-    grp = info.get("tpage_group")          # None = no tpage concern
-    if grp is None:                         # no tpage field → always show
-        return True
-    if grp in GLOBAL_TPAGE_GROUPS:         # globally loaded → always show
-        return True
-    # Unknown → always show (unconfirmed cost)
-    if grp == "Unknown":
-        return True
-    # Check against active filters
-    g1 = props.tpage_filter_1   # "NONE" or group name string
-    g2 = props.tpage_filter_2
-    allowed = {g for g in (g1, g2) if g != "NONE"}
-    if not allowed:                         # filter on but no groups selected → show all
-        return True
-    return grp in allowed
+tpage_limit_enabled:   BoolProperty(default=False)
+tpage_filter_1:        EnumProperty(items=TPAGE_FILTER_ITEMS, default="NONE")
+tpage_filter_2:        EnumProperty(items=TPAGE_FILTER_ITEMS, default="NONE")
+entity_search_results: EnumProperty(items=_search_results_cb, update=<sync lambda>)
 ```
 
-### Properties to add (properties.py)
-```python
-tpage_limit_enabled: BoolProperty(name="Enable Limit Search", default=False)
-tpage_filter_1:      EnumProperty(name="Tpage Group 1", items=_tpage_group_items, default="NONE")
-tpage_filter_2:      EnumProperty(name="Tpage Group 2", items=_tpage_group_items, default="NONE")
-```
-Where `_tpage_group_items` is built from the unique `tpage_group` values in ENTITY_DEFS, minus global groups, plus a `("NONE","— None —","")` sentinel at the top.
-
-### Panel to add (panels.py)
-`OG_PT_SpawnLimitSearch` — child of `OG_PT_spawn_search`, `bl_order = -1` (renders above the search bar inside Quick Search).
-
-Draw:
-- Row: two dropdowns side by side (tpage_filter_1, tpage_filter_2) — greyed out if not enabled
-- Row: boolean toggle `tpage_limit_enabled`
-
-### Filter indicator in parent panel
-In `OG_PT_Spawn.draw()` (the parent), if `props.tpage_limit_enabled` and either filter is non-NONE:
-```python
-active = [g for g in (props.tpage_filter_1, props.tpage_filter_2) if g != "NONE"]
-if active:
-    row = layout.row()
-    row.alert = False
-    row.label(text="🔍 Filtered: " + " + ".join(active), icon="FILTER")
-```
-
-### Sub-panels that need filtering
-- OG_PT_SpawnSearch: filter `matches` list
-- OG_PT_SpawnEnemies: filter enemy enum items
-- OG_PT_SpawnProps: filter props enum items
-- OG_PT_SpawnNPCs: filter NPC enum items (most have no tpage_group → always pass)
-- OG_PT_SpawnPickups: filter pickup enum items (most have no tpage_group → always pass)
-- OG_PT_SpawnPlatforms: filter platform enum items
-
-### Future: Level Audit (wanted, not scoped yet)
-Under Level panel, sub-panel called "Level Audit". General-purpose scene checker. First intended use: scan all ACTOR_ empties in the scene, identify which tpage groups are represented, warn if > 2 non-global groups detected. Design to be generalised — not just tpages. Park until requested.
+### Future: Level Audit (parked, wanted)
+Under Level panel, sub-panel "Level Audit". General scene checker — first use: scan ACTOR_ empties, count distinct non-global tpage groups, warn if > 2. Design to be generalised beyond tpages. Build when requested.
 

@@ -15,6 +15,7 @@ from .data import (
     _lump_ref_for_etype, _actor_link_slots, _actor_has_links,
     _actor_links, _actor_get_link, AGGRO_TRIGGER_EVENTS,
     _parse_lump_row, _LUMP_HARDCODED_KEYS,
+    GLOBAL_TPAGE_GROUPS,
 )
 from .collections import (
     _get_level_prop, _set_level_prop, _level_objects, _active_level_col,
@@ -493,8 +494,41 @@ class OG_PT_Spawn(Panel):
     bl_options     = {"DEFAULT_CLOSED"}
 
     def draw(self, ctx):
-        # Parent header only — content lives in sub-panels
-        pass
+        props = ctx.scene.og_props
+        if props.tpage_limit_enabled:
+            active = [g for g in (props.tpage_filter_1, props.tpage_filter_2) if g != "NONE"]
+            if active:
+                row = self.layout.row()
+                row.label(text="🔍 Filtered: " + " + ".join(active), icon="FILTER")
+
+
+# ---------------------------------------------------------------------------
+# Tpage Limit Search — filter helper (used by all spawn sub-panels)
+# ---------------------------------------------------------------------------
+
+def _entity_passes_filter(etype, props):
+    """Return True if this entity should be visible given the current tpage filter.
+
+    Always-visible cases:
+      • Filter disabled
+      • Entity has no tpage_group field (no heap cost — pickups, most platforms, etc.)
+      • Entity's group is in GLOBAL_TPAGE_GROUPS (Village1/2/3, Training — always resident)
+      • Both filter dropdowns are NONE (filter on but nothing selected → no restriction)
+    """
+    if not props.tpage_limit_enabled:
+        return True
+    info  = ENTITY_DEFS.get(etype, {})
+    grp   = info.get("tpage_group")   # None = no tpage concern
+    if grp is None:
+        return True
+    if grp in GLOBAL_TPAGE_GROUPS:
+        return True
+    g1 = props.tpage_filter_1
+    g2 = props.tpage_filter_2
+    allowed = {g for g in (g1, g2) if g != "NONE"}
+    if not allowed:
+        return True                   # filter on, nothing selected → show all
+    return grp in allowed
 
 
 # ---------------------------------------------------------------------------
@@ -535,61 +569,69 @@ class OG_PT_SpawnSearch(Panel):
         layout = self.layout
         props  = ctx.scene.og_props
 
+        # Search input
         row = layout.row(align=True)
         row.prop(props, "entity_search", icon="VIEWZOOM", text="")
 
         query = props.entity_search.strip().lower()
 
         if query:
-            matches = [
-                (etype, info)
-                for etype, info in ENTITY_DEFS.items()
-                if query in info["label"].lower() or query in etype.lower()
-            ]
-            matches.sort(key=lambda x: x[1]["label"].lower())
+            # Scrollable dropdown — Blender renders this as a floating popup list
+            layout.prop(props, "entity_search_results", text="", icon="COLLAPSEMENU")
 
-            if matches:
-                # Collapsible header for results
-                icon = "TRIA_DOWN" if props.show_search_results else "TRIA_RIGHT"
-                row_hdr = layout.row()
-                row_hdr.prop(props, "show_search_results",
-                             text=f"Results ({min(len(matches), 20)}{'+' if len(matches) > 20 else ''})",
-                             icon=icon, emboss=False)
-
-                if props.show_search_results:
-                    box = layout.box()
-                    selected = props.entity_search_selected
-
-                    for etype, info in matches[:20]:
-                        cat    = info.get("cat", "")
-                        label  = info["label"]
-                        is_sel = (etype == selected)
-                        row2   = box.row(align=True)
-                        op = row2.operator(
-                            "og.search_select_entity",
-                            text=f"{'▶ ' if is_sel else ''}{label}  [{cat}]",
-                            emboss=is_sel,
-                        )
-                        op.etype = etype
-
-                    if len(matches) > 20:
-                        layout.label(text=f"… {len(matches) - 20} more — refine your search", icon="INFO")
-
-                layout.separator(factor=0.3)
-                sel = props.entity_search_selected
-                if sel and sel in ENTITY_DEFS:
-                    col = layout.column()
-                    col.scale_y = 1.4
-                    op  = col.operator("og.spawn_entity", text=f"Spawn  {ENTITY_DEFS[sel]['label']}", icon="ADD")
-                    op.source_prop = "entity_search_selected"
-                else:
-                    sub = layout.column()
-                    sub.enabled = False
-                    sub.operator("og.spawn_entity", text="Spawn", icon="ADD")
+            # Spawn button — active when a real result is selected
+            sel = props.entity_search_selected
+            if sel and sel in ENTITY_DEFS:
+                col = layout.column()
+                col.scale_y = 1.4
+                op = col.operator("og.spawn_entity",
+                                  text=f"Spawn  {ENTITY_DEFS[sel]['label']}", icon="ADD")
+                op.source_prop = "entity_search_selected"
             else:
-                layout.label(text="No results found.", icon="QUESTION")
+                sub = layout.column()
+                sub.enabled = False
+                sub.operator("og.spawn_entity", text="Spawn", icon="ADD")
         else:
             layout.label(text="Type to search all spawnable objects…", icon="INFO")
+
+
+
+# ---------------------------------------------------------------------------
+# Spawn > Quick Search > Limit Search  (sub-panel — child of Quick Search)
+# ---------------------------------------------------------------------------
+
+class OG_PT_SpawnLimitSearch(Panel):
+    bl_label       = "Limit Search"
+    bl_idname      = "OG_PT_spawn_limit_search"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn_search"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw_header(self, ctx):
+        props = ctx.scene.og_props
+        self.layout.prop(props, "tpage_limit_enabled", text="")
+
+    def draw(self, ctx):
+        layout = self.layout
+        props  = ctx.scene.og_props
+
+        col = layout.column(align=True)
+        col.enabled = props.tpage_limit_enabled
+
+        # Two dropdowns side by side
+        row = col.row(align=True)
+        # Grey out slot 2 if slot 1 is NONE (nothing to pair with yet)
+        row.prop(props, "tpage_filter_1", text="")
+        sub = row.row(align=True)
+        sub.enabled = props.tpage_filter_1 != "NONE"
+        sub.prop(props, "tpage_filter_2", text="")
+
+        # Warn if same group selected in both slots
+        if (props.tpage_filter_1 != "NONE"
+                and props.tpage_filter_1 == props.tpage_filter_2):
+            col.label(text="Both slots are the same group", icon="ERROR")
 
 
 # ---------------------------------------------------------------------------
