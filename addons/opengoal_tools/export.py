@@ -2382,9 +2382,12 @@ def export_glb(ctx, name):
             export_objs = _recursive_col_objects(geo_col, exclude_no_export=True)
             export_objs = [o for o in export_objs if o.type == "MESH"]
         else:
-            # No Geometry sub-collection yet — fall back to all meshes in the level
+            # No Geometry sub-collection yet — fall back to all meshes in the level.
+            # Exclude WATER_ volumes (invisible helpers, not renderable geometry).
+            _HELPER_PREFIXES = ("WATER_", "VOL_", "CPVOL_", "NAVMESH_")
             export_objs = [o for o in _recursive_col_objects(level_col, exclude_no_export=True)
-                           if o.type == "MESH"]
+                           if o.type == "MESH"
+                           and not any(o.name.startswith(p) for p in _HELPER_PREFIXES)]
 
         # Save selection state
         prev_active    = ctx.view_layer.objects.active
