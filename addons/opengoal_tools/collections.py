@@ -34,6 +34,7 @@ _COL_PATH_GEO_VISUAL          = ("Geometry", "Visual Only")
 _COL_PATH_GEO_REFERENCE       = ("Geometry", "Reference")
 _COL_PATH_WAYPOINTS           = ("Waypoints",)
 _COL_PATH_NAVMESHES           = ("NavMeshes",)
+_COL_PATH_EXPORT_AS           = ("Export As",)
 
 # Entity category → sub-collection path
 _ENTITY_CAT_TO_COL_PATH = {

@@ -59,7 +59,7 @@ from .collections import (
     _COL_PATH_SPAWNABLE_PICKUPS, _COL_PATH_TRIGGERS, _COL_PATH_CAMERAS,
     _COL_PATH_SPAWNS, _COL_PATH_SOUND_EMITTERS, _COL_PATH_GEO_SOLID,
     _COL_PATH_GEO_COLLISION, _COL_PATH_GEO_VISUAL, _COL_PATH_GEO_REFERENCE,
-    _COL_PATH_WAYPOINTS, _COL_PATH_NAVMESHES,
+    _COL_PATH_WAYPOINTS, _COL_PATH_NAVMESHES, _COL_PATH_EXPORT_AS,
     _ENTITY_CAT_TO_COL_PATH, _LEVEL_COL_DEFAULTS,
     _all_level_collections, _active_level_col, _col_is_no_export,
     _recursive_col_objects, _level_objects, _ensure_sub_collection,

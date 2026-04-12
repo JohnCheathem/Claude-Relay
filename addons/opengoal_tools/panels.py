@@ -20,7 +20,7 @@ from .collections import (
     _get_level_prop, _set_level_prop, _level_objects, _active_level_col,
     _all_level_collections, _classify_object, _col_path_for_entity,
     _recursive_col_objects, _ensure_sub_collection,
-    _COL_PATH_NAVMESHES, _COL_PATH_WAYPOINTS,
+    _COL_PATH_NAVMESHES, _COL_PATH_WAYPOINTS, _COL_PATH_EXPORT_AS,
     _COL_PATH_TRIGGERS, _COL_PATH_CAMERAS, _COL_PATH_SOUND_EMITTERS,
     _COL_PATH_SPAWNABLE_ENEMIES, _COL_PATH_GEO_SOLID,
 )
@@ -1504,6 +1504,8 @@ class OG_OT_AssignVertexExport(bpy.types.Operator):
             o["og_vertex_export_etype"]  = self.etype
             o["og_vertex_export_search"] = ""
             ctx.scene.og_props.entity_search = ""   # clear the shared search bar
+            # Move into the Export As sub-collection so it stays organised
+            _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_EXPORT_AS)
         return {"FINISHED"}
 
 
