@@ -377,6 +377,25 @@ PROP_ENUM_ITEMS   = _build_cat_enum({"Props", "Objects", "Debug"})
 NPC_ENUM_ITEMS    = _build_cat_enum({"NPCs"})
 PICKUP_ENUM_ITEMS = _build_cat_enum({"Pickups"})
 
+# ---------------------------------------------------------------------------
+# Vertex-export whitelist — entity types that need NO settings beyond position.
+# Used by the "Export As" mesh panel: each vertex becomes one actor of this type.
+# Excludes: crate (needs crate-type), fuel-cell (needs eco-info/task),
+#           orb-cache-top (needs settings), powercellalt (task-gated).
+# ---------------------------------------------------------------------------
+_VERTEX_EXPORT_EXCLUDE = {"crate", "fuel-cell", "orb-cache-top", "powercellalt"}
+
+VERTEX_EXPORT_TYPES = {
+    etype: info
+    for etype, info in ENTITY_DEFS.items()
+    if (
+        info.get("cat") in ("Pickups", "Props", "Objects")
+        and etype not in _VERTEX_EXPORT_EXCLUDE
+        and (info.get("is_prop", False) or info.get("cat") == "Pickups")
+    )
+}
+
+
 # Platform-only enum for the Platforms panel spawn dropdown
 PLATFORM_ENUM_ITEMS = [
     (etype, info["label"], info.get("label", etype), i)

@@ -59,7 +59,7 @@ from .collections import (
     _COL_PATH_SPAWNABLE_PICKUPS, _COL_PATH_TRIGGERS, _COL_PATH_CAMERAS,
     _COL_PATH_SPAWNS, _COL_PATH_SOUND_EMITTERS, _COL_PATH_GEO_SOLID,
     _COL_PATH_GEO_COLLISION, _COL_PATH_GEO_VISUAL, _COL_PATH_GEO_REFERENCE,
-    _COL_PATH_WAYPOINTS, _COL_PATH_NAVMESHES,
+    _COL_PATH_WAYPOINTS, _COL_PATH_NAVMESHES, _COL_PATH_EXPORT_AS,
     _ENTITY_CAT_TO_COL_PATH, _LEVEL_COL_DEFAULTS,
     _all_level_collections, _active_level_col, _col_is_no_export,
     _recursive_col_objects, _level_objects, _ensure_sub_collection,
@@ -143,6 +143,7 @@ from .panels import (
     OG_PT_CollectionProperties, OG_PT_DisableExport,
     OG_PT_CleanSub, OG_PT_LightBakingSub, OG_PT_Music,
     OG_PT_Spawn, OG_PT_SpawnSearch, OG_OT_SearchSelectEntity,
+    OG_PT_VertexExport, OG_OT_AssignVertexExport, OG_OT_ClearVertexExport,
     OG_PT_SpawnEnemies, OG_PT_SpawnPlatforms,
     OG_PT_SpawnProps, OG_PT_SpawnNPCs, OG_PT_SpawnPickups, OG_PT_SpawnSounds,
     OG_PT_Camera, OG_PT_Triggers,
@@ -248,6 +249,9 @@ classes = (
     OG_PT_Triggers,
     # Standalone panels
     OG_PT_SelectedObject,
+    OG_PT_VertexExport,
+    OG_OT_AssignVertexExport,
+    OG_OT_ClearVertexExport,
     OG_PT_SelectedCollision,
     OG_PT_SelectedLightBaking,
     OG_PT_SelectedNavMeshTag,
@@ -344,6 +348,10 @@ def register():
     bpy.types.Object.og_lump_rows          = bpy.props.CollectionProperty(type=OGLumpRow)
     bpy.types.Object.og_lump_rows_index    = bpy.props.IntProperty(name="Active Lump Row", default=0)
 
+    # Vertex-export: mesh objects tagged with an entity type export each vertex as an actor.
+    bpy.types.Object.og_vertex_export_etype  = bpy.props.StringProperty(name="Export As Entity", default="")
+    bpy.types.Object.og_vertex_export_search = bpy.props.StringProperty(name="", default="")
+
     bpy.types.Collection.og_no_export      = bpy.props.BoolProperty(
         name="Exclude from Export",
         description="When enabled, this collection and its contents are excluded from level export",
@@ -364,6 +372,7 @@ def unregister():
               "nolineofsight","nocamera","collide_material","collide_event","collide_mode",
               "enable_custom_weights","copy_eye_draws","copy_mod_draws","og_vol_links",
               "og_actor_links","og_lump_rows","og_lump_rows_index",
+              "og_vertex_export_etype","og_vertex_export_search",
               "og_spring_height","og_launcher_dest","og_launcher_fly_time","og_num_lurkers",
               "og_door_auto_close","og_door_one_way","og_continue_name",
               "og_water_surface","og_water_wade","og_water_swim","og_water_bottom",
