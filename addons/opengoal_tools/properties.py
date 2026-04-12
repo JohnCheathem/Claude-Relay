@@ -15,6 +15,7 @@ from .data import (
     LEVEL_BANKS, SBK_SOUNDS,
     TPAGE_FILTER_ITEMS, GLOBAL_TPAGE_GROUPS,
     _enemy_enum_cb, _prop_enum_cb, _npc_enum_cb, _pickup_enum_cb, _platform_enum_cb,
+    _search_results_cb,
     _parse_lump_row,
 )
 from .collections import (
@@ -65,6 +66,16 @@ class OGProperties(PropertyGroup):
     entity_search:          StringProperty(name="", description="Search all spawnable objects by name", default="")
     entity_search_selected: StringProperty(name="", description="Currently selected search result", default="")
     show_search_results:    BoolProperty(name="Results", default=True)
+    entity_search_results:  EnumProperty(
+                                name="",
+                                description="Matching spawnable objects — select one then hit Spawn",
+                                items=_search_results_cb,
+                                update=lambda self, ctx: setattr(
+                                    self, "entity_search_selected",
+                                    self.entity_search_results
+                                    if self.entity_search_results != "__empty__" else ""
+                                ),
+                            )
     tpage_limit_enabled:    BoolProperty(name="Enable Limit Search", default=False,
                                 description="Hide spawnable objects outside the selected tpage groups")
     tpage_filter_1:         EnumProperty(name="Group 1", items=TPAGE_FILTER_ITEMS, default="NONE",

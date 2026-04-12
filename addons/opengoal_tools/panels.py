@@ -569,60 +569,28 @@ class OG_PT_SpawnSearch(Panel):
         layout = self.layout
         props  = ctx.scene.og_props
 
+        # Search input
         row = layout.row(align=True)
         row.prop(props, "entity_search", icon="VIEWZOOM", text="")
 
         query = props.entity_search.strip().lower()
 
         if query:
-            matches = [
-                (etype, info)
-                for etype, info in ENTITY_DEFS.items()
-                if (query in info["label"].lower() or query in etype.lower())
-                and _entity_passes_filter(etype, props)
-            ]
-            matches.sort(key=lambda x: x[1]["label"].lower())
+            # Scrollable dropdown — Blender renders this as a floating popup list
+            layout.prop(props, "entity_search_results", text="", icon="COLLAPSEMENU")
 
-            if matches:
-                # Collapsible header for results
-                icon = "TRIA_DOWN" if props.show_search_results else "TRIA_RIGHT"
-                row_hdr = layout.row()
-                row_hdr.prop(props, "show_search_results",
-                             text=f"Results ({min(len(matches), 20)}{'+' if len(matches) > 20 else ''})",
-                             icon=icon, emboss=False)
-
-                if props.show_search_results:
-                    box = layout.box()
-                    selected = props.entity_search_selected
-
-                    for etype, info in matches[:20]:
-                        cat    = info.get("cat", "")
-                        label  = info["label"]
-                        is_sel = (etype == selected)
-                        row2   = box.row(align=True)
-                        op = row2.operator(
-                            "og.search_select_entity",
-                            text=f"{'▶ ' if is_sel else ''}{label}  [{cat}]",
-                            emboss=is_sel,
-                        )
-                        op.etype = etype
-
-                    if len(matches) > 20:
-                        layout.label(text=f"… {len(matches) - 20} more — refine your search", icon="INFO")
-
-                layout.separator(factor=0.3)
-                sel = props.entity_search_selected
-                if sel and sel in ENTITY_DEFS:
-                    col = layout.column()
-                    col.scale_y = 1.4
-                    op  = col.operator("og.spawn_entity", text=f"Spawn  {ENTITY_DEFS[sel]['label']}", icon="ADD")
-                    op.source_prop = "entity_search_selected"
-                else:
-                    sub = layout.column()
-                    sub.enabled = False
-                    sub.operator("og.spawn_entity", text="Spawn", icon="ADD")
+            # Spawn button — active when a real result is selected
+            sel = props.entity_search_selected
+            if sel and sel in ENTITY_DEFS:
+                col = layout.column()
+                col.scale_y = 1.4
+                op = col.operator("og.spawn_entity",
+                                  text=f"Spawn  {ENTITY_DEFS[sel]['label']}", icon="ADD")
+                op.source_prop = "entity_search_selected"
             else:
-                layout.label(text="No results found.", icon="QUESTION")
+                sub = layout.column()
+                sub.enabled = False
+                sub.operator("og.spawn_entity", text="Spawn", icon="ADD")
         else:
             layout.label(text="Type to search all spawnable objects…", icon="INFO")
 

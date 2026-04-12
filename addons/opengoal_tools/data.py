@@ -475,6 +475,62 @@ _enemy_enum_cb    = _make_filtered_enum(ENEMY_ENUM_ITEMS,   {"Enemies", "Bosses"
 _prop_enum_cb     = _make_filtered_enum(PROP_ENUM_ITEMS,    {"Props", "Objects", "Debug"})
 _npc_enum_cb      = _make_filtered_enum(NPC_ENUM_ITEMS,     {"NPCs"})
 _pickup_enum_cb   = _make_filtered_enum(PICKUP_ENUM_ITEMS,  {"Pickups"})
+
+# ---------------------------------------------------------------------------
+# Quick Search results enum — dynamic, cached to avoid per-redraw rebuilds.
+# Blender dynamic enums can crash if the list changes between the items=
+# callback and the get/set calls, so we cache by (query, g1, g2, enabled)
+# and only rebuild when that tuple changes.
+# ---------------------------------------------------------------------------
+_search_enum_cache: dict = {"key": None, "items": [("__empty__", "Type to search…", "", 0)]}
+
+def _search_results_cb(self, context):
+    if context is None:
+        return _search_enum_cache["items"]
+    try:
+        props   = context.scene.og_props
+        query   = props.entity_search.strip().lower()
+        enabled = props.tpage_limit_enabled
+        g1      = props.tpage_filter_1
+        g2      = props.tpage_filter_2
+    except Exception:
+        return _search_enum_cache["items"]
+
+    key = (query, enabled, g1, g2)
+    if key == _search_enum_cache["key"]:
+        return _search_enum_cache["items"]
+
+    if not query:
+        items = [("__empty__", "Type to search…", "", 0)]
+    else:
+        allowed = None
+        if enabled:
+            allowed = {g for g in (g1, g2) if g != "NONE"} or None
+
+        matches = []
+        for etype, info in ENTITY_DEFS.items():
+            lbl = info["label"]
+            if query not in lbl.lower() and query not in etype.lower():
+                continue
+            grp = info.get("tpage_group")
+            if allowed is not None and grp is not None and grp not in GLOBAL_TPAGE_GROUPS:
+                if grp not in allowed:
+                    continue
+            matches.append((etype, info))
+        matches.sort(key=lambda x: x[1]["label"].lower())
+
+        if matches:
+            items = [
+                (etype, f"{info['label']}  [{info.get('cat','')}]",
+                 ENTITY_WIKI.get(etype, {}).get("desc", "") or etype, i)
+                for i, (etype, info) in enumerate(matches)
+            ]
+        else:
+            items = [("__empty__", "No results found", "", 0)]
+
+    _search_enum_cache["key"]   = key
+    _search_enum_cache["items"] = items
+    return items
 # _platform_enum_cb is defined after PLATFORM_ENUM_ITEMS below
 
 
