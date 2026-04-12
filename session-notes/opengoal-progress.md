@@ -1,6 +1,6 @@
 # OpenGOAL Blender Addon — Session Progress
 
-## Status: v1.2.1 MERGED TO MAIN ✅
+## Status: v1.3.0 MERGED TO MAIN ✅
 ## Active branch: main (depsgraph thread-safety fix merged 2026-04-11)
 
 ## Active Branch: main
