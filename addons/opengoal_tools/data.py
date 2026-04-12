@@ -100,10 +100,12 @@ ENTITY_DEFS = {
     "quicksandlurker":  {"label":"Quicksand Lurker",     "cat":"Enemies",   "tpage_group":"Misty",    "ag":"quicksandlurker-ag.go",   "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.9,0.8,0.3,1.0), "shape":"SPHERE"},
     # Village1 group (always loaded — free)
     "ram":              {"label":"Ram",                  "cat":"Enemies",   "tpage_group":"Village1", "ag":"ram-ag.go",               "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.7,0.4,0.2,1.0), "shape":"SPHERE"},
-    # Unknown/untested tpage group
-    "lightning-mole":   {"label":"Lightning Mole",       "cat":"Enemies",   "tpage_group":"Unknown",  "ag":None,                      "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.7,0.7,0.9,1.0), "shape":"SPHERE"},
-    "ice-cube":         {"label":"Ice Cube",             "cat":"Enemies",   "tpage_group":"Unknown",  "ag":None,                      "nav_safe":True,  "needs_path":True,  "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.7,0.9,1.0,1.0), "shape":"CUBE"},
-    "fireboulder":      {"label":"Fire Boulder",         "cat":"Enemies",   "tpage_group":"Unknown",  "ag":"fireboulder-ag.go",       "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(1.0,0.4,0.0,1.0), "shape":"SPHERE"},
+    # Rolling group (tpages: rol.gd — rolling-lightning-mole.o, lightning-mole-ag.go)
+    "lightning-mole":   {"label":"Lightning Mole",       "cat":"Enemies",   "tpage_group":"Rolling",  "ag":None,                      "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.7,0.7,0.9,1.0), "shape":"SPHERE"},
+    # Snow group (ice-cube uses snow-vis-pris: icecube-eye/ice-01/ice-corner/nails/pendant)
+    "ice-cube":         {"label":"Ice Cube",             "cat":"Enemies",   "tpage_group":"Snow",     "ag":None,                      "nav_safe":True,  "needs_path":True,  "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.7,0.9,1.0,1.0), "shape":"CUBE"},
+    # Village2 group (fireboulder-ag.go is in vi2.gd — globally loaded, always free)
+    "fireboulder":      {"label":"Fire Boulder",         "cat":"Enemies",   "tpage_group":"Village2", "ag":"fireboulder-ag.go",       "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(1.0,0.4,0.0,1.0), "shape":"SPHERE"},
 
     # ---- PROPS — is_prop=True, idle animation only, no AI/combat ----
     # evilplant: process-drawable with ONE state (idle loop). No attack, no chase.
@@ -324,7 +326,8 @@ def _build_entity_enum():
     # Tpage group display order — enemies are grouped so users know which share heap budget.
     # Mixing more than 2 groups in one scene risks OOM crash on level load.
     TPAGE_GROUP_ORDER = ["Beach", "Jungle", "Swamp", "Snow", "Sunken", "Ogre",
-                         "Misty", "Maincave", "Robocave", "Village1", "Final", "Unknown"]
+                         "Misty", "Maincave", "Robocave", "Rolling", "Lavatube", "Firecanyon",
+                         "Village1", "Village2", "Village3", "Training", "Final"]
     cats = {}
     for etype, info in ENTITY_DEFS.items():
         cat = info["cat"]
@@ -338,7 +341,7 @@ def _build_entity_enum():
             # Group enemies by tpage_group, in TPAGE_GROUP_ORDER order
             by_group = {}
             for etype, info in cats[cat]:
-                g = info.get("tpage_group", "Unknown")
+                g = info.get("tpage_group", "Other")
                 by_group.setdefault(g, []).append((etype, info))
             for group in TPAGE_GROUP_ORDER:
                 if group not in by_group:
@@ -394,6 +397,88 @@ NPC_ENUM_ITEMS    = _build_cat_enum({"NPCs"})
 PICKUP_ENUM_ITEMS = _build_cat_enum({"Pickups"})
 
 # ---------------------------------------------------------------------------
+# Tpage filter — groups selectable in the Limit Search panel.
+# Global groups (Village1/2/3, Training) are always free — excluded from the
+# filter list since the user never needs to "allow" them.
+# ---------------------------------------------------------------------------
+GLOBAL_TPAGE_GROUPS = {"Village1", "Village2", "Village3", "Training"}
+
+def _build_tpage_filter_items():
+    # Collect groups that actually have heap cost (not global, not absent)
+    seen = set()
+    for info in ENTITY_DEFS.values():
+        g = info.get("tpage_group")
+        if g and g not in GLOBAL_TPAGE_GROUPS:
+            seen.add(g)
+    order = ["Beach", "Jungle", "Swamp", "Snow", "Sunken", "Ogre",
+             "Misty", "Maincave", "Robocave", "Rolling", "Lavatube",
+             "Firecanyon", "Final"]
+    ordered = [g for g in order if g in seen]
+    ordered += sorted(seen - set(ordered))  # any future groups appended
+    items = [("NONE", "— None —", "No filter")]
+    for i, g in enumerate(ordered, 1):
+        items.append((g, g, f"Show only {g} tpage group", i))
+    return items
+
+TPAGE_FILTER_ITEMS = _build_tpage_filter_items()
+
+
+def _tpage_filter_passes(etype, g1, g2, enabled):
+    """Core filter logic — importable for use in panels without circular deps."""
+    if not enabled:
+        return True
+    info  = ENTITY_DEFS.get(etype, {})
+    grp   = info.get("tpage_group")
+    if grp is None:
+        return True
+    if grp in GLOBAL_TPAGE_GROUPS:
+        return True
+    allowed = {g for g in (g1, g2) if g != "NONE"}
+    if not allowed:
+        return True
+    return grp in allowed
+
+
+def _make_filtered_enum(base_items, cats):
+    """Return a Blender dynamic enum callback that filters base_items by tpage."""
+    def _callback(self, context):
+        if context is None:
+            return base_items
+        try:
+            props   = context.scene.og_props
+            enabled = props.tpage_limit_enabled
+            g1      = props.tpage_filter_1
+            g2      = props.tpage_filter_2
+        except Exception:
+            return base_items
+        if not enabled:
+            return base_items
+        allowed = {g for g in (g1, g2) if g != "NONE"}
+        if not allowed:
+            return base_items
+        result = []
+        for item in base_items:
+            etype = item[0]
+            info  = ENTITY_DEFS.get(etype, {})
+            grp   = info.get("tpage_group")
+            if grp is None or grp in GLOBAL_TPAGE_GROUPS:
+                result.append(item)
+            elif grp in allowed:
+                result.append(item)
+        # Blender requires at least one item
+        return result if result else [("__none__", "— No matches —", "", 0)]
+    return _callback
+
+
+# Dynamic filtered enum callbacks — assigned to EnumProperty items= in properties.py
+_enemy_enum_cb    = _make_filtered_enum(ENEMY_ENUM_ITEMS,   {"Enemies", "Bosses"})
+_prop_enum_cb     = _make_filtered_enum(PROP_ENUM_ITEMS,    {"Props", "Objects", "Debug"})
+_npc_enum_cb      = _make_filtered_enum(NPC_ENUM_ITEMS,     {"NPCs"})
+_pickup_enum_cb   = _make_filtered_enum(PICKUP_ENUM_ITEMS,  {"Pickups"})
+# _platform_enum_cb is defined after PLATFORM_ENUM_ITEMS below
+
+
+# ---------------------------------------------------------------------------
 # Vertex-export whitelist — entity types that need NO settings beyond position.
 # Used by the "Export As" mesh panel: each vertex becomes one actor of this type.
 # Excludes: crate (needs crate-type), fuel-cell (needs eco-info/task),
@@ -422,6 +507,7 @@ PLATFORM_ENUM_ITEMS = [
         )
     )
 ]
+_platform_enum_cb = _make_filtered_enum(PLATFORM_ENUM_ITEMS, {"Platforms"})
 
 # Derived lookup sets — computed once from ENTITY_DEFS
 NAV_UNSAFE_TYPES  = {e for e, info in ENTITY_DEFS.items() if not info.get("nav_safe", True)}
