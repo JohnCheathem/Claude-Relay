@@ -397,3 +397,19 @@ Branch: `feature/model-viewer` — commit `f1255f4`
 2. Model rotation after import — GLTF Y-up → Blender Z-up conversion should be handled by the importer, but if models come in rotated 90° we add a `mesh_obj.rotation_euler = (math.radians(90), 0, 0)` after import.
 3. `rip_levels` GLB subfolder name — confirmed from source as `levels/<level_name>/` but `<level_name>` is the BSP name not the DGO filename. The mapping in the `glb` field was derived from known level names — may need tweaking for one or two entries.
 
+
+---
+
+## PART 10: Merged to main — v1.6.0
+
+Merged `feature/model-viewer` into `main` on April 12, 2026.
+
+### Final state
+- All 87 ENTITY_DEFS entries have probe-verified `glb` paths
+- Icosphere issue fixed: GLB importer creates a stray icosphere from the default fallback material (mat[0], no texture). Fixed by selecting mesh by GLB stem name and deleting everything else.
+- Armature modifier stripped cleanly, armature deleted (not hidden)
+- Normals recalculated via bmesh (no ops needed)
+- Depsgraph handler auto-deletes previews when parent actor is X-deleted
+- Non-selectable (hide_select=True)
+- Preview toggle in addon Preferences (persists across .blend files)
+- Export fallback filters og_preview_mesh objects
