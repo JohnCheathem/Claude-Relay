@@ -99,56 +99,38 @@ def _import_glb(ctx, glb_path: Path) -> list:
 
 
 def _strip_and_keep_mesh(new_objs: list, glb_stem: str = "") -> bpy.types.Object | None:
-    """From the newly imported objects, keep the primary mesh (matched by name),
-    hide the armature, and delete any stray objects (icospheres etc).
-    Returns the primary mesh Object, or None if none found."""
+    """From the newly imported objects, keep the primary mesh (matched by GLB stem name).
+    Removes the armature modifier, deletes the armature and all other stray objects
+    (icospheres etc). Returns the primary mesh Object, or None if none found."""
 
-    mesh_obj  = None
-    arm_objs  = []
-    junk_objs = []
+    mesh_obj = None
 
+    # Pick the mesh whose base name matches the GLB stem.
+    # Fall back to any non-Icosphere mesh if no exact match found.
     for obj in new_objs:
-        if obj.type == "MESH":
-            # Prefer the mesh whose name starts with the GLB stem (e.g. 'plat-lod0').
-            # The GLB importer may also create stray objects like 'Icosphere' from
-            # the default fallback material — those should be discarded.
-            obj_base = obj.name.split(".")[0]  # strip Blender .001/.002 suffix
-            if glb_stem and obj_base == glb_stem:
-                mesh_obj = obj
-            elif mesh_obj is None and glb_stem and obj_base != "Icosphere":
-                mesh_obj = obj  # fallback: any non-icosphere mesh
-            elif not glb_stem and mesh_obj is None:
-                mesh_obj = obj
-            else:
-                junk_objs.append(obj)
-        elif obj.type == "ARMATURE":
-            arm_objs.append(obj)
-        else:
-            junk_objs.append(obj)
-
-    # Any meshes that lost out to the named match also become junk
-    # (catches icosphere and any other stray geometry)
-    if mesh_obj is not None:
-        for obj in list(junk_objs):
-            pass  # already in junk
-        # make sure icospheres aren't accidentally kept
-        junk_objs = [o for o in new_objs if o is not mesh_obj and o not in arm_objs]
+        if obj.type != "MESH":
+            continue
+        obj_base = obj.name.split(".")[0]
+        if glb_stem and obj_base == glb_stem:
+            mesh_obj = obj
+            break
+        if mesh_obj is None and obj_base != "Icosphere":
+            mesh_obj = obj
 
     if mesh_obj is None:
         for obj in new_objs:
             bpy.data.objects.remove(obj, do_unlink=True)
         return None
 
-    # ---- Hide the armature (keeps mesh deformed correctly at bind pose) ----
-    for arm in arm_objs:
-        arm.hide_viewport  = True
-        arm.hide_render    = True
-        arm.hide_select    = True
-        arm[_PREVIEW_PROP] = True
+    # ---- Strip armature modifier from the chosen mesh ----
+    for mod in list(mesh_obj.modifiers):
+        if mod.type == "ARMATURE":
+            mesh_obj.modifiers.remove(mod)
 
-    # ---- Delete stray objects (icosphere, etc.) ----
-    for obj in junk_objs:
-        bpy.data.objects.remove(obj, do_unlink=True)
+    # ---- Delete everything else (armatures, icospheres, other meshes) ----
+    for obj in new_objs:
+        if obj is not mesh_obj:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
     # ---- Recalculate normals ----
     bm = bmesh.new()
