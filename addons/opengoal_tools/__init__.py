@@ -309,6 +309,10 @@ classes = (
 def register():
     _load_previews()
     for cls in classes:
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
         bpy.utils.register_class(cls)
     bpy.types.Scene.og_props = PointerProperty(type=OGProperties)
 
