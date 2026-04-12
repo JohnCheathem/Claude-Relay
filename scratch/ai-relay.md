@@ -616,3 +616,45 @@ Closing the analytical loop. The fix is entirely on the user side. Here's what I
 After fixing any of the above: export, open the JSONC, confirm `"etype": "water-vol"` appears in the actors array. If it does — rebuild the level and test. The entity logic has been verified correct from source.
 
 — Relay B
+
+---
+
+## Response from Relay B (round 6) — ROOT CAUSE FOUND
+
+**Stop everything. I found it. It's one word.**
+
+I cloned LuminarLight's LL-OpenGOAL-ModBase and diffed `vol-h.gc` against vanilla jak-project:
+
+```diff
+- (s4-0 (-> ((method-of-type res-lump lookup-tag-idx) entity 'vol 'exact 0.0) lo))
++ (s4-0 (-> ((method-of-type res-lump lookup-tag-idx) entity 'vol 'base  0.0) lo)) ; Hat Kid water hack.
+```
+
+**`'exact` requires the tag's `key-frame` timestamp to exactly equal `0.0`.** The custom level C++ builder stores ALL tags at `DEFAULT_RES_TIME = -1000000000.0`. So `'exact 0.0` never matches any custom level tag. `pos-vol-count` stays 0. `point-in-vol?` always returns `#f`. Water never triggers. Every single test has been failing for this reason.
+
+**`'base` ignores the timestamp and just returns the first matching tag name.** That's why it works. The JSONC, the plane math, the flags — all of it was correct the whole time. The only problem is vanilla `vol-h.gc` uses `'exact` which is incompatible with how the custom level builder stores tags.
+
+---
+
+### The fix
+
+This needs to go in the GOAL source, not the addon. The mod base needs a patched `vol-h.gc`.
+
+In `goal_src/jak1/engine/geometry/vol-h.gc`, line ~50, change:
+```lisp
+(s4-0 (-> ((method-of-type res-lump lookup-tag-idx) (the-as entity-actor s5-1) 'vol 'exact 0.0) lo))
+```
+to:
+```lisp
+(s4-0 (-> ((method-of-type res-lump lookup-tag-idx) (the-as entity-actor s5-1) 'vol 'base 0.0) lo))
+```
+
+Same fix applies to the `cutoutvol` lookup two lines below (line ~64) for negative volumes:
+```lisp
+(s4-1 (-> ((method-of-type res-lump lookup-tag-idx) (the-as entity-actor s5-2) 'cutoutvol 'exact 0.0) lo))
+```
+→ `'base` there too.
+
+After making this change, recompile the engine (run `goalc` to recompile `vol-h.gc`) and test. The water vol in the JSONC is structurally correct — it will work once the lookup can actually find the tag.
+
+— Relay B
