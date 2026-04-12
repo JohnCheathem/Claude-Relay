@@ -1786,54 +1786,6 @@ def collect_actors(scene, depsgraph=None):
         log(f"  [vertex-export] {o.name} → {len(verts)} × {etype} (modifiers applied)")
         o_eval.to_mesh_clear()  # free the temporary evaluated mesh
 
-    return out
-
-def collect_ambients(scene):
-    out = []
-    for o in _level_objects(scene):
-        if not (o.name.startswith("AMBIENT_") and o.type == "EMPTY"):
-            continue
-        l = o.location
-        gx, gy, gz = round(l.x, 4), round(l.z, 4), round(-l.y, 4)
-
-        if o.get("og_sound_name"):
-            # Sound emitter — placed via the Audio panel
-            radius   = float(o.get("og_sound_radius", 15.0))
-            mode     = str(o.get("og_sound_mode", "loop"))
-            snd_name = str(o["og_sound_name"]).lower().strip()
-
-            # cycle-speed: ["float", base_secs, random_range_secs]
-            # Negative base = looping (ambient-type-sound-loop) — confirmed working
-            # Positive base = one-shot interval (ambient-type-sound) — engine bug, crashes
-            if mode == "loop":
-                cycle_speed = ["float", -1.0, 0.0]
-            else:
-                cycle_speed = ["float",
-                               float(o.get("og_cycle_min", 5.0)),
-                               float(o.get("og_cycle_rnd", 2.0))]
-
-            out.append({
-                "trans":   [gx, gy, gz, radius],
-                "bsphere": [gx, gy, gz, radius],
-                "lump": {
-                    "name":        o.name[8:].lower() or "ambient",
-                    "type":        "'sound",
-                    "effect-name": ["symbol", snd_name],
-                    "cycle-speed": cycle_speed,
-                },
-            })
-        else:
-            # Legacy hint emitter — unchanged behaviour
-            out.append({
-                "trans":   [gx, gy, gz, 10.0],
-                "bsphere": [gx, gy, gz, 15.0],
-                "lump": {
-                    "name":      o.name[8:].lower() or "ambient",
-                    "type":      "'hint",
-                    "text-id":   ["enum-uint32", "(text-id fuel-cell)"],
-                    "play-mode": "'notice",
-                },
-            })
     # ── WATER_ mesh volumes ───────────────────────────────────────────────────
     # WATER_<name> meshes define swimmable water zones.  The mesh shape (any
     # scaled / rotated cube) drives the vol-control activation AABB.
@@ -1894,6 +1846,54 @@ def collect_ambients(scene):
             "lump":      lump,
         })
         log(f"  [water] {o.name}  surface={surface:.2f}m  wade={wade_depth}m  swim={swim_depth}m  bottom={bottom:.2f}m  box={xmax-xmin:.1f}x{zmax-zmin:.1f}m")
+    return out
+
+def collect_ambients(scene):
+    out = []
+    for o in _level_objects(scene):
+        if not (o.name.startswith("AMBIENT_") and o.type == "EMPTY"):
+            continue
+        l = o.location
+        gx, gy, gz = round(l.x, 4), round(l.z, 4), round(-l.y, 4)
+
+        if o.get("og_sound_name"):
+            # Sound emitter — placed via the Audio panel
+            radius   = float(o.get("og_sound_radius", 15.0))
+            mode     = str(o.get("og_sound_mode", "loop"))
+            snd_name = str(o["og_sound_name"]).lower().strip()
+
+            # cycle-speed: ["float", base_secs, random_range_secs]
+            # Negative base = looping (ambient-type-sound-loop) — confirmed working
+            # Positive base = one-shot interval (ambient-type-sound) — engine bug, crashes
+            if mode == "loop":
+                cycle_speed = ["float", -1.0, 0.0]
+            else:
+                cycle_speed = ["float",
+                               float(o.get("og_cycle_min", 5.0)),
+                               float(o.get("og_cycle_rnd", 2.0))]
+
+            out.append({
+                "trans":   [gx, gy, gz, radius],
+                "bsphere": [gx, gy, gz, radius],
+                "lump": {
+                    "name":        o.name[8:].lower() or "ambient",
+                    "type":        "'sound",
+                    "effect-name": ["symbol", snd_name],
+                    "cycle-speed": cycle_speed,
+                },
+            })
+        else:
+            # Legacy hint emitter — unchanged behaviour
+            out.append({
+                "trans":   [gx, gy, gz, 10.0],
+                "bsphere": [gx, gy, gz, 15.0],
+                "lump": {
+                    "name":      o.name[8:].lower() or "ambient",
+                    "type":      "'hint",
+                    "text-id":   ["enum-uint32", "(text-id fuel-cell)"],
+                    "play-mode": "'notice",
+                },
+            })
     return out
 
 def collect_nav_mesh_geometry(scene, level_name):
