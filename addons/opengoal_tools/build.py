@@ -91,6 +91,10 @@ def _apply_engine_patches():
     These fix vol-control lookup for custom levels (vanilla uses 'exact 0.0 but
     custom level builder stores tags at DEFAULT_RES_TIME = -1e9).
     Safe for vanilla levels — 'base ignores timestamp, finds by name only.
+
+    TODO: NEEDS LIVE TEST — confirm vol-h.gc is found and patched correctly
+    on a fresh jak-project install. Verify water volumes still work after
+    a clean recompile triggered by this patch.
     """
     patched = []
     vol_h = _data_root() / "goal_src" / "jak1" / "engine" / "geometry" / "vol-h.gc"
