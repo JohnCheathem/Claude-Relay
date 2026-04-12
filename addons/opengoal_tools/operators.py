@@ -576,7 +576,9 @@ class OG_OT_SpawnEntity(Operator):
         _prefs = bpy.context.preferences.addons.get("opengoal_tools")
         if _prefs and _prefs.preferences.preview_models:
             try:
-                _mp.attach_preview(ctx, etype, o)
+                attached = _mp.attach_preview(ctx, etype, o)
+                if not attached and ENTITY_DEFS.get(etype, {}).get("glb"):
+                    self.report({"WARNING"}, f"No GLB for {etype} — delete decompiler_out/jak1/ and re-run extractor")
             except Exception as e:
                 # Never crash the spawn operator over a preview failure
                 log(f"model_preview: {e}")
@@ -2095,7 +2097,9 @@ class OG_OT_SpawnPlatform(Operator):
         _prefs = bpy.context.preferences.addons.get("opengoal_tools")
         if _prefs and _prefs.preferences.preview_models:
             try:
-                _mp.attach_preview(ctx, etype, o)
+                attached = _mp.attach_preview(ctx, etype, o)
+                if not attached and ENTITY_DEFS.get(etype, {}).get("glb"):
+                    self.report({"WARNING"}, f"No GLB for {etype} — delete decompiler_out/jak1/ and re-run extractor")
             except Exception as e:
                 log(f"model_preview: {e}")
 
