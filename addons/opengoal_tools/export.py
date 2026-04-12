@@ -1383,7 +1383,7 @@ def collect_actors(scene, depsgraph=None):
             wade    = float(o.get("og_water_wade",    0.5))
             swim    = float(o.get("og_water_swim",    1.0))
             bottom  = float(o.get("og_water_bottom",  surface - 5.0))
-            lump["water-height"] = ["water-height", surface, wade, swim, "(water-flags)", bottom]
+            lump["water-height"] = ["water-height", surface, wade, swim, "(water-flags wt02 wt03 wt05 wt22)", bottom]
 
             # Build the 6-plane vol box from the empty's world scale.
             # NOTE: o.dimensions returns (0,0,0) for empties (no mesh geometry).
@@ -1825,7 +1825,7 @@ def collect_actors(scene, depsgraph=None):
 
         lump = {
             "name":         f"water-vol-{idx}",
-            "water-height": ["water-height", surface, wade_depth, swim_depth, "(water-flags)", bottom],
+            "water-height": ["water-height", surface, wade_depth, swim_depth, "(water-flags wt02 wt03 wt05 wt22)", bottom],
             "attack-event": f"'{attack}",
             "vol": [
                 "vector-vol",

@@ -1867,9 +1867,12 @@ Place and scale it to cover your water area — rotation is supported."""
         o.name = name
 
         # Style: wireframe blue so it doesn't obscure the level
-        o.display_type = "WIRE"
-        o.color        = (0.1, 0.4, 1.0, 0.5)
-        o.show_name    = True
+        o.display_type   = "WIRE"
+        o.color          = (0.1, 0.4, 1.0, 0.5)
+        o.show_name      = True
+        # set_invisible tells the level builder to skip this mesh entirely —
+        # it exports via extras in the GLB but generates no geometry or collision
+        o.set_invisible  = True
 
         # Lock rotation — water-vol uses an AABB, rotation has no effect in-game
         o.lock_rotation[0] = True

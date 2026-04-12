@@ -856,14 +856,13 @@ class OG_PT_SpawnWater(Panel):
         water_meshes = [o for o in _level_objects(ctx.scene)
                         if o.type == "MESH" and o.name.startswith("WATER_")]
         if water_meshes:
+            from mathutils import Vector
             layout.separator(factor=0.3)
             box = layout.box()
             box.label(text=f"{len(water_meshes)} volume(s):", icon="MESH_CUBE")
             for o in water_meshes:
                 row = box.row(align=True)
                 surface = float(o.get("og_water_surface", 0.0))
-                # Use bound_box (8 corners, local space) + matrix for cheap world AABB
-                from mathutils import Vector
                 bb = [o.matrix_world @ Vector(o.bound_box[i]) for i in range(8)]
                 w = max(c.x for c in bb) - min(c.x for c in bb)
                 d = max(c.y for c in bb) - min(c.y for c in bb)
