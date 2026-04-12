@@ -29,7 +29,7 @@ from .collections import (
     _COL_PATH_SOUND_EMITTERS, _COL_PATH_SPAWNABLE_ENEMIES,
     _COL_PATH_SPAWNABLE_PLATFORMS, _COL_PATH_SPAWNABLE_PROPS,
     _COL_PATH_SPAWNABLE_NPCS, _COL_PATH_SPAWNABLE_PICKUPS,
-    _COL_PATH_GEO_SOLID,
+    _COL_PATH_GEO_SOLID, _COL_PATH_WATER,
     _set_blender_active_collection, _LEVEL_COL_DEFAULTS,
 )
 from .export import (
@@ -56,6 +56,7 @@ from .utils import (
     _draw_platform_settings, _header_sep, _draw_entity_sub,
     _draw_wiki_preview,
 )
+from . import model_preview as _mp
 
 class OG_OT_CreateLevel(Operator):
     """Create a new level collection with default settings."""
@@ -570,7 +571,30 @@ class OG_OT_SpawnEntity(Operator):
             self.report({"INFO"}, f"Added {o.name}  (prop — idle animation only, no AI/combat)")
         else:
             self.report({"INFO"}, f"Added {o.name}")
+
+        # ---- Model preview ------------------------------------------------
+        _prefs = bpy.context.preferences.addons.get("opengoal_tools")
+        if _prefs and _prefs.preferences.preview_models:
+            try:
+                attached = _mp.attach_preview(ctx, etype, o)
+                if not attached and ENTITY_DEFS.get(etype, {}).get("glb"):
+                    self.report({"WARNING"}, f"No GLB for {etype} — delete decompiler_out/jak1/ and re-run extractor")
+            except Exception as e:
+                # Never crash the spawn operator over a preview failure
+                log(f"model_preview: {e}")
+
         return {"FINISHED"}
+
+class OG_OT_ClearPreviews(Operator):
+    bl_idname   = "og.clear_previews"
+    bl_label    = "Clear Preview Models"
+    bl_description = "Remove all enemy preview meshes from the scene"
+
+    def execute(self, ctx):
+        n = _mp.remove_all_previews(ctx.scene)
+        self.report({"INFO"}, f"Removed {n} preview mesh{'es' if n != 1 else ''}")
+        return {"FINISHED"}
+
 
 class OG_OT_MarkNavMesh(Operator):
     bl_idname = "og.mark_navmesh"
@@ -1371,6 +1395,8 @@ class OG_OT_DeleteObject(Operator):
         for o in _level_objects(ctx.scene):
             if o.type == "MESH" and o.name.startswith("VOL_"):
                 _vol_remove_link_to(o, self.obj_name)
+        # Remove preview mesh children (model previews parented to this actor)
+        _mp.remove_preview(obj)
         # Also delete associated _CAM, _ALIGN, _PIVOT, _LOOK_AT empties for cameras
         suffixes = ["_CAM", "_ALIGN", "_PIVOT", "_LOOK_AT"]
         for suf in suffixes:
@@ -1834,14 +1860,102 @@ class OG_OT_SyncWaterFromObject(Operator):
     def execute(self, ctx):
         o = bpy.data.objects.get(self.actor_name)
         if not o: return {"CANCELLED"}
-        # Blender Y maps to game Z (up axis), so use location.z for height
+        # Blender Z = game Y (up). Use location.z for the surface height.
         surface_y = round(o.location.z, 4)
         o["og_water_surface"] = surface_y
-        # Auto-set reasonable wade/swim/bottom relative to surface if not manually set
-        if "og_water_wade"   not in o: o["og_water_wade"]   = round(surface_y - 0.5, 4)
-        if "og_water_swim"   not in o: o["og_water_swim"]   = round(surface_y - 1.0, 4)
-        if "og_water_bottom" not in o: o["og_water_bottom"] = round(surface_y - 5.0, 4)
-        self.report({"INFO"}, f"Water surface set to {surface_y:.2f}m from object Z")
+        o["og_water_wade"]    = 0.5
+        o["og_water_swim"]    = 1.0
+        o["og_water_bottom"]  = round(surface_y - 5.0, 4)
+        self.report({"INFO"}, f"Water surface={surface_y:.2f}m  wade={surface_y-0.5:.2f}  swim={surface_y-1.0:.2f}  bottom={surface_y-5.0:.2f}")
+        return {"FINISHED"}
+
+
+class OG_OT_AddWaterVolume(Operator):
+    """Add a water volume mesh at the 3D cursor.
+Place and scale it to cover your water area — rotation is supported."""
+    bl_idname  = "og.add_water_volume"
+    bl_label   = "Add Water Volume"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, ctx):
+        scene = ctx.scene
+
+        # Name: WATER_0, WATER_1, etc. Count only in current level objects.
+        existing = [o for o in _level_objects(scene) if o.name.startswith("WATER_")]
+        idx  = len(existing)
+        name = f"WATER_{idx}"
+
+        # Create a cube mesh — primitive_cube_add sets it as the active object
+        bpy.ops.mesh.primitive_cube_add(size=2.0, location=ctx.scene.cursor.location)
+        o      = ctx.active_object
+        # Set name twice: Blender resolves data-block name conflicts after first set
+        o.name = name
+        o.name = name
+
+        # Style: wireframe blue so it doesn't obscure the level
+        o.display_type   = "WIRE"
+        o.color          = (0.1, 0.4, 1.0, 0.5)
+        o.show_name      = True
+        # set_invisible tells the level builder to skip this mesh entirely —
+        # it exports via extras in the GLB but generates no geometry or collision
+        o.set_invisible  = True
+
+        # Lock rotation — water-vol uses an AABB, rotation has no effect in-game
+        o.lock_rotation[0] = True
+        o.lock_rotation[1] = True
+        o.lock_rotation[2] = True
+
+        # Set default water properties from cursor Z (game Y)
+        surface_y = round(ctx.scene.cursor.location.z, 4)
+        o["og_water_surface"] = surface_y
+        o["og_water_wade"]    = 0.5   # depth below surface in meters
+        o["og_water_swim"]    = 1.0   # depth below surface in meters
+        o["og_water_bottom"]  = round(surface_y - 5.0, 4)  # absolute Y of kill floor
+        o["og_water_attack"]  = "drown"
+
+        # Link into the level collection
+        _link_object_to_sub_collection(scene, o, *_COL_PATH_WATER)
+
+        self.report({"INFO"}, f"Added {name} — scale to cover your water area, then export")
+        return {"FINISHED"}
+
+
+class OG_OT_SyncWaterFromMesh(Operator):
+    """Sync water surface height from the top of the WATER_ mesh bounding box."""
+    bl_idname  = "og.sync_water_from_mesh"
+    bl_label   = "Sync Surface from Mesh Top"
+    bl_options = {"REGISTER", "UNDO"}
+
+    mesh_name: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        import bpy
+        o = bpy.data.objects.get(self.mesh_name)
+        if not o or o.type != "MESH": return {"CANCELLED"}
+        # World-space bounding box corners
+        corners = [o.matrix_world @ v.co for v in o.data.vertices]
+        ys      = [c.z for c in corners]   # Blender Z = game Y
+        top_y   = round(max(ys), 4)
+        bot_y   = round(min(ys), 4)
+        o["og_water_surface"] = top_y
+        o["og_water_wade"]    = 0.5   # depth below surface in meters
+        o["og_water_swim"]    = 1.0   # depth below surface in meters
+        o["og_water_bottom"]  = bot_y
+        self.report({"INFO"}, f"Surface={top_y:.2f}m  wade=0.5m  swim=1.0m  bottom={bot_y:.2f}m")
+        return {"FINISHED"}
+
+
+
+class OG_OT_SetWaterAttack(Operator):
+    """Set the damage type for this water volume."""
+    bl_idname  = "og.set_water_attack"
+    bl_label   = "Set Water Attack"
+    bl_options = {"REGISTER", "UNDO"}
+    mesh_name:  bpy.props.StringProperty()
+    attack_val: bpy.props.StringProperty()
+    def execute(self, ctx):
+        o = bpy.data.objects.get(self.mesh_name)
+        if o: o["og_water_attack"] = self.attack_val
         return {"FINISHED"}
 
 
@@ -2066,6 +2180,17 @@ class OG_OT_SpawnPlatform(Operator):
             o.show_in_front = True
         _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_SPAWNABLE_PLATFORMS)
         self.report({"INFO"}, f"Added {o.name}")
+
+        # ---- Model preview ------------------------------------------------
+        _prefs = bpy.context.preferences.addons.get("opengoal_tools")
+        if _prefs and _prefs.preferences.preview_models:
+            try:
+                attached = _mp.attach_preview(ctx, etype, o)
+                if not attached and ENTITY_DEFS.get(etype, {}).get("glb"):
+                    self.report({"WARNING"}, f"No GLB for {etype} — delete decompiler_out/jak1/ and re-run extractor")
+            except Exception as e:
+                log(f"model_preview: {e}")
+
         return {"FINISHED"}
 
 

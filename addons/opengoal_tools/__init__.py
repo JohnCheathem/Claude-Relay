@@ -117,13 +117,13 @@ from .operators import (
     OG_OT_RemoveVolLink, OG_OT_AddLinkFromSelection, OG_OT_SpawnAggroTrigger,
     OG_OT_SetActorLink, OG_OT_ClearActorLink,
     OG_OT_SelectAndFrame, OG_OT_DeleteObject,
-    OG_OT_SpawnEntity,
+    OG_OT_SpawnEntity, OG_OT_ClearPreviews,
     OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
     OG_OT_SpawnCamLookAt, OG_OT_SetCamProp, OG_OT_NudgeCamFloat,
     OG_OT_NudgeFloatProp, OG_OT_NudgeIntProp,
     OG_OT_SetLauncherDest, OG_OT_ClearLauncherDest, OG_OT_AddLauncherDest,
     OG_OT_ToggleDoorFlag, OG_OT_SetDoorCP, OG_OT_ClearDoorCP,
-    OG_OT_SyncWaterFromObject, OG_OT_SetCrateType, OG_OT_SetCratePickup, OG_OT_SetCrateAmount,
+    OG_OT_SyncWaterFromObject, OG_OT_AddWaterVolume, OG_OT_SyncWaterFromMesh, OG_OT_SetWaterAttack, OG_OT_SetCrateType, OG_OT_SetCratePickup, OG_OT_SetCrateAmount,
     OG_OT_ToggleCrystalUnderwater, OG_OT_ToggleCellSkipJump,
     OG_OT_SetBridgeVariant, OG_OT_ToggleTurbineParticles,
     OG_OT_SetElevatorMode, OG_OT_SetBoneBridgeAnim, OG_OT_SetAltTask,
@@ -153,7 +153,7 @@ from .panels import (
     OG_PT_ActorActivation, OG_PT_ActorTriggerBehaviour, OG_PT_ActorNavMesh,
     OG_PT_ActorLinks, OG_PT_ActorPlatform, OG_PT_ActorCrate,
     OG_PT_ActorDarkCrystal, OG_PT_ActorFuelCell, OG_PT_ActorLauncher,
-    OG_PT_ActorSpawner, OG_PT_ActorEcoDoor, OG_PT_ActorWaterVol,
+    OG_PT_ActorSpawner, OG_PT_ActorEcoDoor, OG_PT_ActorWaterVol, OG_PT_WaterMesh, OG_PT_SpawnWater,
     OG_PT_ActorLauncherDoor, OG_PT_ActorPlatFlip, OG_PT_ActorOrbCache,
     OG_PT_ActorWhirlpool, OG_PT_ActorRopeBridge, OG_PT_ActorOrbitPlat,
     OG_PT_ActorSquarePlatform, OG_PT_ActorCaveFlamePots, OG_PT_ActorShover,
@@ -169,6 +169,7 @@ from .panels import (
 )
 
 from .utils import _preview_collections, _load_previews, _unload_previews
+from . import model_preview as _mp
 
 # bpy.utils.previews is the correct Blender API for custom images in panels.
 # icon_id is just an integer texture lookup — zero overhead in draw().
@@ -191,7 +192,7 @@ classes = (
     OG_OT_RemoveVolLink, OG_OT_AddLinkFromSelection, OG_OT_SpawnAggroTrigger,
     OG_OT_SetActorLink, OG_OT_ClearActorLink,
     OG_OT_SelectAndFrame, OG_OT_DeleteObject,
-    OG_OT_SpawnEntity,
+    OG_OT_SpawnEntity, OG_OT_ClearPreviews,
     OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
     OG_OT_SpawnCamLookAt,
     OG_OT_SetCamProp, OG_OT_NudgeCamFloat,
@@ -199,7 +200,7 @@ classes = (
     OG_OT_NudgeIntProp,
     OG_OT_SetLauncherDest, OG_OT_ClearLauncherDest, OG_OT_AddLauncherDest,
     OG_OT_ToggleDoorFlag, OG_OT_SetDoorCP, OG_OT_ClearDoorCP,
-    OG_OT_SyncWaterFromObject,
+    OG_OT_SyncWaterFromObject, OG_OT_AddWaterVolume, OG_OT_SyncWaterFromMesh, OG_OT_SetWaterAttack,
     OG_OT_SetCrateType,
     OG_OT_SetCratePickup,
     OG_OT_SetCrateAmount,
@@ -272,6 +273,8 @@ classes = (
     OG_PT_ActorSpawner,
     OG_PT_ActorEcoDoor,
     OG_PT_ActorWaterVol,
+    OG_PT_WaterMesh,
+    OG_PT_SpawnWater,
     OG_PT_ActorLauncherDoor,
     OG_PT_ActorPlatFlip,
     OG_PT_ActorOrbCache,
@@ -309,6 +312,7 @@ classes = (
 
 def register():
     _load_previews()
+    _mp.register_handler()
     for cls in classes:
         try:
             bpy.utils.unregister_class(cls)
@@ -367,6 +371,7 @@ def register():
 
 def unregister():
     _unload_previews()
+    _mp.unregister_handler()
     bpy.types.MATERIAL_PT_custom_props.remove(_draw_mat)
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

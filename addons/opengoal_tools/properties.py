@@ -45,12 +45,19 @@ class OGPreferences(AddonPreferences):
         subtype="DIR_PATH",
         default="",
     )
+    preview_models: BoolProperty(
+        name="Preview Models",
+        description="Automatically show the enemy's game model as a viewport stand-in when spawning",
+        default=True,
+    )
     def draw(self, ctx):
         layout = self.layout
         layout.label(text="EXE folder — contains gk / goalc executables:")
         layout.prop(self, "exe_path", text="")
         layout.label(text="Data folder — contains data/goal_src (e.g. your jak-project folder):")
         layout.prop(self, "data_path", text="")
+        layout.separator()
+        layout.prop(self, "preview_models")
 
 
 
