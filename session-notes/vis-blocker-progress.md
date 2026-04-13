@@ -131,4 +131,8 @@ a game-task or global boolean. Not implemented.
 
 - 2026-04-13 (Session 1): Research + full implementation complete. 466 lines added,
   all 7 modified files pass py_compile. Committed and pushed to feature/vis-blocker.
-  Ready for in-game testing.
+- 2026-04-13 (Session 2): Blender 4.4.3 headless test suite written and run.
+  **16/16 tests pass.** Test script at `scratch/test_vis_blocker.py`.
+  All logic verified: classify, name helpers, enum items, collect, hidden-at-start,
+  is_linkable, trigger actors (hide/show/toggle), jsonc output, gc emission,
+  GLB exclusion, regression (camera-marker), multi-blocker. Ready for in-game test.
