@@ -102,7 +102,7 @@ from .build import (
 from .properties import (
     OGPreferences, OGProperties,
     OGLumpRow, OG_OT_AddLumpRow, OG_OT_RemoveLumpRow,
-    OG_UL_LumpRows, OGActorLink, OGVolLink,
+    OG_UL_LumpRows, OGActorLink, OGVolLink, OGAuditResult,
 )
 from .operators import (
     _draw_mat,
@@ -143,6 +143,7 @@ from .panels import (
     OG_PT_Level, OG_PT_SpawnLevelFlow, OG_PT_LevelManagerSub,
     OG_PT_CollectionProperties, OG_PT_DisableExport,
     OG_PT_CleanSub, OG_PT_LightBakingSub, OG_PT_Music,
+    OG_OT_RunAudit, OG_OT_AuditSelectObject, OG_PT_LevelAudit,
     OG_PT_Spawn, OG_PT_SpawnSearch, OG_PT_SpawnLimitSearch, OG_OT_SearchSelectEntity,
     OG_PT_VertexExport, OG_OT_AssignVertexExport, OG_OT_ClearVertexExport,
     OG_PT_SpawnEnemies, OG_PT_SpawnPlatforms,
@@ -183,6 +184,7 @@ classes = (
     OGLumpRow,
     OGActorLink,
     OGVolLink,
+    OGAuditResult,
     OGPreferences, OGProperties,
     OG_OT_AddLumpRow, OG_OT_RemoveLumpRow, OG_OT_UseLumpRef,
     OG_UL_LumpRows,
@@ -238,6 +240,9 @@ classes = (
     OG_PT_CleanSub,
     OG_PT_LightBakingSub,
     OG_PT_Music,
+    OG_OT_RunAudit,
+    OG_OT_AuditSelectObject,
+    OG_PT_LevelAudit,
     # Spawn group
     OG_PT_Spawn,
     OG_OT_SearchSelectEntity,
@@ -321,6 +326,10 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.og_props = PointerProperty(type=OGProperties)
 
+    # Audit results — registered after OGAuditResult is in classes tuple.
+    bpy.types.Scene.og_audit_results       = bpy.props.CollectionProperty(type=OGAuditResult)
+    bpy.types.Scene.og_audit_results_index = bpy.props.IntProperty(name="Active Audit Result", default=0)
+
     bpy.types.Material.set_invisible    = bpy.props.BoolProperty(name="Invisible")
     bpy.types.Material.set_collision    = bpy.props.BoolProperty(name="Apply Collision Properties")
     bpy.types.Material.ignore           = bpy.props.BoolProperty(name="ignore")
@@ -377,6 +386,10 @@ def unregister():
         bpy.utils.unregister_class(cls)
     if hasattr(bpy.types.Scene, "og_props"):
         del bpy.types.Scene.og_props
+    if hasattr(bpy.types.Scene, "og_audit_results"):
+        del bpy.types.Scene.og_audit_results
+    if hasattr(bpy.types.Scene, "og_audit_results_index"):
+        del bpy.types.Scene.og_audit_results_index
     for a in ("set_invisible","set_collision","ignore","noedge","noentity",
               "nolineofsight","nocamera","collide_material","collide_event","collide_mode"):
         try: delattr(bpy.types.Material, a)

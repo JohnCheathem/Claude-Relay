@@ -292,3 +292,47 @@ Auto-patches `vol-h.gc` on every export+build (idempotent). Added to `_bg_build`
 - [ ] Confirm build doesn't fail if `vol-h.gc` path doesn't exist (graceful skip)
 
 **Branch:** feature/vol-patch — do NOT merge to main until tested.
+
+---
+
+## Level Audit — feature/level-audit branch
+
+### Status: In progress — awaiting first test in Blender
+
+### Branch: feature/level-audit
+### New file: addons/opengoal_tools/audit.py
+
+### What was built
+
+**audit.py** — standalone check module, 9 checks:
+1. `check_tpage_budget` — warns if >2 non-global tpage groups in use; INFO at exactly 2
+2. `check_navmesh_links` — ERROR if nav-enemy has no navmesh link or link target missing
+3. `check_missing_paths` — ERROR if needs_path/needs_pathb actor has no waypoints
+4. `check_actor_links` — WARNING for unset required link slots; ERROR for missing link targets
+5. `check_volumes` — WARNING for 0-link volumes; ERROR for broken link targets
+6. `check_spawn_points` — ERROR if no SPAWN_; WARNING if multiple
+7. `check_duplicate_names` — ERROR if any ACTOR_ names are duplicated
+8. `check_camera_targets` — WARNING if CAMERA_-prefixed link target isn't a Camera object
+9. `check_scene_summary` — INFO: actor count by category, tpage group breakdown
+
+`run_audit(scene)` → sorted list of issue dicts by severity (ERROR first).
+
+**properties.py** — added `OGAuditResult` PropertyGroup (severity, message, obj_name)
+
+**__init__.py** — `og_audit_results` CollectionProperty + `og_audit_results_index` on Scene
+
+**panels.py** — `OG_PT_LevelAudit` sub-panel under Level (DEFAULT_CLOSED):
+- "Run Audit" button triggers `OG_OT_RunAudit`
+- Results displayed as boxes with severity icon, word-wrapped message
+- Each result with an obj_name shows a select button → `OG_OT_AuditSelectObject` (deselects all, selects+frames target in viewport)
+- Panel header shows error/warning count badges when results exist
+
+### Test checklist
+- [ ] Addon installs without error
+- [ ] Level Audit sub-panel appears under Level panel
+- [ ] Run Audit button populates results
+- [ ] Errors sort before warnings before info
+- [ ] Select button on a result jumps to correct object in viewport
+- [ ] Results clear and repopulate correctly on second run
+- [ ] Empty scene (no actors) shows spawn-point error + summary info
+

@@ -48,6 +48,7 @@ from .utils import (
     _preview_collections, _load_previews, _unload_previews,
 )
 from . import model_preview as _mp
+from .audit import run_audit
 
 class OG_PT_Level(Panel):
     bl_label       = "⚙  Level"
@@ -480,6 +481,142 @@ class OG_PT_Music(Panel):
         n_common = len(SBK_SOUNDS.get("common", []))
         n_level  = len(set(SBK_SOUNDS.get(b1, [])) | set(SBK_SOUNDS.get(b2, [])))
         box2.label(text=f"{n_common} common  +  {n_level} level  =  {n_common + n_level} available", icon="INFO")
+
+
+# ===========================================================================
+# LEVEL AUDIT  (sub-panel under Level)
+# ===========================================================================
+
+class OG_OT_RunAudit(Operator):
+    """Scan the active level for configuration errors, warnings, and info"""
+    bl_idname  = "og.run_audit"
+    bl_label   = "Run Audit"
+    bl_options = {"REGISTER"}
+
+    def execute(self, ctx):
+        scene   = ctx.scene
+        results = scene.og_audit_results
+        results.clear()
+        scene.og_audit_results_index = 0
+
+        issues = run_audit(scene)
+        for issue in issues:
+            item          = results.add()
+            item.severity = issue["severity"]
+            item.message  = issue["message"]
+            item.obj_name = issue.get("obj_name") or ""
+
+        self.report({"INFO"}, f"Audit complete — {len(issues)} issue(s) found.")
+        return {"FINISHED"}
+
+
+class OG_OT_AuditSelectObject(Operator):
+    """Select and frame the object linked to this audit result"""
+    bl_idname  = "og.audit_select_object"
+    bl_label   = "Select"
+    bl_options = {"REGISTER", "UNDO"}
+
+    obj_name: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        obj = ctx.scene.objects.get(self.obj_name)
+        if obj is None:
+            self.report({"WARNING"}, f"Object '{self.obj_name}' not found.")
+            return {"CANCELLED"}
+        for o in ctx.scene.objects:
+            o.select_set(False)
+        obj.select_set(True)
+        ctx.view_layer.objects.active = obj
+        for area in ctx.screen.areas:
+            if area.type == "VIEW_3D":
+                with ctx.temp_override(area=area, region=area.regions[-1]):
+                    bpy.ops.view3d.view_selected()
+                break
+        return {"FINISHED"}
+
+
+_AUDIT_ICONS = {
+    "ERROR":   "ERROR",
+    "WARNING": "ERROR",
+    "INFO":    "INFO",
+}
+
+_AUDIT_SEVERITY_LABEL = {
+    "ERROR":   "🔴",
+    "WARNING": "🟡",
+    "INFO":    "ℹ",
+}
+
+
+class OG_PT_LevelAudit(Panel):
+    bl_label       = "🔍  Level Audit"
+    bl_idname      = "OG_PT_level_audit"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_level"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw_header(self, ctx):
+        results  = ctx.scene.og_audit_results
+        errors   = sum(1 for r in results if r.severity == "ERROR")
+        warnings = sum(1 for r in results if r.severity == "WARNING")
+        if errors:
+            self.layout.label(text=f"{errors}E {warnings}W", icon="ERROR")
+        elif warnings:
+            self.layout.label(text=f"{warnings}W", icon="ERROR")
+
+    def draw(self, ctx):
+        layout  = self.layout
+        scene   = ctx.scene
+        results = scene.og_audit_results
+
+        layout.operator("og.run_audit", text="Run Audit", icon="VIEWZOOM")
+
+        if not results:
+            layout.label(text="Press Run Audit to check the level.", icon="INFO")
+            return
+
+        errors   = sum(1 for r in results if r.severity == "ERROR")
+        warnings = sum(1 for r in results if r.severity == "WARNING")
+        infos    = sum(1 for r in results if r.severity == "INFO")
+
+        row = layout.row()
+        row.enabled = False
+        row.label(text=f"{errors} error(s)  ·  {warnings} warning(s)  ·  {infos} info")
+
+        layout.separator(factor=0.5)
+
+        for r in results:
+            box    = layout.box()
+            header = box.row(align=True)
+            icon   = _AUDIT_ICONS.get(r.severity, "DOT")
+            prefix = _AUDIT_SEVERITY_LABEL.get(r.severity, "")
+            header.label(text=f"{prefix}  {r.severity}", icon=icon)
+            if r.obj_name:
+                op = header.operator("og.audit_select_object", text="", icon="RESTRICT_SELECT_OFF")
+                op.obj_name = r.obj_name
+
+            # Word-wrap message into ~55-char lines
+            col   = box.column(align=True)
+            col.scale_y = 0.85
+            words = r.message.split(" ")
+            line  = ""
+            for word in words:
+                test = (line + " " + word).strip()
+                if len(test) > 55 and line:
+                    col.label(text=line)
+                    line = word
+                else:
+                    line = test
+            if line:
+                col.label(text=line)
+
+            if r.obj_name:
+                sub = box.row()
+                sub.enabled = False
+                sub.scale_y = 0.75
+                sub.label(text=f"  {r.obj_name}", icon="OBJECT_DATA")
 
 
 # ===========================================================================

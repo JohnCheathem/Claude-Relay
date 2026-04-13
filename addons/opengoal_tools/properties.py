@@ -287,3 +287,20 @@ class OGVolLink(PropertyGroup):
         default="cue-chase",
         description="Event sent to the enemy on volume enter (nav-enemies only — ignored for cameras/checkpoints)",
     )
+
+
+class OGAuditResult(PropertyGroup):
+    """One issue produced by the Level Audit.
+    Stored as og_audit_results CollectionProperty on the Scene.
+    """
+    severity: EnumProperty(
+        name="Severity",
+        items=[
+            ("ERROR",   "Error",   "Will break export or crash in-game"),
+            ("WARNING", "Warning", "Probably wrong, worth checking"),
+            ("INFO",    "Info",    "Informational"),
+        ],
+        default="INFO",
+    )
+    message:  StringProperty(name="Message",  default="")
+    obj_name: StringProperty(name="Object",   default="")
