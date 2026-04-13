@@ -352,14 +352,20 @@ so it picks up any new actor types, properties, or prefixes added by those featu
 2. Checkout feature/level-audit, rebase/merge from updated main
 3. Audit any new actor types added by doors/other branches:
    - New etypes in ENTITY_DEFS → check if any need navmesh/path/link rules
-   - New object prefixes (e.g. door-related empties) → add prefix checks if needed
+   - New object prefixes → add prefix checks if needed
    - New required lump slots in ACTOR_LINK_DEFS → already covered by check_actor_links
 4. Run test suite again against updated addon
 5. Merge to main when ready
 
-**What's already solid (no changes needed):**
+**What's already solid (no changes needed for standard actors):**
 - All 9 checks are data-driven from ENTITY_DEFS / ACTOR_LINK_DEFS / NAV_UNSAFE_TYPES
   so new actors added to those tables are automatically covered
 - Only manual additions needed: new object prefixes or new structural rules
   that don't come from existing data tables
+
+**Audit contract (enforced going forward):**
+- Every new etype in ENTITY_DEFS must include an `"audit"` block — see CONTRIBUTING.md
+- Every new structural dependency must register a rule in audit_registry.py
+- Audit updates must be in the same commit as the feature — not deferred
+- Full contract in: CLAUDE-SKILLS.md (§ Addon Audit Contract) and CONTRIBUTING.md
 
