@@ -408,3 +408,30 @@ calling Blender's addon operators — same code path as the user's real workflow
 - Does `jng-iris-door` actually work after the remap fix? Need live test.
 - Does `basebutton` spawn without crash? It should (nav-mesh-connect is safe with no mesh)
 
+
+---
+
+## v1.7.0 — Door System (feature/doors → main)
+
+### Status: MERGED TO MAIN ✅
+
+### What shipped
+- `jng-iris-door`, `sidedoor`, `rounddoor`, `sun-iris-door`, `basebutton` entity defs + DGO mappings
+- eco-door etype crash fix (remaps to jng-iris-door at export — abstract base has no skeleton)
+- eco-door flags bits fixed (auto-close=4, one-way=8, was wrong 1/2)
+- ecdf00 auto-set when state-actor linked (door locks until button pressed)
+- starts_open toggle (perm-status=64, unverified — may not be read by engine)
+- New panels: OG_PT_ActorEcoDoor (expanded), OG_PT_ActorSunIrisDoor, OG_PT_ActorBaseButton
+- **Global actor link name fix**: was writing Blender object name, now writes entity lump name
+
+### Wiring pattern that works
+- Place ACTOR_eco-door + ACTOR_basebutton
+- Select eco-door → Actor Links → state-actor → basebutton
+- Export: door gets flags=1 (ecdf00), state-actor="basebutton-N"
+- In game: door spawns locked, button press unlocks it, blue eco opens it
+- Add One Way to skip blue eco requirement
+
+### Unverified
+- starts_open (perm-status lump may not be engine-readable)
+- Trigger volume → sun-iris-door (event name mismatch: notify vs trigger)
+- rounddoor, sidedoor live spawn test
