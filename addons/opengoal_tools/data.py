@@ -2778,7 +2778,15 @@ def _build_actor_link_lumps(obj, etype):
     if links:
         for entry in links:
             if entry.target_name and entry.lump_key in by_key:
-                by_key[entry.lump_key][entry.slot_index] = entry.target_name
+                # target_name is the Blender object name (e.g. "ACTOR_basebutton_0").
+                # The engine resolves links by the entity's lump 'name field, which
+                # the addon sets as "{etype}-{uid}" (e.g. "basebutton-0").
+                # Convert: strip "ACTOR_" prefix, replace first "_" with "-".
+                raw = entry.target_name
+                if raw.startswith("ACTOR_"):
+                    raw = raw[6:]           # strip "ACTOR_"
+                    raw = raw.replace("_", "-", 1)  # first _ → - : "basebutton-0"
+                by_key[entry.lump_key][entry.slot_index] = raw
 
     result = {}
     for lkey, slot_map in by_key.items():
