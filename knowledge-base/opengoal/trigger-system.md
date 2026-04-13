@@ -208,7 +208,49 @@ The JSONC `game_task` field on an actor tells the engine which `game-task` slot 
 
 ---
 
-## 7. State Trigger — Planned Feature
+## 7. Game-Task Slots — Full Analysis
+
+### The hard limit is 116 — but it's patchable
+
+`task-perm-list` is allocated as exactly 116 entries at startup (`game-info.gc` line 673). The `get-task-control` function hard-gates on `>= 116` and returns `*null-task-control*` for anything out of range. The save file serializer also hardcodes 116 loops.
+
+**To add new task IDs beyond 116 you would need to:**
+1. Add entries to `game-task-h.gc` (uint8 allows up to 255)
+2. Extend `*task-controls*` array in `task-control.gc`
+3. Change the `116` literal in `game-info.gc` allocation
+4. Change the `116` literal in `get-task-control` bounds check
+5. Change the `116` literal in `game-save.gc` serialization
+
+This is doable in an OpenGOAL fork but is risky for save compatibility across multiple custom level projects. Not recommended unless you control the full build.
+
+### The two genuinely safe cut-content slots
+
+A full cross-reference of every `game-task` enum value against all non-infrastructure source files (`levels/`, `engine/common-obs/`, `engine/ui/`) reveals exactly two that are plumbed into all the engine infrastructure (task-control, progress screen, debug menu, autosplit) but have **zero references in any actual level or entity code**:
+
+| Slot | ID | Progress screen label | Safe to repurpose? |
+|---|---|---|---|
+| `village3-extra1` | 74 | "hidden-power-cell" (Village 3 section) | ✅ Yes — fully cut, no entity uses it |
+| `ogre-secret` | 110 | "hidden-power-cell" (Ogre section) | ✅ Yes — fully cut, no entity uses it |
+
+Both have complete `task-control` entries (hint/intro/reminder/resolution stages with `#t` conditions), progress screen entries, debug menu entries, and autosplit tracking. The content was fully scaffolded then cut. The task ID, its perm slot, its progress screen position, and its save file bit are all reserved and working — just no entity ever sets them.
+
+**`red-eggtop` (106) looks unused but is NOT safe** — it gates red eco vents in `collectables.gc`. Repurposing it would break eco vent blocking logic in Ogre/Volcano areas.
+
+### So yes — only two task slots, but they're enough for most designs
+
+Each slot can gate one completion event. But a single task slot can be checked by **multiple doors/triggers simultaneously** — all of them poll the same bit. So one power cell unlocks as many things as you want. For more complex multi-step progression, use the `perm-list` system (entity AIDs, 4096 slots) instead of `task-perm-list`.
+
+### Using entity AIDs as unlimited gating slots
+
+The `perm-list` in `*game-info*` is allocated at **4096 entries** and is keyed by AID (actor ID), not by `game-task`. Every actor in your level already has an AID. When an actor's `complete` perm bit is set, it persists across sessions via `copy-perms-from-level!` / `copy-perms-to-level!`.
+
+This means: **any actor can be a gate.** If a power cell (AID 5) is collected, its `complete` bit is set in `perm-list`. A custom trigger that reads `(lookup-entity-perm-by-aid *game-info* 5)` and checks its `complete` bit can fire without touching `task-perm-list` at all. This is effectively unlimited — you get 4096 persistent per-actor state bits per playthrough.
+
+The tradeoff is that AID-based gating requires knowing AIDs at write time (they're assigned at export), and requires GOAL code that explicitly walks `perm-list`. The two `game-task` slots are simpler to use from JSONC alone.
+
+---
+
+## 8. State Trigger — Planned Feature
 
 **Not yet implemented.** Tracked for future addon development.
 
@@ -234,7 +276,7 @@ The `STATE_TRIGGER_` actor would be a custom GOAL entity (templated `.gc` file g
 
 ---
 
-## 8. Actor Spawning Lifecycle
+## 9. Actor Spawning Lifecycle
 
 Understanding when actors are born/killed matters for trigger design.
 
@@ -255,7 +297,7 @@ Actor process runs until:
 
 ---
 
-## 9. What the Addon Exports for Each Actor
+## 10. What the Addon Exports for Each Actor
 
 For reference, the JSONC fields relevant to triggering:
 
@@ -279,7 +321,7 @@ The `game_task` field at the top level tells the engine which task slot to mark 
 
 ---
 
-## 10. Confirmed Working Combinations (April 2026)
+## 11. Confirmed Working Combinations (April 2026)
 
 | Source | Target | Link used | Status |
 |---|---|---|---|
@@ -293,7 +335,7 @@ The `game_task` field at the top level tells the engine which task slot to mark 
 
 ---
 
-## 11. Open Questions
+## 12. Open Questions
 
 **⚠ Checkpoint-gated spawns** — can we set an actor's perm `dead` bit before level load to prevent it spawning until a condition is met? Needs testing via nREPL.
 
