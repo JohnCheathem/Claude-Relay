@@ -295,77 +295,143 @@ Auto-patches `vol-h.gc` on every export+build (idempotent). Added to `_bg_build`
 
 ---
 
-## Level Audit — feature/level-audit branch
+## feature/doors — Door System (active)
 
-### Status: In progress — awaiting first test in Blender
+### Status: feature/doors — pushed, awaiting test
+### Branch: feature/doors
+### Working files: addons/opengoal_tools/data.py, export.py, panels.py, __init__.py
 
-### Branch: feature/level-audit
-### New file: addons/opengoal_tools/audit.py
+---
 
-### What was built
+### What was researched (jak-project source)
 
-**audit.py** — standalone check module, 9 checks:
-1. `check_tpage_budget` — warns if >2 non-global tpage groups in use; INFO at exactly 2
-2. `check_navmesh_links` — ERROR if nav-enemy has no navmesh link or link target missing
-3. `check_missing_paths` — ERROR if needs_path/needs_pathb actor has no waypoints
-4. `check_actor_links` — WARNING for unset required link slots; ERROR for missing link targets
-5. `check_volumes` — WARNING for 0-link volumes; ERROR for broken link targets
-6. `check_spawn_points` — ERROR if no SPAWN_; WARNING if multiple
-7. `check_duplicate_names` — ERROR if any ACTOR_ names are duplicated
-8. `check_camera_targets` — WARNING if CAMERA_-prefixed link target isn't a Camera object
-9. `check_scene_summary` — INFO: actor count by category, tpage group breakdown
+**Door types documented:**
+- `eco-door` (base) — opens on proximity + blue eco OR perm-complete OR state-actor link OR one-way exit side
+- `sun-iris-door` — opens via `'trigger` event OR proximity lump; most useful for custom levels
+- `launcherdoor` — opens when Jak is on launch-jump surface below thresh-y
+- `basebutton` — flop-attack (ground pound) to press; sends `'trigger` to alt-actor on press
+- `plat-button` — floor pressure plate; path-driven, sets perm-complete
 
-`run_audit(scene)` → sorted list of issue dicts by severity (ERROR first).
+**Key finding — why eco-door never worked:**
+- Requires blue eco OR perm-complete. Custom levels never have blue eco nearby.
+- Flag bits were WRONG: `auto-close=1, one-way=2` should be `auto-close=4, one-way=8`
 
-**properties.py** — added `OGAuditResult` PropertyGroup (severity, message, obj_name)
+**sun-iris-door is the recommended door for custom levels** — responds to `'trigger` from trigger volumes or basebutton alt-actor link.
 
-**__init__.py** — `og_audit_results` CollectionProperty + `og_audit_results_index` on Scene
+### Changes made
 
-**panels.py** — `OG_PT_LevelAudit` sub-panel under Level (DEFAULT_CLOSED):
-- "Run Audit" button triggers `OG_OT_RunAudit`
-- Results displayed as boxes with severity icon, word-wrapped message
-- Each result with an obj_name shows a select button → `OG_OT_AuditSelectObject` (deselects all, selects+frames target in viewport)
-- Panel header shows error/warning count badges when results exist
+#### data.py
+- Added `sun-iris-door` entity def + DGO mapping (`sun-iris-door.o`)
+- Added `basebutton` entity def + DGO mapping (`basebutton.o`)
+- Updated `LUMP_REFERENCE` for all door types and basebutton
+- Added `basebutton` → `alt-actor` slot in `ACTOR_LINK_DEFS` (targets door)
+- Updated `eco-door` ACTOR_LINK_DEFS comment
 
-### Test checklist
-- [ ] Addon installs without error
-- [ ] Level Audit sub-panel appears under Level panel
-- [ ] Run Audit button populates results
-- [ ] Errors sort before warnings before info
-- [ ] Select button on a result jumps to correct object in viewport
-- [ ] Results clear and repopulate correctly on second run
-- [ ] Empty scene (no actors) shows spawn-point error + summary info
+#### export.py
+- **FIXED eco-door flags bits**: `auto-close=4` (was 1), `one-way=8` (was 2)
+- Added `starts_open` export: emits `perm-status` lump so door spawns pre-opened
+- Added `sun-iris-door` proximity + timeout export
+- Added `basebutton` timeout export
+
+#### panels.py
+- Expanded `OG_PT_ActorEcoDoor`: open-condition hint box explaining blue eco requirement; new Starts Open toggle
+- New `OG_PT_ActorSunIrisDoor`: proximity toggle + timeout nudger
+- New `OG_PT_ActorBaseButton`: timeout nudger + usage hint
+
+#### __init__.py
+- Registered `OG_PT_ActorSunIrisDoor` and `OG_PT_ActorBaseButton`
+
+### Door wiring patterns (for testing)
+
+**Pattern 1 — Always-open eco-door:**
+- Place `ACTOR_eco-door`, enable "Starts Open" in panel → door spawns open
+
+**Pattern 2 — Proximity iris door:**
+- Place `ACTOR_sun-iris-door`, enable "Open by Proximity" → opens when Jak walks up
+
+**Pattern 3 — Button → iris door:**
+- Place `ACTOR_basebutton` + `ACTOR_sun-iris-door`
+- In basebutton's ActorLinks panel: set alt-actor 0 = the sun-iris-door
+- Ground-pound button → door opens
+
+**Pattern 4 — Trigger volume → iris door:**
+- Place `ACTOR_sun-iris-door` (proximity OFF)
+- Add a VOL_ trigger volume, link it to the sun-iris-door via vol link system
+- (Note: trigger vol currently sends `'notify` not `'trigger` — may need engine check)
+
+**Pattern 5 — Blue eco door (vanilla):**
+- Place `ACTOR_eco-door` with no extra settings
+- Door opens only when Jak has blue eco and walks close
+
+### Known open questions
+
+- [ ] Does trigger volume send `'trigger` or `'notify` to linked actors? If `'notify`, sun-iris-door won't respond (it listens for `'trigger`). Need to verify event name in aggro-trigger GOAL code.
+- [ ] `sun-iris-door.o` — confirm this is the correct .o filename in the DGO system (may be `sunken-obs.o` instead)
+- [ ] `basebutton.o` — confirm correct .o filename (may be in `GAME.CGO` already as `basebutton.o`)
+- [ ] Test `perm-status` lump approach for starts_open — engine may not read this lump in init path
 
 
 ---
 
-## Level Audit — PAUSED (waiting on other branches)
+## Headless Test Environment (session 2026-04-13)
 
-**Status:** feature/level-audit — built, tested (27/27), ready but PAUSED
+### Toolchain setup (persists in /tmp until VM resets)
+- OpenGOAL v0.3.1 extracted to `/tmp/opengoal/`
+- iso_data extracted to `/tmp/iso_extract/iso_data/` and symlinked into toolchain
+- Decompiler already run — `decompiler_out/` exists and tpage-dir.txt present
+- Blender 4.4.3 at `/tmp/blender-4.4.3-linux-x64/blender`
+- Addon installed at `/root/.config/blender/4.4/scripts/addons/opengoal_tools/` (feature/doors)
 
-**Reason for pause:** Need to wait for feature/doors and other active branches to
-merge to main first. Level Audit should be branched from main after those merges
-so it picks up any new actor types, properties, or prefixes added by those features.
+### Rebuild steps if VM resets
+```bash
+# Reassemble toolchain
+cd /home/claude/Claude-Relay/blender
+cat blender-4_4_3-linux-x64.part_a* > /tmp/blender.tar.xz && tar -xf /tmp/blender.tar.xz -C /tmp/
+# OpenGOAL — user must re-upload opengoal-linux-v0.3.1.tar.gz and iso_data parts
+# Then: mkdir /tmp/opengoal && tar -xzf <upload> -C /tmp/opengoal
+# Then: unrar x iso_data_part1.rar /tmp/iso_extract/ (parts 1-3)
+# Then: ln -s /tmp/iso_extract/iso_data /tmp/opengoal/data/iso_data
+# Decompiler: cd /tmp/opengoal && ./extractor --decompile --proj-path data/ data/iso_data/jak1/
+```
 
-**Resume plan:**
-1. Wait for feature/doors + other active branches to merge to main
-2. Checkout feature/level-audit, rebase/merge from updated main
-3. Audit any new actor types added by doors/other branches:
-   - New etypes in ENTITY_DEFS → check if any need navmesh/path/link rules
-   - New object prefixes → add prefix checks if needed
-   - New required lump slots in ACTOR_LINK_DEFS → already covered by check_actor_links
-4. Run test suite again against updated addon
-5. Merge to main when ready
+### Test approach
+Use Blender headlessly to generate the level JSONC via the addon's export operator,
+then compile with goalc, then boot with gk under Xvfb. All driven from Python scripts
+calling Blender's addon operators — same code path as the user's real workflow.
 
-**What's already solid (no changes needed for standard actors):**
-- All 9 checks are data-driven from ENTITY_DEFS / ACTOR_LINK_DEFS / NAV_UNSAFE_TYPES
-  so new actors added to those tables are automatically covered
-- Only manual additions needed: new object prefixes or new structural rules
-  that don't come from existing data tables
+### Door crash root cause found
+- `eco-door` is abstract — no skeleton init in base `eco-door-method-25` (returns 0)
+- Exporting `etype: "eco-door"` causes null skeleton dereference in `door-closed` state
+- Fix: remap `eco-door` → `jng-iris-door` at export time (done in feature/doors)
 
-**Audit contract (enforced going forward):**
-- Every new etype in ENTITY_DEFS must include an `"audit"` block — see CONTRIBUTING.md
-- Every new structural dependency must register a rule in audit_registry.py
-- Audit updates must be in the same commit as the feature — not deferred
-- Full contract in: CLAUDE-SKILLS.md (§ Addon Audit Contract) and CONTRIBUTING.md
+### Open question
+- Does `jng-iris-door` actually work after the remap fix? Need live test.
+- Does `basebutton` spawn without crash? It should (nav-mesh-connect is safe with no mesh)
 
+
+---
+
+## v1.7.0 — Door System (feature/doors → main)
+
+### Status: MERGED TO MAIN ✅
+
+### What shipped
+- `jng-iris-door`, `sidedoor`, `rounddoor`, `sun-iris-door`, `basebutton` entity defs + DGO mappings
+- eco-door etype crash fix (remaps to jng-iris-door at export — abstract base has no skeleton)
+- eco-door flags bits fixed (auto-close=4, one-way=8, was wrong 1/2)
+- ecdf00 auto-set when state-actor linked (door locks until button pressed)
+- starts_open toggle (perm-status=64, unverified — may not be read by engine)
+- New panels: OG_PT_ActorEcoDoor (expanded), OG_PT_ActorSunIrisDoor, OG_PT_ActorBaseButton
+- **Global actor link name fix**: was writing Blender object name, now writes entity lump name
+
+### Wiring pattern that works
+- Place ACTOR_eco-door + ACTOR_basebutton
+- Select eco-door → Actor Links → state-actor → basebutton
+- Export: door gets flags=1 (ecdf00), state-actor="basebutton-N"
+- In game: door spawns locked, button press unlocks it, blue eco opens it
+- Add One Way to skip blue eco requirement
+
+### Unverified
+- starts_open (perm-status lump may not be engine-readable)
+- Trigger volume → sun-iris-door (event name mismatch: notify vs trigger)
+- rounddoor, sidedoor live spawn test

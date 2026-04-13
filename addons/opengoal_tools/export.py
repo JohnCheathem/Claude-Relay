@@ -1175,6 +1175,12 @@ def collect_actors(scene, depsgraph=None):
     for o in _canonical_actor_objects(scene, objects=level_objs):
         p = o.name.split("_", 2)
         etype, uid = p[1], p[2]
+
+        # eco-door is abstract (no skeleton, no art group). Remap to its
+        # concrete default subclass so the engine gets a working type with a
+        # real initialize-skeleton call.
+        if etype == "eco-door":
+            etype = "jng-iris-door"
         l = o.location
         gx, gy, gz = round(l.x, 4), round(l.z, 4), round(-l.y, 4)
 
@@ -1337,13 +1343,47 @@ def collect_actors(scene, depsgraph=None):
         # ── Eco-door: flags lump ─────────────────────────────────────────────
         # eco-door reads a 'flags lump (eco-door-flags bitfield).
         # auto-close = bit 0, one-way = bit 1.
-        if etype == "eco-door":
-            auto_close = bool(o.get("og_door_auto_close", False))
-            one_way    = bool(o.get("og_door_one_way",    False))
-            flags = (1 if auto_close else 0) | (2 if one_way else 0)
+        if etype in ("eco-door", "jng-iris-door", "sidedoor", "rounddoor"):
+            # eco-door-flags bitfield: ecdf00=1, ecdf01=2, auto-close=4, one-way=8
+            # ecdf00: door is LOCKED when state-actor task is NOT complete (button not pressed)
+            # ecdf01: door is LOCKED when state-actor task IS complete (unusual, ignore)
+            auto_close  = bool(o.get("og_door_auto_close",  False))
+            one_way     = bool(o.get("og_door_one_way",     False))
+            starts_open = bool(o.get("og_door_starts_open", False))
+
+            # If a state-actor is linked, auto-set ecdf00 so the door locks until
+            # the state-actor's perm-complete is set (i.e. the button is pressed).
+            # Without ecdf00, locked=False from the start and the button has no effect.
+            from opengoal_tools.data import _actor_get_link
+            has_state_actor = bool(_actor_get_link(o, "state-actor", 0))
+            ecdf00 = 1 if has_state_actor else 0
+
+            flags = ecdf00 | (4 if auto_close else 0) | (8 if one_way else 0)
             if flags:
                 lump["flags"] = ["uint32", flags]
-                log(f"  [eco-door flags] {o.name}  auto-close={auto_close}  one-way={one_way}")
+            # starts_open: pre-set perm-complete so door spawns already open
+            if starts_open:
+                lump["perm-status"] = ["uint32", 64]  # entity-perm-status complete = bit 6
+            log(f"  [eco-door flags] {o.name}  auto-close={auto_close}  one-way={one_way}  starts-open={starts_open}  state-actor-lock={bool(ecdf00)}  flags=0x{flags:02x}")
+
+        # ── Sun-iris-door: proximity + timeout lumps ─────────────────────────
+        # Without 'proximity' the door only opens via 'trigger event (trigger vol or button).
+        if etype == "sun-iris-door":
+            proximity = bool(o.get("og_door_proximity", False))
+            timeout   = float(o.get("og_door_timeout",  0.0))
+            if proximity:
+                lump["proximity"] = ["uint32", 1]
+            if timeout > 0.0:
+                lump["timeout"] = ["float", timeout]
+            log(f"  [sun-iris-door] {o.name}  proximity={proximity}  timeout={timeout}s")
+
+        # ── Basebutton: timeout lump ──────────────────────────────────────────
+        # On press sends 'trigger to notify-actor (the alt-actor link target).
+        if etype == "basebutton":
+            timeout = float(o.get("og_button_timeout", 0.0))
+            if timeout > 0.0:
+                lump["timeout"] = ["float", timeout]
+            log(f"  [basebutton] {o.name}  timeout={timeout}s")
 
         # ── Water-vol: water-height + vol lumps ───────────────────────────────
         # water-vol needs two lumps to function:
