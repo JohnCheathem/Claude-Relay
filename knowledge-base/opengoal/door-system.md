@@ -290,18 +290,20 @@ Place `ACTOR_eco-door` with no special settings. Door opens when Jak approaches 
 
 These processes live in compiled object files. The DGO system needs them loaded for the actors to spawn.
 
-| Entity | Object file | Bundle |
-|---|---|---|
-| `eco-door` | `baseplat.o` | `GAME.CGO` (always loaded) |
-| `sun-iris-door` | `sun-iris-door.o` | `SUN.DGO` |
-| `launcherdoor` | `launcherdoor.o` | `JUN.DGO`, `MAI.DGO`, `SUN.DGO` |
-| `basebutton` | `basebutton.o` | `GAME.CGO` (always loaded) |
-| `jng-iris-door` | `jungleb-obs.o` | `JUNB.DGO` |
-| `tra-iris-door` | `training-obs.o` | `TRA.DGO` |
-| `citb-iris-door` | `citadel-obs.o` | `CTB.DGO` |
-| `rounddoor` | `misty-warehouse.o` | `MIS.DGO` |
+> **Important:** `eco-door` is an **abstract base type** with no `defskelgroup` and no art group file (`.go`). It is never placed directly — all spawnable doors are concrete subclasses. Verified from `.gd` source files.
 
-> `eco-door` and `basebutton` are in `GAME.CGO` which is always resident. These two are safe to use in any custom level without DGO injection. `sun-iris-door` needs `sun-iris-door.o` injected into the level's DGO.
+| Entity | Art `.go` file | Object `.o` file | DGO |
+|---|---|---|---|
+| `jng-iris-door` | `jng-iris-door-ag.go` | `jungleb-obs.o` | `JUB.DGO`, `TRA.DGO` |
+| `sidedoor` | `sidedoor-ag.go` | `jungle-obs.o` | `JUN.DGO` |
+| `rounddoor` | `rounddoor-ag.go` | `misty-warehouse.o` | `MIS.DGO` |
+| `citb-iris-door` | `citb-iris-door-ag.go` | `citadel-obs.o` | `CTB.DGO` |
+| `sun-iris-door` | `sun-iris-door-ag.go` | `sun-iris-door.o` | `SUN.DGO` |
+| `launcherdoor` | `launcherdoor-ag.go` | `launcherdoor.o` | `JUN.DGO`, `MAI.DGO`, `SUN.DGO` |
+| `basebutton` | `generic-button-ag.go` | `basebutton.o` | `GAME.CGO` (always loaded) |
+| `eco-door` (base) | *(none — abstract)* | `baseplat.o` | `GAME.CGO` (always loaded) |
+
+> `basebutton` and the `eco-door` base class code are in `GAME.CGO`, always resident — no injection needed. For custom levels, the recommended pairing is `sun-iris-door` (inject `sun-iris-door.o` + `sun-iris-door-ag.go` from `SUN.DGO`) with `basebutton` (free).
 
 ---
 
@@ -326,12 +328,16 @@ These processes live in compiled object files. The DGO system needs them loaded 
 
 ### Entities available in the spawn picker
 
-| Entity | Category | Art group |
-|---|---|---|
-| `eco-door` | Objects | `eco-door-ag.go` |
-| `sun-iris-door` | Objects | `sun-iris-door-ag.go` |
-| `launcherdoor` | Objects | `launcherdoor-ag.go` |
-| `basebutton` | Objects | `generic-button-ag.go` |
+| Entity | Category | Art group | Notes |
+|---|---|---|---|
+| `jng-iris-door` | Objects | `jng-iris-door-ag.go` | Jungle/Training iris door |
+| `sidedoor` | Objects | `sidedoor-ag.go` | Jungle sliding side door |
+| `rounddoor` | Objects | `rounddoor-ag.go` | Misty round arena door |
+| `sun-iris-door` | Objects | `sun-iris-door-ag.go` | Best choice for custom levels |
+| `launcherdoor` | Objects | `launcherdoor-ag.go` | Needs launcher pad nearby |
+| `basebutton` | Objects | `generic-button-ag.go` | Always available (GAME.CGO) |
+
+> `eco-door` itself is not spawnable — the picker uses concrete subclasses. The Door Settings panel covers `eco-door`, `jng-iris-door`, `sidedoor`, and `rounddoor` (all share the same flag/lump schema).
 
 ### Panels (selected-object sidebar)
 
