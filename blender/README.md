@@ -1,7 +1,15 @@
-# Blender 4.4
+# Blender 4.4.3 (Linux x64)
 
-Stored as split chunks due to GitHub file size limits. To reassemble:
+Stored as split chunks. To reassemble and extract:
 
 ```bash
-cat Blender_4_4.part_aa Blender_4_4.part_ab Blender_4_4.part_ac Blender_4_4.part_ad > Blender_4_4.rar
+cat blender-4_4_3-linux-x64.part_aa \
+    blender-4_4_3-linux-x64.part_ab \
+    blender-4_4_3-linux-x64.part_ac \
+    blender-4_4_3-linux-x64.part_ad > blender-4_4_3-linux-x64.tar.xz
+
+tar -xf blender-4_4_3-linux-x64.tar.xz
+./blender-4.4.3-linux-x64/blender
 ```
+
+Tested working: `blender --version` returns 4.4.3 build 802179c51ccc
