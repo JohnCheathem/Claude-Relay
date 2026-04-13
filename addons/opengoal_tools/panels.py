@@ -2247,14 +2247,24 @@ class OG_PT_ActorEcoDoor(Panel):
         sel    = ctx.active_object
 
         # ── Open condition hint ───────────────────────────────────────────────
+        from opengoal_tools.data import _actor_get_link
+        has_state_actor = bool(_actor_get_link(sel, "state-actor", 0))
         hint = layout.box()
-        hint.label(text="Opens when Jak is nearby AND one of:", icon="INFO")
-        col = hint.column(align=True)
-        col.enabled = False
-        col.label(text="• Jak has blue eco")
-        col.label(text="• Door was previously opened (perm-complete)")
-        col.label(text="• Linked button/lock controller is activated")
-        col.label(text="• One-way flag + Jak is on exit side")
+        if has_state_actor:
+            hint.label(text="Button-controlled door", icon="LINKED")
+            col = hint.column(align=True)
+            col.enabled = False
+            col.label(text="• Locked until linked button is pressed")
+            col.label(text="• Opens when Jak walks close with blue eco")
+            col.label(text="• Tip: enable One Way to skip blue eco requirement")
+        else:
+            hint.label(text="Opens when Jak is nearby AND one of:", icon="INFO")
+            col = hint.column(align=True)
+            col.enabled = False
+            col.label(text="• Jak has blue eco")
+            col.label(text="• Starts Open is enabled")
+            col.label(text="• One-way flag + Jak on exit side")
+            col.label(text="• Link a button via Actor Links → state-actor")
 
         # ── Behaviour flags ───────────────────────────────────────────────────
         box = layout.box()
