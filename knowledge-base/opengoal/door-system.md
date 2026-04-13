@@ -307,7 +307,44 @@ These processes live in compiled object files. The DGO system needs them loaded 
 
 ---
 
-## 8. Engine Source References
+## 8. Bug History & Lessons Learned
+
+### Actor link name mismatch (global fix — affects all entity links)
+**Bug:** `_build_actor_link_lumps` wrote the Blender object name (`ACTOR_basebutton_0`) into the lump string. `entity-actor-lookup` calls `entity-by-name()` which looks up by the entity's **lump `name` field** (`basebutton-0`). The link resolved to `#f` every time, silently breaking all actor-to-actor references.
+
+**Fix:** Strip `ACTOR_` prefix and replace the first `_` with `-`: `ACTOR_{etype}_{uid}` → `{etype}-{uid}`. Matches `collect_actors` lump name format `f"{etype}-{uid}"`.
+
+**Scope:** Every entity using actor links — orbit-plat, helix chain, minershort/minertall, eco-door state-actor, all vents, etc. All were broken before this fix.
+
+### eco-door state-actor: ecdf00 must be set explicitly
+**Bug:** Without `ecdf00=1`, `locked` defaults to `False` regardless of the button state. `eco-door-method-26` only changes `locked` when a flag bit is set — it does nothing if both `ecdf00` and `ecdf01` are 0.
+
+**Fix:** Auto-set `ecdf00=1` at export when a `state-actor` link is present. Door spawns locked; button sets perm-complete; door polls and unlocks each frame.
+
+### eco-door flags wrong bit positions
+**Bug:** `auto-close=1, one-way=2` were wrong. Those are `ecdf00` and `ecdf01` (lock-by-task bits). Correct values: `auto-close=4` (bit 2), `one-way=8` (bit 3).
+
+### eco-door is abstract — crashes on spawn
+**Bug:** `eco-door` base class `eco-door-method-25` is a no-op. No skeleton initialized. `ja-post` dereferences null in `door-closed` → crash.
+
+**Fix:** Remap `etype "eco-door"` → `"jng-iris-door"` at export time.
+
+### entity-perm-status bit values (process-drawable-h.gc)
+| Flag | Bit index | Value |
+|---|---|---|
+| `bit-0` | 0 | 1 |
+| `bit-1` | 1 | 2 |
+| `dead` | 2 | 4 |
+| `bit-3` | 3 | 8 |
+| `bit-4` | 4 | 16 |
+| `user-set-from-cstage` | 5 | 32 |
+| `complete` | **6** | **64** |
+| `bit-7` | 7 | 128 |
+| `real-complete` | 8 | 256 |
+
+`complete` (64) is what eco-door checks. `dead` (4) would corrupt the entity — earlier `starts_open` accidentally used 4.
+
+## 9. Engine Source References
 
 | File | What's in it |
 |---|---|
@@ -324,7 +361,7 @@ These processes live in compiled object files. The DGO system needs them loaded 
 
 ---
 
-## 9. Addon Integration (v1.5+)
+## 10. Addon Integration (v1.5+)
 
 ### Entities available in the spawn picker
 
@@ -361,8 +398,18 @@ These processes live in compiled object files. The DGO system needs them loaded 
 **Launcher Door Settings** (`ACTOR_launcherdoor` selected):
 - Continue Point picker (lists scene checkpoints/spawns)
 
-### Known issues / open questions (as of feature/doors)
+### Known issues / open questions (as of v1.7.0)
 
-- `sun-iris-door.o` filename needs verification. May be packaged inside `sunken-obs.o` rather than a standalone file. Check `.gd` file for SUN to confirm.
-- `perm-status` lump for `starts_open`: the `eco-door` `init-from-entity!` reads `(logtest? entity extra perm status complete)` — this is the entity's runtime perm struct, not a lump. The lump approach may not work; may need to set the entity perm-status flag through a different mechanism. Test required.
-- Trigger volume → `sun-iris-door`: The aggro-trigger GOAL template sends `'notify`. `sun-iris-door` only handles `'trigger`. Either change the event name in the template, or use a `basebutton` instead.
+**Confirmed working (live tested):**
+- [x] `jng-iris-door` spawns correctly
+- [x] `basebutton` spawns and responds to flop/ground-pound
+- [x] Button → state-actor → door wiring works end-to-end
+- [x] `eco-door` flags corrected: `auto-close=4`, `one-way=8` (was wrong 1/2)
+- [x] Actor link name resolution fixed globally (was Blender name, now entity lump name)
+- [x] `sun-iris-door.o` confirmed in `SUN.DGO`; `basebutton.o` in `GAME.CGO`
+
+**Unverified / needs live test:**
+- [ ] **`starts_open`**: Emits `perm-status` lump (value 64 = `complete` bit 6). No engine code found that reads a `perm-status` res-lump — perm status is loaded from save data, not lumps. This feature may do nothing.
+- [ ] **Trigger volume → sun-iris-door**: Volumes emit `'notify`; `sun-iris-door` only handles `'trigger`. Use `basebutton` instead for now.
+- [ ] **`rounddoor`, `sidedoor`** — entity defs added, not live tested.
+- [ ] **`sun-iris-door` proximity** — lump emitted correctly, not live tested.

@@ -232,8 +232,16 @@ ENTITY_DEFS = {
     "oracle":           {"label":"Oracle",               "cat":"NPCs",      "tpage_group":"Village1", "ag":"oracle-ag.go",            "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.9,0.8,0.5,1.0), "shape":"SPHERE", "glb": "levels/village1/oracle-lod0.glb"},
     "minershort":       {"label":"Miner (Short)",        "cat":"NPCs",      "tpage_group":"Village3", "ag":"minershort-ag.go",        "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.6,0.5,0.3,1.0), "shape":"SPHERE", "glb": "levels/village3/minershort-lod0.glb"},
     "minertall":        {"label":"Miner (Tall)",         "cat":"NPCs",      "tpage_group":"Village3", "ag":"minertall-ag.go",         "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.45,0.3,1.0),"shape":"SPHERE", "glb": "levels/village3/minertall-lod0.glb"},
-    "eco-door":         {"label":"Eco Door",             "cat":"Objects",   "ag":"eco-door-ag.go",          "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.3,0.6,0.8,1.0), "shape":"CUBE"},
+    # eco-door is an ABSTRACT base type — no art group of its own.
+    # Use a concrete subclass: jng-iris-door (jungle), tra-iris-door (training), sidedoor, rounddoor.
+    # eco-door entity def kept for export/lump logic but ag is set to a subclass default.
+    "eco-door":         {"label":"Eco Door (iris)",      "cat":"Objects",   "ag":"jng-iris-door-ag.go",     "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.3,0.6,0.8,1.0), "shape":"CUBE"},
+    "jng-iris-door":    {"label":"Iris Door (Jungle)",   "cat":"Objects",   "ag":"jng-iris-door-ag.go",     "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.3,0.7,0.5,1.0), "shape":"CUBE"},
+    "sidedoor":         {"label":"Side Door (Jungle)",   "cat":"Objects",   "ag":"sidedoor-ag.go",          "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.4,0.6,0.4,1.0), "shape":"CUBE"},
+    "rounddoor":        {"label":"Round Door (Misty)",   "cat":"Objects",   "ag":"rounddoor-ag.go",         "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.4,0.3,1.0), "shape":"CUBE"},
     "launcherdoor":     {"label":"Launcher Door",        "cat":"Objects",   "ag":"launcherdoor-ag.go",      "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.4,0.5,0.7,1.0), "shape":"CUBE"},
+    "sun-iris-door":    {"label":"Iris Door (Sunken)",   "cat":"Objects",   "ag":"sun-iris-door-ag.go",     "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.6,0.5,0.2,1.0), "shape":"CUBE"},
+    "basebutton":       {"label":"Wall Button",          "cat":"Objects",   "ag":"generic-button-ag.go",    "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.7,0.3,0.3,1.0), "shape":"CUBE"},
     "shover":           {"label":"Shover Platform",      "cat":"Objects",   "tpage_group":"Sunken",   "ag":"shover-ag.go",            "nav_safe":True,  "needs_path":True,  "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.5,0.5,0.7,1.0), "shape":"CUBE"},
     "swampgate":        {"label":"Swamp Spike Gate",     "cat":"Objects",   "tpage_group":"Swamp",    "ag":"swamp-spike-gate-ag.go",  "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":False, "ai_type":"process-drawable", "color":(0.4,0.5,0.2,1.0), "shape":"CUBE"},
     "ceilingflag":      {"label":"Ceiling Flag",         "cat":"Objects",   "tpage_group":"Village2", "ag":"ceilingflag-ag.go",       "nav_safe":True,  "needs_path":False, "needs_pathb":False, "is_prop":True,  "ai_type":"prop",             "color":(0.8,0.6,0.2,1.0), "shape":"SPHERE"},
@@ -666,8 +674,15 @@ ETYPE_CODE = {
     "water-vol":       {"in_game_cgo": True},  # water.o is in GAME.CGO, always loaded
     "swingpole":       {"o": "generic-obs.o",      "o_only": True},
     "springbox":       {"o": "bouncer.o",          "o_only": True},
-    "eco-door":        {"o": "baseplat.o",         "o_only": True},
-    "launcherdoor":    {"o": "launcherdoor.o",     "o_only": True},
+    # eco-door base class is in baseplat.o (GAME.CGO, always loaded).
+    # Concrete subclasses need their level DGOs injected for the art .go file.
+    "eco-door":        {"o": "baseplat.o",         "o_only": True},   # abstract base, art via subclass
+    "jng-iris-door":   {"o": "jungleb-obs.o",      "o_only": True},   # art: jng-iris-door-ag.go in JUB.DGO / TRA.DGO
+    "sidedoor":        {"o": "jungle-obs.o",        "o_only": True},   # art: sidedoor-ag.go in JUN.DGO
+    "rounddoor":       {"o": "misty-warehouse.o",   "o_only": True},   # art: rounddoor-ag.go in MIS.DGO
+    "launcherdoor":    {"o": "launcherdoor.o",      "o_only": True},   # art: launcherdoor-ag.go in JUN/MAI/SUN.DGO
+    "sun-iris-door":   {"o": "sun-iris-door.o",     "o_only": True},   # art: sun-iris-door-ag.go in SUN.DGO
+    "basebutton":      {"o": "basebutton.o",        "o_only": True},   # GAME.CGO always loaded; art: generic-button-ag.go in SUN.DGO
     "shover":          {"o": "shover.o",           "o_only": True},
     "swampgate":       {"o": "swamp-obs.o",        "o_only": True},
     "ceilingflag":     {"o": "village2-obs.o",     "o_only": True},
@@ -2352,13 +2367,34 @@ LUMP_REFERENCE = {
     "springbox": [
         ("spring-height", "meters", "Launch height in meters. Default ~11m."),
     ],
+    # All eco-door subclasses share the same lump schema as the base type.
     "eco-door": [
-        ("scale", "float",       "Uniform scale. Default 1.0."),
-        ("flags", "enum-uint32", "Behaviour flags. e.g. '(eco-door-flags auto-close)' or '(eco-door-flags one-way)'. Default 0."),
-        # state-actor link = optional entity whose perm status locks the door
+        ("scale", "float",   "Uniform scale. Default 1.0."),
+        ("flags", "uint32",  "Behaviour flags bitfield. auto-close=4, one-way=8. Managed by Door Settings panel."),
+        # state-actor = entity whose perm-complete status locks/unlocks the door (set via actor link UI)
+    ],
+    "jng-iris-door": [
+        ("scale", "float",   "Uniform scale. Default 1.0."),
+        ("flags", "uint32",  "Behaviour flags bitfield. auto-close=4, one-way=8. Managed by Door Settings panel."),
+    ],
+    "sidedoor": [
+        ("scale", "float",   "Uniform scale. Default 1.0."),
+        ("flags", "uint32",  "Behaviour flags bitfield. auto-close=4, one-way=8. Managed by Door Settings panel."),
+    ],
+    "rounddoor": [
+        # auto-close and one-way are hardcoded in eco-door-method-25; flags lump is ignored.
     ],
     "launcherdoor": [
         ("continue-name", "string", "Level continue point name set when door is passed through. e.g. \"village1-hut\"."),
+    ],
+    "sun-iris-door": [
+        ("proximity",    "uint32", "Set to 1 to open by proximity (Jak walks near). Default 0 = event-triggered only."),
+        ("timeout",      "float",  "Seconds before door auto-closes after opening. 0 = stay open. Default 0."),
+        ("scale-factor", "float",  "Uniform scale multiplier. Default 1.0."),
+    ],
+    "basebutton": [
+        ("timeout", "float", "Seconds before button resets after being pressed. 0 = stays pressed. Default 0."),
+        # alt-actor = entity to send 'trigger event to (set via actor link UI)
     ],
     "shover": [
         ("shove",              "meters",  "Upward launch force when platform hits player. Default 3m."),
@@ -2608,7 +2644,28 @@ ACTOR_LINK_DEFS = {
 
     # ── Interactables / Doors ─────────────────────────────────────────────────
     "eco-door": [
-        ("state-actor", 0, "Lock controller (door locked until this entity's task completes)", ["any"], False),
+        # state-actor: optional entity whose perm-complete status controls lock state.
+        # If the state-actor's task is complete the door unlocks (ecdf01 path).
+        # If not complete it stays locked (ecdf00 path).  Leave unset for blue-eco only.
+        ("state-actor", 0, "Lock controller (door unlocks when this entity is activated)", ["basebutton", "any"], False),
+    ],
+    "jng-iris-door": [
+        ("state-actor", 0, "Lock controller (door unlocks when this entity is activated)", ["basebutton", "any"], False),
+    ],
+    "sidedoor": [
+        ("state-actor", 0, "Lock controller (door unlocks when this entity is activated)", ["basebutton", "any"], False),
+    ],
+    "rounddoor": [
+        # no actor links — auto-close/one-way hardcoded; no state-actor support needed
+    ],
+    "sun-iris-door": [
+        # No actor links — opens by proximity or 'trigger event from a trigger volume.
+    ],
+    "basebutton": [
+        # basebutton controls eco-door via the door's state-actor link (door polls
+        # button's perm-complete each frame — no event needed from button side).
+        # alt-actor ('trigger dispatch) is only useful for sun-iris-door which
+        # actually opens on 'trigger. Add that slot when sun-iris-door is wired.
     ],
     "helix-water": [
         ("alt-actor", 0, "Helix button 0",  ["helix-button"], True),
@@ -2721,7 +2778,15 @@ def _build_actor_link_lumps(obj, etype):
     if links:
         for entry in links:
             if entry.target_name and entry.lump_key in by_key:
-                by_key[entry.lump_key][entry.slot_index] = entry.target_name
+                # target_name is the Blender object name (e.g. "ACTOR_basebutton_0").
+                # The engine resolves links by the entity's lump 'name field, which
+                # the addon sets as "{etype}-{uid}" (e.g. "basebutton-0").
+                # Convert: strip "ACTOR_" prefix, replace first "_" with "-".
+                raw = entry.target_name
+                if raw.startswith("ACTOR_"):
+                    raw = raw[6:]           # strip "ACTOR_"
+                    raw = raw.replace("_", "-", 1)  # first _ → - : "basebutton-0"
+                by_key[entry.lump_key][entry.slot_index] = raw
 
     result = {}
     for lkey, slot_map in by_key.items():

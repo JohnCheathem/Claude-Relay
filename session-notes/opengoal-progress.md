@@ -292,3 +292,146 @@ Auto-patches `vol-h.gc` on every export+build (idempotent). Added to `_bg_build`
 - [ ] Confirm build doesn't fail if `vol-h.gc` path doesn't exist (graceful skip)
 
 **Branch:** feature/vol-patch — do NOT merge to main until tested.
+
+---
+
+## feature/doors — Door System (active)
+
+### Status: feature/doors — pushed, awaiting test
+### Branch: feature/doors
+### Working files: addons/opengoal_tools/data.py, export.py, panels.py, __init__.py
+
+---
+
+### What was researched (jak-project source)
+
+**Door types documented:**
+- `eco-door` (base) — opens on proximity + blue eco OR perm-complete OR state-actor link OR one-way exit side
+- `sun-iris-door` — opens via `'trigger` event OR proximity lump; most useful for custom levels
+- `launcherdoor` — opens when Jak is on launch-jump surface below thresh-y
+- `basebutton` — flop-attack (ground pound) to press; sends `'trigger` to alt-actor on press
+- `plat-button` — floor pressure plate; path-driven, sets perm-complete
+
+**Key finding — why eco-door never worked:**
+- Requires blue eco OR perm-complete. Custom levels never have blue eco nearby.
+- Flag bits were WRONG: `auto-close=1, one-way=2` should be `auto-close=4, one-way=8`
+
+**sun-iris-door is the recommended door for custom levels** — responds to `'trigger` from trigger volumes or basebutton alt-actor link.
+
+### Changes made
+
+#### data.py
+- Added `sun-iris-door` entity def + DGO mapping (`sun-iris-door.o`)
+- Added `basebutton` entity def + DGO mapping (`basebutton.o`)
+- Updated `LUMP_REFERENCE` for all door types and basebutton
+- Added `basebutton` → `alt-actor` slot in `ACTOR_LINK_DEFS` (targets door)
+- Updated `eco-door` ACTOR_LINK_DEFS comment
+
+#### export.py
+- **FIXED eco-door flags bits**: `auto-close=4` (was 1), `one-way=8` (was 2)
+- Added `starts_open` export: emits `perm-status` lump so door spawns pre-opened
+- Added `sun-iris-door` proximity + timeout export
+- Added `basebutton` timeout export
+
+#### panels.py
+- Expanded `OG_PT_ActorEcoDoor`: open-condition hint box explaining blue eco requirement; new Starts Open toggle
+- New `OG_PT_ActorSunIrisDoor`: proximity toggle + timeout nudger
+- New `OG_PT_ActorBaseButton`: timeout nudger + usage hint
+
+#### __init__.py
+- Registered `OG_PT_ActorSunIrisDoor` and `OG_PT_ActorBaseButton`
+
+### Door wiring patterns (for testing)
+
+**Pattern 1 — Always-open eco-door:**
+- Place `ACTOR_eco-door`, enable "Starts Open" in panel → door spawns open
+
+**Pattern 2 — Proximity iris door:**
+- Place `ACTOR_sun-iris-door`, enable "Open by Proximity" → opens when Jak walks up
+
+**Pattern 3 — Button → iris door:**
+- Place `ACTOR_basebutton` + `ACTOR_sun-iris-door`
+- In basebutton's ActorLinks panel: set alt-actor 0 = the sun-iris-door
+- Ground-pound button → door opens
+
+**Pattern 4 — Trigger volume → iris door:**
+- Place `ACTOR_sun-iris-door` (proximity OFF)
+- Add a VOL_ trigger volume, link it to the sun-iris-door via vol link system
+- (Note: trigger vol currently sends `'notify` not `'trigger` — may need engine check)
+
+**Pattern 5 — Blue eco door (vanilla):**
+- Place `ACTOR_eco-door` with no extra settings
+- Door opens only when Jak has blue eco and walks close
+
+### Known open questions
+
+- [ ] Does trigger volume send `'trigger` or `'notify` to linked actors? If `'notify`, sun-iris-door won't respond (it listens for `'trigger`). Need to verify event name in aggro-trigger GOAL code.
+- [ ] `sun-iris-door.o` — confirm this is the correct .o filename in the DGO system (may be `sunken-obs.o` instead)
+- [ ] `basebutton.o` — confirm correct .o filename (may be in `GAME.CGO` already as `basebutton.o`)
+- [ ] Test `perm-status` lump approach for starts_open — engine may not read this lump in init path
+
+
+---
+
+## Headless Test Environment (session 2026-04-13)
+
+### Toolchain setup (persists in /tmp until VM resets)
+- OpenGOAL v0.3.1 extracted to `/tmp/opengoal/`
+- iso_data extracted to `/tmp/iso_extract/iso_data/` and symlinked into toolchain
+- Decompiler already run — `decompiler_out/` exists and tpage-dir.txt present
+- Blender 4.4.3 at `/tmp/blender-4.4.3-linux-x64/blender`
+- Addon installed at `/root/.config/blender/4.4/scripts/addons/opengoal_tools/` (feature/doors)
+
+### Rebuild steps if VM resets
+```bash
+# Reassemble toolchain
+cd /home/claude/Claude-Relay/blender
+cat blender-4_4_3-linux-x64.part_a* > /tmp/blender.tar.xz && tar -xf /tmp/blender.tar.xz -C /tmp/
+# OpenGOAL — user must re-upload opengoal-linux-v0.3.1.tar.gz and iso_data parts
+# Then: mkdir /tmp/opengoal && tar -xzf <upload> -C /tmp/opengoal
+# Then: unrar x iso_data_part1.rar /tmp/iso_extract/ (parts 1-3)
+# Then: ln -s /tmp/iso_extract/iso_data /tmp/opengoal/data/iso_data
+# Decompiler: cd /tmp/opengoal && ./extractor --decompile --proj-path data/ data/iso_data/jak1/
+```
+
+### Test approach
+Use Blender headlessly to generate the level JSONC via the addon's export operator,
+then compile with goalc, then boot with gk under Xvfb. All driven from Python scripts
+calling Blender's addon operators — same code path as the user's real workflow.
+
+### Door crash root cause found
+- `eco-door` is abstract — no skeleton init in base `eco-door-method-25` (returns 0)
+- Exporting `etype: "eco-door"` causes null skeleton dereference in `door-closed` state
+- Fix: remap `eco-door` → `jng-iris-door` at export time (done in feature/doors)
+
+### Open question
+- Does `jng-iris-door` actually work after the remap fix? Need live test.
+- Does `basebutton` spawn without crash? It should (nav-mesh-connect is safe with no mesh)
+
+
+---
+
+## v1.7.0 — Door System (feature/doors → main)
+
+### Status: MERGED TO MAIN ✅
+
+### What shipped
+- `jng-iris-door`, `sidedoor`, `rounddoor`, `sun-iris-door`, `basebutton` entity defs + DGO mappings
+- eco-door etype crash fix (remaps to jng-iris-door at export — abstract base has no skeleton)
+- eco-door flags bits fixed (auto-close=4, one-way=8, was wrong 1/2)
+- ecdf00 auto-set when state-actor linked (door locks until button pressed)
+- starts_open toggle (perm-status=64, unverified — may not be read by engine)
+- New panels: OG_PT_ActorEcoDoor (expanded), OG_PT_ActorSunIrisDoor, OG_PT_ActorBaseButton
+- **Global actor link name fix**: was writing Blender object name, now writes entity lump name
+
+### Wiring pattern that works
+- Place ACTOR_eco-door + ACTOR_basebutton
+- Select eco-door → Actor Links → state-actor → basebutton
+- Export: door gets flags=1 (ecdf00), state-actor="basebutton-N"
+- In game: door spawns locked, button press unlocks it, blue eco opens it
+- Add One Way to skip blue eco requirement
+
+### Unverified
+- starts_open (perm-status lump may not be engine-readable)
+- Trigger volume → sun-iris-door (event name mismatch: notify vs trigger)
+- rounddoor, sidedoor live spawn test
