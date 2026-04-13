@@ -1175,6 +1175,12 @@ def collect_actors(scene, depsgraph=None):
     for o in _canonical_actor_objects(scene, objects=level_objs):
         p = o.name.split("_", 2)
         etype, uid = p[1], p[2]
+
+        # eco-door is abstract (no skeleton, no art group). Remap to its
+        # concrete default subclass so the engine gets a working type with a
+        # real initialize-skeleton call.
+        if etype == "eco-door":
+            etype = "jng-iris-door"
         l = o.location
         gx, gy, gz = round(l.x, 4), round(l.z, 4), round(-l.y, 4)
 
