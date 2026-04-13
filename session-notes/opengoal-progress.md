@@ -370,3 +370,41 @@ Auto-patches `vol-h.gc` on every export+build (idempotent). Added to `_bg_build`
 - [ ] `basebutton.o` — confirm correct .o filename (may be in `GAME.CGO` already as `basebutton.o`)
 - [ ] Test `perm-status` lump approach for starts_open — engine may not read this lump in init path
 
+
+---
+
+## Headless Test Environment (session 2026-04-13)
+
+### Toolchain setup (persists in /tmp until VM resets)
+- OpenGOAL v0.3.1 extracted to `/tmp/opengoal/`
+- iso_data extracted to `/tmp/iso_extract/iso_data/` and symlinked into toolchain
+- Decompiler already run — `decompiler_out/` exists and tpage-dir.txt present
+- Blender 4.4.3 at `/tmp/blender-4.4.3-linux-x64/blender`
+- Addon installed at `/root/.config/blender/4.4/scripts/addons/opengoal_tools/` (feature/doors)
+
+### Rebuild steps if VM resets
+```bash
+# Reassemble toolchain
+cd /home/claude/Claude-Relay/blender
+cat blender-4_4_3-linux-x64.part_a* > /tmp/blender.tar.xz && tar -xf /tmp/blender.tar.xz -C /tmp/
+# OpenGOAL — user must re-upload opengoal-linux-v0.3.1.tar.gz and iso_data parts
+# Then: mkdir /tmp/opengoal && tar -xzf <upload> -C /tmp/opengoal
+# Then: unrar x iso_data_part1.rar /tmp/iso_extract/ (parts 1-3)
+# Then: ln -s /tmp/iso_extract/iso_data /tmp/opengoal/data/iso_data
+# Decompiler: cd /tmp/opengoal && ./extractor --decompile --proj-path data/ data/iso_data/jak1/
+```
+
+### Test approach
+Use Blender headlessly to generate the level JSONC via the addon's export operator,
+then compile with goalc, then boot with gk under Xvfb. All driven from Python scripts
+calling Blender's addon operators — same code path as the user's real workflow.
+
+### Door crash root cause found
+- `eco-door` is abstract — no skeleton init in base `eco-door-method-25` (returns 0)
+- Exporting `etype: "eco-door"` causes null skeleton dereference in `door-closed` state
+- Fix: remap `eco-door` → `jng-iris-door` at export time (done in feature/doors)
+
+### Open question
+- Does `jng-iris-door` actually work after the remap fix? Need live test.
+- Does `basebutton` spawn without crash? It should (nav-mesh-connect is safe with no mesh)
+
