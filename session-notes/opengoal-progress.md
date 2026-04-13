@@ -336,3 +336,30 @@ Auto-patches `vol-h.gc` on every export+build (idempotent). Added to `_bg_build`
 - [ ] Results clear and repopulate correctly on second run
 - [ ] Empty scene (no actors) shows spawn-point error + summary info
 
+
+---
+
+## Level Audit — PAUSED (waiting on other branches)
+
+**Status:** feature/level-audit — built, tested (27/27), ready but PAUSED
+
+**Reason for pause:** Need to wait for feature/doors and other active branches to
+merge to main first. Level Audit should be branched from main after those merges
+so it picks up any new actor types, properties, or prefixes added by those features.
+
+**Resume plan:**
+1. Wait for feature/doors + other active branches to merge to main
+2. Checkout feature/level-audit, rebase/merge from updated main
+3. Audit any new actor types added by doors/other branches:
+   - New etypes in ENTITY_DEFS → check if any need navmesh/path/link rules
+   - New object prefixes (e.g. door-related empties) → add prefix checks if needed
+   - New required lump slots in ACTOR_LINK_DEFS → already covered by check_actor_links
+4. Run test suite again against updated addon
+5. Merge to main when ready
+
+**What's already solid (no changes needed):**
+- All 9 checks are data-driven from ENTITY_DEFS / ACTOR_LINK_DEFS / NAV_UNSAFE_TYPES
+  so new actors added to those tables are automatically covered
+- Only manual additions needed: new object prefixes or new structural rules
+  that don't come from existing data tables
+
