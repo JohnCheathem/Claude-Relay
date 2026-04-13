@@ -12,6 +12,7 @@ from .collections import _get_level_prop, _level_objects, _active_level_col
 from .export import (
     collect_actors, collect_ambients, collect_spawns, collect_cameras,
     collect_nav_mesh_geometry, collect_aggro_triggers,
+    collect_vis_blockers, collect_vis_trigger_actors, export_vis_blocker_glbs,
     needed_ags, needed_code, write_jsonc, write_gd, write_gc,
     patch_level_info, patch_game_gp, export_glb,
     _collect_navmesh_actors, _canonical_actor_objects,
@@ -415,13 +416,18 @@ def _bg_build(name, scene, depsgraph=None):
 
         state["status"] = "Writing files..."
         base_id = int(_get_level_prop(scene, "og_base_id", 10000))
-        aggro_actors = collect_aggro_triggers(scene)
-        write_jsonc(name, actors, ambients, cam_actors + trigger_actors + aggro_actors, base_id)
+        aggro_actors    = collect_aggro_triggers(scene)
+        vis_blockers    = collect_vis_blockers(scene)
+        vis_trig_actors = collect_vis_trigger_actors(scene, vis_blockers)
+        write_jsonc(name, actors, ambients,
+                    cam_actors + trigger_actors + aggro_actors + vis_trig_actors,
+                    base_id, vis_blockers=vis_blockers)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
         _lv_objs = _level_objects(scene)
         has_cps = bool([o for o in _lv_objs if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")])
-        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps, has_aggro_triggers=bool(aggro_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps,
+                 has_aggro_triggers=bool(aggro_actors), has_vis_blockers=bool(vis_blockers))
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)
@@ -570,12 +576,17 @@ def _bg_geo_rebuild(name, scene, depsgraph=None):
 
         state["status"] = "Writing level files..."
         base_id = int(_get_level_prop(scene, "og_base_id", 10000))
-        aggro_actors = collect_aggro_triggers(scene)
-        write_jsonc(name, actors, ambients, cam_actors + trigger_actors + aggro_actors, base_id)
+        aggro_actors    = collect_aggro_triggers(scene)
+        vis_blockers    = collect_vis_blockers(scene)
+        vis_trig_actors = collect_vis_trigger_actors(scene, vis_blockers)
+        write_jsonc(name, actors, ambients,
+                    cam_actors + trigger_actors + aggro_actors + vis_trig_actors,
+                    base_id, vis_blockers=vis_blockers)
         write_gd(name, ags, code_deps, tpages)
         _lv_objs = _level_objects(scene)
         has_cps = bool([o for o in _lv_objs if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")])
-        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps, has_aggro_triggers=bool(aggro_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps,
+                 has_aggro_triggers=bool(aggro_actors), has_vis_blockers=bool(vis_blockers))
         patch_level_info(name, spawns, scene)  # update spawn continue-points if moved
 
         # Run (mi) — re-extracts GLB, repacks DGO, skips unchanged .gc files
@@ -641,13 +652,18 @@ def _bg_build_and_play(name, scene, depsgraph=None):
 
         state["status"] = "Writing level files..."
         base_id = int(_get_level_prop(scene, "og_base_id", 10000))
-        aggro_actors = collect_aggro_triggers(scene)
-        write_jsonc(name, actors, ambients, cam_actors + trigger_actors + aggro_actors, base_id)
+        aggro_actors    = collect_aggro_triggers(scene)
+        vis_blockers    = collect_vis_blockers(scene)
+        vis_trig_actors = collect_vis_trigger_actors(scene, vis_blockers)
+        write_jsonc(name, actors, ambients,
+                    cam_actors + trigger_actors + aggro_actors + vis_trig_actors,
+                    base_id, vis_blockers=vis_blockers)
         write_gd(name, ags, code_deps, tpages)
         navmesh_actors = _collect_navmesh_actors(scene)
         _lv_objs = _level_objects(scene)
         has_cps = bool([o for o in _lv_objs if o.name.startswith("CHECKPOINT_") and o.type == "EMPTY" and not o.name.endswith("_CAM")])
-        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps, has_aggro_triggers=bool(aggro_actors))
+        write_gc(name, has_triggers=bool(trigger_actors), has_checkpoints=has_cps,
+                 has_aggro_triggers=bool(aggro_actors), has_vis_blockers=bool(vis_blockers))
         patch_entity_gc(navmesh_actors)
         patch_level_info(name, spawns, scene)
         patch_game_gp(name, code_deps)

@@ -2885,9 +2885,9 @@ def _parse_lump_row(key, ltype, value_str):
 # --- AGGRO_TRIGGER_EVENTS + AGGRO_EVENT_ENUM_ITEMS + _aggro_event_id ---
 
 AGGRO_TRIGGER_EVENTS = [
-    ("cue-chase",       "Aggro (chase player)",                  "Wake enemy and start chasing player"),
-    ("cue-patrol",      "Patrol",                                 "Return enemy to patrol state"),
-    ("go-wait-for-cue", "Wait for cue (freeze)",                  "Freeze enemy until next cue event"),
+    ("cue-chase",       "Aggro (chase player)",    "Wake enemy and start chasing player"),
+    ("cue-patrol",      "Patrol",                   "Return enemy to patrol state"),
+    ("go-wait-for-cue", "Wait for cue (freeze)",    "Freeze enemy until next cue event"),
 ]
 
 AGGRO_EVENT_ENUM_ITEMS = [(n, lbl, desc) for n, lbl, desc in AGGRO_TRIGGER_EVENTS]
@@ -2899,5 +2899,16 @@ def _aggro_event_id(name):
         if n == name:
             return i
     return 0
+
+
+# --- VIS_TRIGGER_ACTIONS — shared with OGVolLink.behaviour for VISMESH_ targets ---
+
+VIS_TRIGGER_ACTIONS = [
+    ("hide",   "Hide on enter",   "Hide the mesh when player enters the volume"),
+    ("show",   "Show on enter",   "Show the mesh when player enters the volume"),
+    ("toggle", "Toggle on enter", "Toggle mesh visibility each time player enters the volume"),
+]
+
+VIS_TRIGGER_ENUM_ITEMS = [(n, lbl, desc) for n, lbl, desc in VIS_TRIGGER_ACTIONS]
 
 

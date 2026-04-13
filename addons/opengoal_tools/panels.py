@@ -1197,9 +1197,11 @@ def _draw_selected_volume(layout, sel, scene):
                     icon = "EMPTY_SINGLE_ARROW"
                 elif kind == "enemy":
                     icon = "OUTLINER_OB_ARMATURE"
+                elif kind == "vis-blocker":
+                    icon = "HIDE_OFF"
                 row.label(text=tname, icon=icon)
-                # Behaviour dropdown — only for nav-enemy targets
-                if kind == "enemy":
+                # Behaviour dropdown — for nav-enemy and vis-blocker targets
+                if kind == "enemy" or kind == "vis-blocker":
                     row.prop(entry, "behaviour", text="")
                 # Jump-to button
                 op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
@@ -1400,6 +1402,40 @@ def _draw_selected_mesh_visibility(layout, obj):
     box.prop(obj, "enable_custom_weights")
     box.prop(obj, "copy_eye_draws")
     box.prop(obj, "copy_mod_draws")
+
+
+def _draw_selected_vis_blocker(layout, obj, scene):
+    """Draw properties panel for a VISMESH_ vis-blocker mesh."""
+    layout.label(text=obj.name, icon="HIDE_OFF")
+
+    box = layout.box()
+    box.label(text="Vis Blocker", icon="HIDE_OFF")
+
+    # Hidden-at-start toggle
+    row = box.row()
+    hidden = bool(obj.get("og_hidden_at_start", False))
+    icon = "HIDE_ON" if hidden else "HIDE_OFF"
+    row.label(text="Spawns hidden" if hidden else "Spawns visible", icon=icon)
+    op = row.operator("og.toggle_vis_blocker_hidden", text="", icon="FILE_REFRESH")
+    op.obj_name = obj.name
+
+    # Show which VOL_ volumes are linked to this blocker
+    linking_vols = [
+        o for o in _level_objects(scene)
+        if o.type == "MESH" and o.name.startswith("VOL_")
+        and any(e.target_name == obj.name for e in _vol_links(o))
+    ]
+    box2 = layout.box()
+    if linking_vols:
+        box2.label(text=f"Triggered by {len(linking_vols)} volume(s):", icon="LINKED")
+        for v in linking_vols:
+            row = box2.row(align=True)
+            row.label(text=v.name, icon="MESH_CUBE")
+            op = row.operator("og.select_and_frame", text="", icon="VIEWZOOM")
+            op.obj_name = v.name
+    else:
+        box2.label(text="No VOL_ linked yet", icon="INFO")
+        box2.label(text="Shift-select a VOL_ then use Triggers panel to link", icon="BLANK1")
 
 
 def _draw_selected_mesh_lightbake(layout, ctx):
@@ -3382,6 +3418,28 @@ class OG_PT_VolumeLinks(Panel):
 
     def draw(self, ctx):
         _draw_selected_volume(self.layout, ctx.active_object, ctx.scene)
+
+
+# ── VIS BLOCKER sub-panel ───────────────────────────────────────────────────
+
+class OG_PT_VisBlockerInfo(Panel):
+    bl_label       = "Vis Blocker"
+    bl_idname      = "OG_PT_vis_blocker_info"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return (sel is not None
+                and sel.type == "MESH"
+                and sel.name.startswith("VISMESH_"))
+
+    def draw(self, ctx):
+        _draw_selected_vis_blocker(self.layout, ctx.active_object, ctx.scene)
 
 
 # ── NAVMESH INFO sub-panel ──────────────────────────────────────────────────

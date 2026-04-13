@@ -11,7 +11,7 @@ from bpy.types import Panel, Operator, PropertyGroup, AddonPreferences
 from .data import (
     ENTITY_ENUM_ITEMS, PLATFORM_ENUM_ITEMS, CRATE_ITEMS,
     ENEMY_ENUM_ITEMS, PROP_ENUM_ITEMS, NPC_ENUM_ITEMS, PICKUP_ENUM_ITEMS,
-    LUMP_TYPE_ITEMS, AGGRO_EVENT_ENUM_ITEMS, ALL_SFX_ITEMS,
+    LUMP_TYPE_ITEMS, AGGRO_EVENT_ENUM_ITEMS, VIS_TRIGGER_ENUM_ITEMS, ALL_SFX_ITEMS,
     LEVEL_BANKS, SBK_SOUNDS,
     TPAGE_FILTER_ITEMS, GLOBAL_TPAGE_GROUPS,
     _enemy_enum_cb, _prop_enum_cb, _npc_enum_cb, _pickup_enum_cb, _platform_enum_cb,
@@ -279,11 +279,18 @@ class OGVolLink(PropertyGroup):
     """
     target_name: StringProperty(
         name="Target",
-        description="Name of the linked target object (camera, checkpoint, or enemy)",
+        description="Name of the linked target object (camera, checkpoint, enemy, or vis-blocker)",
     )
-    behaviour:   EnumProperty(
+
+    def _behaviour_items(self, context):
+        """Return appropriate behaviour items based on target type."""
+        name = self.target_name or ""
+        if name.startswith("VISMESH_"):
+            return VIS_TRIGGER_ENUM_ITEMS
+        return AGGRO_EVENT_ENUM_ITEMS
+
+    behaviour: EnumProperty(
         name="Behaviour",
-        items=AGGRO_EVENT_ENUM_ITEMS,
-        default="cue-chase",
-        description="Event sent to the enemy on volume enter (nav-enemies only — ignored for cameras/checkpoints)",
+        items=_behaviour_items,
+        description="Action on volume enter: enemy event, or vis-blocker hide/show/toggle",
     )

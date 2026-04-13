@@ -445,6 +445,185 @@ def collect_aggro_triggers(scene):
     return out
 
 
+def _vismesh_ag_name(obj_name):
+    """Derive art-group name from a VISMESH_ object name.
+    VISMESH_my-wall-1  ->  my-wall-1-ag
+    Strips 'VISMESH_' prefix, lowercases, replaces underscores with dashes.
+    """
+    slug = obj_name[8:].lower().replace("_", "-")
+    return f"{slug}-ag"
+
+
+def _vismesh_sg_name(obj_name):
+    """Derive skeleton-group symbol name from a VISMESH_ object name.
+    VISMESH_my-wall-1  ->  *my-wall-1-sg*
+    """
+    slug = obj_name[8:].lower().replace("_", "-")
+    return f"*{slug}-sg*"
+
+
+def _vismesh_lump_name(obj_name):
+    """Derive lump 'name' value for a VISMESH_ actor.
+    VISMESH_my-wall-1  ->  vis-blocker-my-wall-1
+    """
+    slug = obj_name[8:].lower().replace("_", "-")
+    return f"vis-blocker-{slug}"
+
+
+def collect_vis_blockers(scene):
+    """Build actor list from VISMESH_ mesh objects.
+
+    Each VISMESH_ object becomes a 'vis-blocker' entity in the JSONC.
+    The art-group name is derived from the Blender object name.
+    Vis-blockers spawn visible by default; a vis-trigger can hide/show them.
+
+    Returns list of actor dicts (same format as collect_actors output).
+    """
+    import mathutils
+    out = []
+    for o in _level_objects(scene):
+        if o.type != "MESH" or not o.name.startswith("VISMESH_"):
+            continue
+        l = o.location
+        gx, gy, gz = round(l.x, 4), round(l.z, 4), round(-l.y, 4)
+        # bsphere: use world-space bounding box diagonal as radius
+        world_corners = [o.matrix_world @ mathutils.Vector(c) for c in o.bound_box]
+        xs = [v.x for v in world_corners]
+        ys = [v.z for v in world_corners]
+        zs = [-v.y for v in world_corners]
+        dx, dy, dz = max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs)
+        half_diag = round((dx**2 + dy**2 + dz**2)**0.5 * 0.5, 4)
+        ag_name   = _vismesh_ag_name(o.name)
+        sg_name   = _vismesh_sg_name(o.name)
+        lump_name = _vismesh_lump_name(o.name)
+        hidden_at_start = bool(o.get("og_hidden_at_start", False))
+        out.append({
+            "trans":     [gx, gy, gz],
+            "etype":     "vis-blocker",
+            "game_task": "(game-task none)",
+            "quat":      [0, 0, 0, 1],
+            "vis_id":    0,
+            "bsphere":   [gx, gy, gz, max(half_diag, 1.0)],
+            "lump": {
+                "name":     lump_name,
+                "art-name": ag_name,
+                "hidden":   ["uint32", 1 if hidden_at_start else 0],
+            },
+            # Private fields for GLB export — stripped before write_jsonc
+            "_blender_obj_name": o.name,
+            "_sg_name":          sg_name,
+            "_ag_name":          ag_name,
+        })
+        log(f"  [vis-blocker] {o.name}  ag={ag_name}  hidden-at-start={hidden_at_start}")
+    return out
+
+
+def export_vis_blocker_glbs(ctx, name, vis_blockers):
+    """Export each VISMESH_ object as its own GLB into the level directory.
+
+    The mesh is exported at its world-space position. The art-group name is
+    derived from the Blender object name (VISMESH_my-wall-1 -> my-wall-1.glb).
+    The level's main GLB already excludes VISMESH_ objects (see export_glb).
+    """
+    if not vis_blockers:
+        return
+    d = _ldir(name)
+    d.mkdir(parents=True, exist_ok=True)
+
+    prev_active   = ctx.view_layer.objects.active
+    prev_selected = [o for o in ctx.scene.objects if o.select_get()]
+
+    for blocker in vis_blockers:
+        obj_name = blocker["_blender_obj_name"]
+        ag_name  = blocker["_ag_name"]
+        obj = ctx.scene.objects.get(obj_name)
+        if not obj:
+            log(f"  [vis-blocker-glb] WARNING: '{obj_name}' not found in scene — skipped")
+            continue
+
+        for o in ctx.scene.objects:
+            o.select_set(False)
+        obj.select_set(True)
+        ctx.view_layer.objects.active = obj
+
+        glb_stem = ag_name[:-3]  # strip "-ag" -> e.g. "my-wall-1"
+        out_path = str(d / f"{glb_stem}.glb")
+
+        bpy.ops.export_scene.gltf(
+            filepath=out_path, export_format="GLB",
+            export_vertex_color="ACTIVE", export_normals=True,
+            export_materials="EXPORT", export_texcoords=True,
+            export_apply=True, use_selection=True,
+            export_yup=True, export_skins=False, export_animations=False,
+            export_extras=True)
+        log(f"  [vis-blocker-glb] exported '{obj_name}' -> {out_path}")
+
+    for o in ctx.scene.objects:
+        o.select_set(False)
+    for o in prev_selected:
+        o.select_set(True)
+    ctx.view_layer.objects.active = prev_active
+
+
+def collect_vis_trigger_actors(scene, vis_blockers):
+    """Build vis-trigger actor list from VOL_ meshes linked to VISMESH_ objects.
+
+    Each VOL_ → VISMESH_ link produces one vis-trigger entity.
+    The trigger's target-name lump must match the vis-blocker's emitted 'name
+    lump (vis-blocker-<slug>), since process-by-ename matches on that string.
+
+    action lump: 0 = hide on enter, 1 = show on enter, 2 = toggle on enter.
+    Default is hide (0).
+    """
+    # Build slug -> lump name map from the collected vis_blockers
+    slug_to_lump = {}
+    for vb in vis_blockers:
+        slug_to_lump[vb["_blender_obj_name"]] = vb["lump"]["name"]
+
+    out = []
+    counter = 0
+    for vol in _level_objects(scene):
+        if vol.type != "MESH" or not vol.name.startswith("VOL_"):
+            continue
+        for entry in _vol_links(vol):
+            if _classify_target(entry.target_name) != "vis-blocker":
+                continue
+            target_obj = scene.objects.get(entry.target_name)
+            if not target_obj:
+                log(f"  [WARNING] vis-trigger {vol.name}: target '{entry.target_name}' not in scene — skipped")
+                continue
+            target_lump_name = slug_to_lump.get(entry.target_name)
+            if not target_lump_name:
+                log(f"  [WARNING] vis-trigger {vol.name}: '{entry.target_name}' not in vis_blockers list — skipped")
+                continue
+            xmin, xmax, ymin, ymax, zmin, zmax, cx, cy, cz, rad = _vol_aabb(vol)
+            # behaviour string -> action int: "hide"=0, "show"=1, "toggle"=2
+            action_map = {"hide": 0, "show": 1, "toggle": 2}
+            action = action_map.get(str(entry.behaviour), 0)
+            uid = counter; counter += 1
+            out.append({
+                "trans":     [cx, cy, cz],
+                "etype":     "vis-trigger",
+                "game_task": "(game-task none)",
+                "quat":      [0, 0, 0, 1],
+                "vis_id":    0,
+                "bsphere":   [cx, cy, cz, rad],
+                "lump": {
+                    "name":        f"vis-trig-{uid}",
+                    "target-name": target_lump_name,
+                    "action":      ["uint32", action],
+                    "bound-xmin":  ["meters", xmin],
+                    "bound-xmax":  ["meters", xmax],
+                    "bound-ymin":  ["meters", ymin],
+                    "bound-ymax":  ["meters", ymax],
+                    "bound-zmin":  ["meters", zmin],
+                    "bound-zmax":  ["meters", zmax],
+                },
+            })
+            log(f"  [vis-trigger] {vol.name} → {entry.target_name} (lump: {target_lump_name}, action={action})")
+    return out
+
+
 def collect_cameras(scene):
     """Build camera actor list from CAMERA_ camera objects.
 
@@ -594,7 +773,7 @@ def collect_cameras(scene):
     return camera_actors, trigger_actors
 
 
-def write_gc(name, has_triggers=False, has_checkpoints=False, has_aggro_triggers=False):
+def write_gc(name, has_triggers=False, has_checkpoints=False, has_aggro_triggers=False, has_vis_blockers=False):
     """Write obs.gc: always emits camera-marker type; if has_triggers also
     emits camera-trigger type; if has_checkpoints emits checkpoint-trigger type;
     if has_aggro_triggers emits aggro-trigger type.
@@ -878,6 +1057,119 @@ def write_gc(name, has_triggers=False, has_checkpoints=False, has_aggro_triggers
         ]
         log(f"  [write_gc] aggro-trigger type embedded")
 
+    if has_vis_blockers:
+        lines += [
+            ";; vis-blocker: a process-drawable that displays a custom mesh.",
+            ";; Spawns visible or hidden based on 'hidden' lump (0=visible, 1=hidden).",
+            ";; Responds to 'draw event: (send-event proc 'draw #t/#f) to show/hide.",
+            "(deftype vis-blocker (process-drawable)",
+            "  ((art-name  string  :offset-assert 176)",
+            "   (initially-hidden symbol :offset-assert 180))",
+            "  :heap-base #x50",
+            "  :size-assert #xb8",
+            "  (:states vis-blocker-idle))",
+            "",
+            "(defstate vis-blocker-idle (vis-blocker)",
+            "  :event",
+            "  (behavior ((proc process) (argc int) (message symbol) (block event-message-block))",
+            "    (case message",
+            "      (('draw)",
+            "       (if (-> block param 0)",
+            "         (logclear! (-> self draw status) (draw-status hidden))",
+            "         (logior!  (-> self draw status) (draw-status hidden))))",
+            "      (('toggle)",
+            "       (if (logtest? (-> self draw status) (draw-status hidden))",
+            "         (logclear! (-> self draw status) (draw-status hidden))",
+            "         (logior!  (-> self draw status) (draw-status hidden))))))",
+            "  :code",
+            "  (behavior ()",
+            "    (transform-post)",
+            "    (loop",
+            "      (logior! (-> self mask) (process-mask sleep))",
+            "      (suspend))))",
+            "",
+            "(defmethod init-from-entity! ((this vis-blocker) (arg0 entity-actor))",
+            "  (set! (-> this root) (new 'process 'trsqv))",
+            "  (process-drawable-from-entity! this arg0)",
+            "  (set! (-> this art-name) (res-lump-struct arg0 'art-name string))",
+            "  (when (-> this art-name)",
+            "    (initialize-skeleton-by-name this (-> this art-name) '()))",
+            "  (let ((hidden-val (the int (res-lump-value arg0 'hidden uint128))))",
+            "    (when (nonzero? hidden-val)",
+            "      (logior! (-> this draw status) (draw-status hidden))))",
+            "  (format 0 \"[vis-blocker] born: ~A~%\" (-> this art-name))",
+            "  (go vis-blocker-idle)",
+            "  (none))",
+            "",
+            ";; vis-trigger: AABB volume that hides/shows a named vis-blocker.",
+            ";; Reads target-name (string), action (uint32: 0=hide,1=show,2=toggle),",
+            ";; and AABB bound-* meters lumps.",
+            "(deftype vis-trigger (process-drawable)",
+            "  ((target-name  string  :offset-assert 176)",
+            "   (action       int32   :offset-assert 180)",
+            "   (cull-radius  float   :offset-assert 184)",
+            "   (xmin         float   :offset-assert 188)",
+            "   (xmax         float   :offset-assert 192)",
+            "   (ymin         float   :offset-assert 196)",
+            "   (ymax         float   :offset-assert 200)",
+            "   (zmin         float   :offset-assert 204)",
+            "   (zmax         float   :offset-assert 208)",
+            "   (inside       symbol  :offset-assert 212))",
+            "  :heap-base #x80",
+            "  :size-assert #xd8",
+            "  (:states vis-trigger-active))",
+            "",
+            "(defstate vis-trigger-active (vis-trigger)",
+            "  :code",
+            "  (behavior ()",
+            "    (loop",
+            "      (when (and *target* (zero? (mod (-> *display* base-frame-counter) 4)))",
+            "        (let* ((pos  (-> *target* control trans))",
+            "               (dx   (- (-> pos x) (-> self root trans x)))",
+            "               (dy   (- (-> pos y) (-> self root trans y)))",
+            "               (dz   (- (-> pos z) (-> self root trans z)))",
+            "               (cr   (-> self cull-radius))",
+            "               (in-vol (and",
+            "                 (< (+ (* dx dx) (* dy dy) (* dz dz)) (* cr cr))",
+            "                 (< (-> self xmin) (-> pos x)) (< (-> pos x) (-> self xmax))",
+            "                 (< (-> self ymin) (-> pos y)) (< (-> pos y) (-> self ymax))",
+            "                 (< (-> self zmin) (-> pos z)) (< (-> pos z) (-> self zmax)))))",
+            "          (when (and in-vol (not (-> self inside)))",
+            "            (set! (-> self inside) #t)",
+            "            (let ((target (process-by-ename (-> self target-name))))",
+            "              (when target",
+            "                (case (-> self action)",
+            "                  ((0) (send-event target 'draw #f))",
+            "                  ((1) (send-event target 'draw #t))",
+            "                  ((2) (send-event target 'toggle))))))",
+            "          (when (and (not in-vol) (-> self inside))",
+            "            (set! (-> self inside) #f))))",
+            "      (suspend))))",
+            "",
+            "(defmethod init-from-entity! ((this vis-trigger) (arg0 entity-actor))",
+            "  (set! (-> this root) (new 'process 'trsqv))",
+            "  (process-drawable-from-entity! this arg0)",
+            "  (set! (-> this target-name) (res-lump-struct arg0 'target-name string))",
+            "  (set! (-> this action) (the int (res-lump-value arg0 'action uint128)))",
+            "  (set! (-> this xmin)   (res-lump-float arg0 'bound-xmin))",
+            "  (set! (-> this xmax)   (res-lump-float arg0 'bound-xmax))",
+            "  (set! (-> this ymin)   (res-lump-float arg0 'bound-ymin))",
+            "  (set! (-> this ymax)   (res-lump-float arg0 'bound-ymax))",
+            "  (set! (-> this zmin)   (res-lump-float arg0 'bound-zmin))",
+            "  (set! (-> this zmax)   (res-lump-float arg0 'bound-zmax))",
+            "  (let* ((hx (* 0.5 (- (-> this xmax) (-> this xmin))))",
+            "         (hy (* 0.5 (- (-> this ymax) (-> this ymin))))",
+            "         (hz (* 0.5 (- (-> this zmax) (-> this zmin)))))",
+            "    (set! (-> this cull-radius) (sqrtf (+ (* hx hx) (* hy hy) (* hz hz)))))",
+            "  (set! (-> this inside) #f)",
+            "  (format 0 \"[vis-trigger] armed: ~A action ~D cull-r ~M~%\"",
+            "    (-> this target-name) (-> this action) (-> this cull-radius))",
+            "  (go vis-trigger-active)",
+            "  (none))",
+            "",
+        ]
+        log(f"  [write_gc] vis-blocker + vis-trigger types embedded")
+
     new_text = "\n".join(lines)
     if p.exists() and p.read_text() == new_text:
         log(f"Skipped {p} (unchanged)")
@@ -1027,11 +1319,13 @@ def _vol_remove_link_to(vol, target_name):
 
 
 def _classify_target(target_name):
-    """Return one of 'camera', 'checkpoint', 'enemy', or '' for an unknown target."""
+    """Return one of 'camera', 'checkpoint', 'enemy', 'vis-blocker', or '' for an unknown target."""
     if target_name.startswith("CAMERA_"):
         return "camera"
     if target_name.startswith("CHECKPOINT_") and not target_name.endswith("_CAM"):
         return "checkpoint"
+    if target_name.startswith("VISMESH_"):
+        return "vis-blocker"
     if target_name.startswith("ACTOR_") and "_wp_" not in target_name and "_wpb_" not in target_name:
         parts = target_name.split("_", 2)
         if len(parts) >= 3 and _actor_supports_aggro_trigger(parts[1]):
@@ -1964,16 +2258,32 @@ def needed_code(actors):
 # FILE WRITERS
 # ---------------------------------------------------------------------------
 
-def write_jsonc(name, actors, ambients, camera_actors=None, base_id=10000):
+def write_jsonc(name, actors, ambients, camera_actors=None, base_id=10000, vis_blockers=None):
     d = _ldir(name); d.mkdir(parents=True, exist_ok=True)
     all_actors = list(actors) + (camera_actors or [])
     ags = needed_ags(actors)  # camera-tracker has no art group, so only scan regular actors
+
+    # Add vis-blocker art groups (custom GLBs exported alongside the level GLB)
+    _PRIVATE_KEYS = {"_blender_obj_name", "_sg_name", "_ag_name"}
+    vis_blocker_ags = []
+    clean_vis_blockers = []
+    for vb in (vis_blockers or []):
+        ag = vb["_ag_name"]
+        if ag not in vis_blocker_ags:
+            vis_blocker_ags.append(ag)
+        # Strip private keys before writing to JSONC
+        clean_vb = {k: v for k, v in vb.items() if k not in _PRIVATE_KEYS}
+        clean_vis_blockers.append(clean_vb)
+    all_actors = all_actors + clean_vis_blockers
+
+    all_ags = [g.replace(".go", "") for g in ags] + [ag.replace(".go", "") for ag in vis_blocker_ags]
+
     data = {
         "long_name": name, "iso_name": _iso(name), "nickname": _nick(name),
         "gltf_file": f"custom_assets/jak1/levels/{name}/{name}.glb",
         "automatic_wall_detection": True, "automatic_wall_angle": 45.0,
         "double_sided_collide": False, "base_id": base_id,
-        "art_groups": [g.replace(".go","") for g in ags],
+        "art_groups": all_ags,
         "custom_models": [], "textures": [["village1-vis-alpha"]],
         "tex_remap": "village1", "sky": "village1", "tpages": [],
         "ambients": ambients, "actors": all_actors,
@@ -1984,7 +2294,8 @@ def write_jsonc(name, actors, ambients, camera_actors=None, base_id=10000):
         log(f"Skipped {p} (unchanged)")
     else:
         p.write_text(new_text)
-        log(f"Wrote {p}  ({len(actors)} actors + {len(camera_actors or [])} cameras)")
+        n_vis = len(clean_vis_blockers)
+        log(f"Wrote {p}  ({len(actors)} actors + {len(camera_actors or [])} cameras + {n_vis} vis-blockers)")
 
 def write_gd(name, ags, code_deps, tpages=None):
     """Write .gd file.
@@ -2382,11 +2693,12 @@ def export_glb(ctx, name):
         # Gather exportable objects: meshes in Geometry (and its children) except Reference
         if geo_col is not None:
             export_objs = _recursive_col_objects(geo_col, exclude_no_export=True)
-            export_objs = [o for o in export_objs if o.type == "MESH"]
+            export_objs = [o for o in export_objs if o.type == "MESH"
+                           and not o.name.startswith("VISMESH_")]
         else:
             # No Geometry sub-collection yet — fall back to all meshes in the level.
             # Exclude WATER_ volumes (invisible helpers, not renderable geometry).
-            _HELPER_PREFIXES = ("WATER_", "VOL_", "CPVOL_", "NAVMESH_")
+            _HELPER_PREFIXES = ("WATER_", "VOL_", "CPVOL_", "NAVMESH_", "VISMESH_")
             export_objs = [o for o in _recursive_col_objects(level_col, exclude_no_export=True)
                            if o.type == "MESH"
                            and not any(o.name.startswith(p) for p in _HELPER_PREFIXES)]

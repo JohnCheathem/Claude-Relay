@@ -25,12 +25,15 @@ from .properties import OGProperties
 
 def _is_linkable(obj):
     """True if this object type can accept a trigger volume link.
-    Cameras, checkpoints, player spawns, and nav-enemy actors are linkable.
+    Cameras, checkpoints, player spawns, nav-enemy actors, and vis-blocker
+    meshes (VISMESH_) are linkable.
     Process-drawable enemies (Yeti, Bully, etc.) are NOT linkable because
     they don't respond to 'cue-chase events.
     """
     if obj is None:
         return False
+    if obj.type == "MESH" and obj.name.startswith("VISMESH_"):
+        return True
     if obj.type == "CAMERA" and obj.name.startswith("CAMERA_"):
         return True
     if obj.type == "EMPTY":

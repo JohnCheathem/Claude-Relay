@@ -41,6 +41,7 @@ from .export import (
     _vols_linking_to, _vol_get_link_to, _vol_remove_link_to,
     _classify_target, _clean_orphaned_vol_links, log, collect_actors,
     collect_spawns, collect_ambients, needed_ags, needed_code,
+    collect_vis_blockers, export_vis_blocker_glbs,
     patch_level_info, patch_game_gp, discover_custom_levels, remove_level,
     export_glb,
 )
@@ -728,6 +729,8 @@ class OG_OT_ExportBuild(Operator):
             return {"CANCELLED"}
         try:
             export_glb(ctx, name)
+            vis_blockers = collect_vis_blockers(ctx.scene)
+            export_vis_blocker_glbs(ctx, name, vis_blockers)
         except Exception as e:
             self.report({"ERROR"}, f"GLB export failed: {e}"); return {"CANCELLED"}
         _BUILD_STATE.clear()
@@ -968,6 +971,8 @@ class OG_OT_GeoRebuild(Operator):
             return {"CANCELLED"}
         try:
             export_glb(ctx, name)
+            vis_blockers = collect_vis_blockers(ctx.scene)
+            export_vis_blocker_glbs(ctx, name, vis_blockers)
         except Exception as e:
             self.report({"ERROR"}, f"GLB export failed: {e}"); return {"CANCELLED"}
         _GEO_REBUILD_STATE.clear()
@@ -1011,6 +1016,8 @@ class OG_OT_ExportBuildPlay(Operator):
             return {"CANCELLED"}
         try:
             export_glb(ctx, name)
+            vis_blockers = collect_vis_blockers(ctx.scene)
+            export_vis_blocker_glbs(ctx, name, vis_blockers)
         except Exception as e:
             self.report({"ERROR"}, f"GLB export failed: {e}")
             return {"CANCELLED"}
@@ -1352,6 +1359,26 @@ class OG_OT_UnlinkVolume(Operator):
             self.report({"INFO"}, f"Unlinked all entries from {count} volume(s)")
         else:
             self.report({"WARNING"}, "No linked VOL_ meshes in selection")
+        return {"FINISHED"}
+
+
+class OG_OT_ToggleVisBlockerHidden(Operator):
+    """Toggle the 'spawns hidden' state on a VISMESH_ vis-blocker mesh."""
+    bl_idname   = "og.toggle_vis_blocker_hidden"
+    bl_label    = "Toggle Spawn Visibility"
+    bl_description = "Toggle whether this vis-blocker mesh starts the level hidden or visible"
+
+    obj_name: bpy.props.StringProperty()
+
+    def execute(self, ctx):
+        obj = ctx.scene.objects.get(self.obj_name)
+        if not obj:
+            self.report({"ERROR"}, f"Object '{self.obj_name}' not found")
+            return {"CANCELLED"}
+        current = bool(obj.get("og_hidden_at_start", False))
+        obj["og_hidden_at_start"] = not current
+        state = "hidden" if not current else "visible"
+        self.report({"INFO"}, f"{obj.name} will spawn {state}")
         return {"FINISHED"}
 
 

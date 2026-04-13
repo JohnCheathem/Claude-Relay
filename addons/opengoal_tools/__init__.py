@@ -116,6 +116,7 @@ from .operators import (
     OG_OT_UnlinkVolume, OG_OT_CleanOrphanedLinks,
     OG_OT_RemoveVolLink, OG_OT_AddLinkFromSelection, OG_OT_SpawnAggroTrigger,
     OG_OT_SetActorLink, OG_OT_ClearActorLink,
+    OG_OT_ToggleVisBlockerHidden,
     OG_OT_SelectAndFrame, OG_OT_DeleteObject,
     OG_OT_SpawnEntity, OG_OT_ClearPreviews,
     OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
@@ -163,7 +164,7 @@ from .panels import (
     OG_PT_ActorTaskGated, OG_PT_ActorVisibility, OG_PT_ActorWaypoints,
     OG_PT_SpawnSettings, OG_PT_CheckpointSettings, OG_PT_AmbientEmitter,
     OG_PT_CameraSettings, OG_PT_CamAnchorInfo,
-    OG_PT_VolumeLinks, OG_PT_NavmeshInfo,
+    OG_PT_VolumeLinks, OG_PT_NavmeshInfo, OG_PT_VisBlockerInfo,
     OG_PT_SelectedLumps, OG_PT_SelectedLumpReference,
     OG_PT_Waypoints, OG_PT_BuildPlay, OG_PT_DevTools, OG_PT_Collision,
 )
@@ -191,6 +192,7 @@ classes = (
     OG_OT_SpawnVolume, OG_OT_SpawnVolumeAutoLink, OG_OT_LinkVolume, OG_OT_UnlinkVolume, OG_OT_CleanOrphanedLinks,
     OG_OT_RemoveVolLink, OG_OT_AddLinkFromSelection, OG_OT_SpawnAggroTrigger,
     OG_OT_SetActorLink, OG_OT_ClearActorLink,
+    OG_OT_ToggleVisBlockerHidden,
     OG_OT_SelectAndFrame, OG_OT_DeleteObject,
     OG_OT_SpawnEntity, OG_OT_ClearPreviews,
     OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
@@ -301,6 +303,7 @@ classes = (
     OG_PT_CamAnchorInfo,
     OG_PT_VolumeLinks,
     OG_PT_NavmeshInfo,
+    OG_PT_VisBlockerInfo,
     # Lump sub-panels
     OG_PT_SelectedLumps,
     OG_PT_SelectedLumpReference,
