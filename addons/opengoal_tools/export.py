@@ -14,7 +14,7 @@ from .data import (
     _actor_links, _actor_get_link, _actor_set_link,
     _actor_remove_link, _build_actor_link_lumps,
     _parse_lump_row, _aggro_event_id, AGGRO_TRIGGER_EVENTS,
-    _LUMP_HARDCODED_KEYS,
+    _LUMP_HARDCODED_KEYS, _is_custom_type,
 )
 from .collections import (
     _get_level_prop, _level_objects,

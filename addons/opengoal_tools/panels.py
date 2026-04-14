@@ -16,6 +16,7 @@ from .data import (
     _actor_links, _actor_get_link, AGGRO_TRIGGER_EVENTS,
     _parse_lump_row, _LUMP_HARDCODED_KEYS,
     GLOBAL_TPAGE_GROUPS,
+    _is_custom_type,
 )
 from .collections import (
     _get_level_prop, _set_level_prop, _level_objects, _active_level_col,
@@ -1048,10 +1049,9 @@ class OG_PT_SpawnCustomTypes(Panel):
                 and "_wp_" not in o.name)
         ]
         # Filter to only unknown (custom) types
-        from .data import _is_custom_type as _ict
         custom_actors = [o for o in custom_actors
-                         if _ict(o.name.split("_", 2)[1]
-                                 if len(o.name.split("_", 2)) >= 3 else "")]
+                         if _is_custom_type(o.name.split("_", 2)[1])
+                         if len(o.name.split("_", 2)) >= 3]
         if custom_actors:
             layout.separator(factor=0.3)
             sub = layout.box()
