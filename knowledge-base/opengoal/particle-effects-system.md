@@ -1,5 +1,7 @@
 # Particle Effects System — Jak 1 OpenGOAL Custom Levels
 
+> **⚠ See also:** [`particle-effects-debug.md`](particle-effects-debug.md) for known build system issues with the current implementation on `feature/effects`. The "No rule to make" error and its root cause are documented there with the fix approach.
+
 A complete reference for how particle effects work in Jak 1, how vanilla places them in levels, and the correct approach for custom level mods.
 
 ---
