@@ -1254,9 +1254,6 @@ class OG_OT_SetMusicZoneFlava(bpy.types.Operator):
         return {"FINISHED"}
 
     def invoke(self, ctx, event):
-        sel = ctx.active_object
-        cur = sel.get("og_music_flava", "default") if sel else "default"
-        self.flava = cur
         ctx.window_manager.invoke_search_popup(self)
         return {"RUNNING_MODAL"}
 
