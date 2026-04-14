@@ -121,7 +121,8 @@ class OGProperties(PropertyGroup):
                                           description="Bsphere radius for new sound emitter empties")
     # Music zone emitter props
     og_music_amb_bank:     EnumProperty(name="Music Bank", items=LEVEL_BANKS, default="village1",
-                                        description="Music bank this zone will activate when the player enters")
+                                        description="Music bank this zone will activate when the player enters",
+                                        update=lambda self, ctx: setattr(self, "og_music_amb_flava", "default"))
     og_music_amb_flava:    EnumProperty(name="Flava", items=_music_flava_items_cb,
                                         description="Music variant/sub-track for this zone (filtered by selected bank)")
     og_music_amb_priority: FloatProperty(name="Priority", default=10.0, min=0.0, max=100.0,
