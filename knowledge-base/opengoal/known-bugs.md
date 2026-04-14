@@ -106,3 +106,38 @@ FileNotFoundError: [WinError 3] The system cannot find the path specified: 'data
 **Workaround:** Do not place bonelurker actors. All other enemy types work.
 
 **Status:** Under investigation. Remove bonelurker from ENTITY_DEFS spawn picker pending fix.
+
+---
+
+## [FIXED] _prop_row write-in-draw crash — Blender 4.4
+
+**Symptom:** Panel settings (platform sync, enemy idle distance, camera blend, etc.) disappear entirely when selecting an actor placed in a previous session. Error in console:
+```
+AttributeError: Writing to ID classes in this context is not allowed: ACTOR_plat-eco_0,
+Object datablock, error setting Object.og_sync_period
+```
+
+**Root cause:** Blender 4.4 raised the restriction on writes inside `draw()` to include custom ID property dict writes (`obj["key"] = val`). `_prop_row` in `utils.py` was writing defaults for missing keys during the draw pass, which aborted the entire panel draw from that point down.
+
+**Fix (shipped 2026-04-14):** `_prop_row` now defers the write via `bpy.app.timers.register(fn, first_interval=0.0)` — fires after the current redraw completes. Shows a greyed placeholder on the first frame; live input on next redraw.
+
+**Affected:** Any actor placed before the addon update that lacks custom prop keys (e.g. `og_sync_period`, `og_idle_distance`, `og_cam_interp`). Newly spawned actors are unaffected — keys are initialised in `execute()` context at spawn time.
+
+**Status:** Fixed in main.
+
+---
+
+## [FIXED] Preview meshes exported to game / sorted into Geometry/Solid
+
+**Symptom (pre-fix):** Viz meshes (enemy model previews) appeared in-game after Export & Build, and Sort Collection Objects moved them into the Geometry/Solid sub-collection.
+
+**Root cause:**
+1. `_ensure_preview_collection` was setting `col["og_no_export"] = True` (custom prop dict), but `_col_is_no_export` reads `getattr(col, "og_no_export")` which reads the RNA property — a completely separate value. The no-export flag was never seen.
+2. `_classify_object` had no guard for `og_preview_mesh` / `og_waypoint_preview_mesh` objects, so sort routed them to `_COL_PATH_GEO_SOLID`.
+
+**Fix (shipped 2026-04-14):**
+- `model_preview.py` now sets `col.og_no_export = True` (RNA property).
+- `_classify_object` returns `None` for preview mesh objects.
+- Export fallback path explicitly filters `og_preview_mesh` / `og_waypoint_preview_mesh`.
+
+**Status:** Fixed in main.
