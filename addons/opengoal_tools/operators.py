@@ -12,6 +12,7 @@ from .data import (
     ENTITY_DEFS, ENTITY_ENUM_ITEMS, ENEMY_ENUM_ITEMS, PROP_ENUM_ITEMS,
     NPC_ENUM_ITEMS, PICKUP_ENUM_ITEMS, PLATFORM_ENUM_ITEMS, CRATE_ITEMS, CRATE_PICKUP_ITEMS,
     ALL_SFX_ITEMS, SBK_SOUNDS, LEVEL_BANKS, LUMP_REFERENCE, ACTOR_LINK_DEFS,
+    MUSIC_FLAVA_TABLE,
     NAV_UNSAFE_TYPES, NEEDS_PATH_TYPES, NEEDS_PATHB_TYPES, IS_PROP_TYPES,
     ETYPE_AG, ETYPE_CODE,
     needed_tpages, _lump_ref_for_etype, _actor_link_slots, _actor_has_links,
@@ -1192,6 +1193,72 @@ class OG_OT_AddMusicZone(Operator):
         _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_SOUND_EMITTERS)
         self.report({"INFO"}, f"Added '{name}' → music:{bank} flava:{flava}")
         return {"FINISHED"}
+
+
+# --- Bank enum items (static — all valid banks) ---
+_MUSIC_BANK_ITEMS = [(b[0], b[1], b[2], b[3]) for b in LEVEL_BANKS if b[0] != "none"]
+
+
+class OG_OT_SetMusicZoneBank(bpy.types.Operator):
+    """Pick a music bank for the selected music zone"""
+    bl_idname   = "og.set_music_zone_bank"
+    bl_label    = "Set Music Bank"
+    bl_property = "bank"
+
+    bank: bpy.props.EnumProperty(
+        name="Music Bank",
+        description="Select music bank for this zone",
+        items=_MUSIC_BANK_ITEMS,
+    )
+
+    def execute(self, ctx):
+        sel = ctx.active_object
+        if sel and sel.name.startswith("AMBIENT_mus"):
+            sel["og_music_bank"]  = self.bank
+            sel["og_music_flava"] = "default"   # reset flava when bank changes
+        return {"FINISHED"}
+
+    def invoke(self, ctx, event):
+        sel = ctx.active_object
+        cur = sel.get("og_music_bank", "village1") if sel else "village1"
+        if cur in [b[0] for b in _MUSIC_BANK_ITEMS]:
+            self.bank = cur
+        ctx.window_manager.invoke_search_popup(self)
+        return {"RUNNING_MODAL"}
+
+
+def _flava_items_for_active(self, context):
+    """Dynamic items callback — flavas for whatever bank the selected object has."""
+    sel  = context.active_object if context else None
+    bank = sel.get("og_music_bank", "village1") if sel else "village1"
+    flavas = MUSIC_FLAVA_TABLE.get(bank, ["default"])
+    return [(f, f, "", i) for i, f in enumerate(flavas)]
+
+
+class OG_OT_SetMusicZoneFlava(bpy.types.Operator):
+    """Pick a flava variant for the selected music zone"""
+    bl_idname   = "og.set_music_zone_flava"
+    bl_label    = "Set Music Flava"
+    bl_property = "flava"
+
+    flava: bpy.props.EnumProperty(
+        name="Flava",
+        description="Select music variant for this zone",
+        items=_flava_items_for_active,
+    )
+
+    def execute(self, ctx):
+        sel = ctx.active_object
+        if sel and sel.name.startswith("AMBIENT_mus"):
+            sel["og_music_flava"] = self.flava
+        return {"FINISHED"}
+
+    def invoke(self, ctx, event):
+        sel = ctx.active_object
+        cur = sel.get("og_music_flava", "default") if sel else "default"
+        self.flava = cur
+        ctx.window_manager.invoke_search_popup(self)
+        return {"RUNNING_MODAL"}
 
 
 class OG_OT_SpawnCamera(Operator):

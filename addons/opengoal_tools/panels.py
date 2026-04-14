@@ -1342,37 +1342,30 @@ def _draw_selected_emitter(layout, sel):
 
 def _draw_selected_music_zone(layout, sel):
     """Draw editable settings for an AMBIENT_mus* music zone."""
-    from .data import MUSIC_FLAVA_TABLE, LEVEL_BANKS
+    from .data import MUSIC_FLAVA_TABLE
     layout.label(text=sel.name, icon="SOUND")
 
     box = layout.box()
-    bank = sel.get("og_music_bank", "village1")
+    bank  = sel.get("og_music_bank",  "village1")
+    flava = sel.get("og_music_flava", "default")
+    flava_list = MUSIC_FLAVA_TABLE.get(bank, ["default"])
 
-    # Bank — EnumProperty on the object itself doesn't exist, so draw as custom prop.
-    # We show the current value as a label then let user edit via the custom prop field.
+    # Bank picker
     row = box.row(align=True)
-    row.label(text="Music Bank:")
-    row.prop(sel, '["og_music_bank"]', text="")
+    row.label(text="Bank:")
+    op = row.operator("og.set_music_zone_bank", text=bank, icon="SOUND")
 
-    # Flava — show current value as label (no dynamic enum on the object)
-    flava       = sel.get("og_music_flava", "default")
-    flava_list  = MUSIC_FLAVA_TABLE.get(bank, ["default"])
-    flava_label = flava if flava in flava_list else f"{flava} ⚠"
+    # Flava picker — button label shows current value
     row2 = box.row(align=True)
     row2.label(text="Flava:")
-    row2.prop(sel, '["og_music_flava"]', text="")
+    flava_display = flava if flava in flava_list else f"{flava} ⚠"
+    op2 = row2.operator("og.set_music_zone_flava", text=flava_display, icon="ALIGN_JUSTIFY")
     if flava not in flava_list:
-        box.label(text=f"⚠ '{flava}' not valid for {bank} — will export as default", icon="ERROR")
+        box.label(text=f"⚠ '{flava}' not in {bank} — exports as default", icon="ERROR")
 
     box.separator(factor=0.3)
     _prop_row(box, sel, "og_music_priority", "Priority:",  10.0)
     _prop_row(box, sel, "og_music_radius",   "Radius (m):", 40.0)
-
-    # Hint: valid flavas for this bank
-    sub = box.column(align=True)
-    sub.enabled = False
-    sub.label(text=f"Valid flavas for {bank}:", icon="INFO")
-    sub.label(text=", ".join(flava_list))
 
 
 def _draw_selected_volume(layout, sel, scene):

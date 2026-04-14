@@ -135,6 +135,7 @@ from .operators import (
     OG_OT_ExportBuildPlay,
     OG_OT_OpenFolder, OG_OT_OpenFile,
     OG_OT_BakeLighting, OG_OT_PickSound, OG_OT_AddSoundEmitter, OG_OT_AddMusicZone,
+    OG_OT_SetMusicZoneBank, OG_OT_SetMusicZoneFlava,
     OG_OT_RemoveLevel, OG_OT_RefreshLevels,
 )
 from .panels import (
@@ -226,6 +227,8 @@ classes = (
     OG_OT_PickSound,
     OG_OT_AddSoundEmitter,
     OG_OT_AddMusicZone,
+    OG_OT_SetMusicZoneBank,
+    OG_OT_SetMusicZoneFlava,
     OG_OT_RemoveLevel,
     OG_OT_RefreshLevels,
     # ── Collection system operators ──────────────────────────────────────
