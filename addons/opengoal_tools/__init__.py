@@ -174,7 +174,6 @@ from .panels import (
     OG_PT_SelectedLumps, OG_PT_SelectedLumpReference,
     OG_PT_Waypoints, OG_PT_BuildPlay, OG_PT_DevTools, OG_PT_Collision,
     OG_PT_ActorGoalCode,
-    OG_PT_SpawnCustomTypes,
 )
 
 from .utils import _preview_collections, _load_previews, _unload_previews
