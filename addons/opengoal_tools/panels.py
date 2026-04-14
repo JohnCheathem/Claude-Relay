@@ -1362,8 +1362,6 @@ def _draw_selected_camera(layout, sel, scene):
     layout.label(text=sel.name, icon="CAMERA_DATA")
 
     mode   = sel.get("og_cam_mode",   "fixed")
-    interp = float(sel.get("og_cam_interp", 1.0))
-    fov    = float(sel.get("og_cam_fov",    0.0))
 
     # ── Mode selector ────────────────────────────────────────────────────
     box = layout.box()
@@ -3097,7 +3095,6 @@ class OG_PT_ActorCaveElevator(Panel):
         layout = self.layout
         sel    = ctx.active_object
         mode   = int(sel.get("og_elevator_mode", 0))
-        rot    = float(sel.get("og_elevator_rot", 0.0))
 
         box = layout.box()
         box.label(text="Mode", icon="SETTINGS")
