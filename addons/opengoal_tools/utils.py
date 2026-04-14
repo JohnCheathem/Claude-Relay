@@ -93,30 +93,11 @@ def _draw_platform_settings(layout, sel, scene):
 
         col = box.column(align=True)
 
-        # Period
-        if "og_sync_period"   not in sel: sel["og_sync_period"]   = 4.0
-        if "og_sync_phase"    not in sel: sel["og_sync_phase"]    = 0.0
-        if "og_sync_ease_out" not in sel: sel["og_sync_ease_out"] = 0.15
-        if "og_sync_ease_in"  not in sel: sel["og_sync_ease_in"]  = 0.15
-
-        row = col.row(align=True)
-        row.label(text="Period (s):")
-        row.prop(sel, '["og_sync_period"]', text="")
-
-        # Phase
-        row = col.row(align=True)
-        row.label(text="Phase (0–1):")
-        row.prop(sel, '["og_sync_phase"]', text="")
-
-        # Ease out
-        row = col.row(align=True)
-        row.label(text="Ease Out:")
-        row.prop(sel, '["og_sync_ease_out"]', text="")
-
-        # Ease in
-        row = col.row(align=True)
-        row.label(text="Ease In:")
-        row.prop(sel, '["og_sync_ease_in"]', text="")
+        # Period / Phase / Ease — use _prop_row (safe: no writes in draw)
+        _prop_row(col, sel, "og_sync_period",   "Period (s):",  4.0)
+        _prop_row(col, sel, "og_sync_phase",    "Phase (0–1):", 0.0)
+        _prop_row(col, sel, "og_sync_ease_out", "Ease Out:",    0.15)
+        _prop_row(col, sel, "og_sync_ease_in",  "Ease In:",     0.15)
 
         # Wrap phase toggle
         wrap = bool(sel.get("og_sync_wrap", 0))
@@ -148,10 +129,7 @@ def _draw_platform_settings(layout, sel, scene):
         box = layout.box()
         box.label(text="Eco Notice Distance", icon="RADIOBUT_ON")
         notice = float(sel.get("og_notice_dist", -1.0))
-        if "og_notice_dist" not in sel: sel["og_notice_dist"] = -1.0
-        row = box.row(align=True)
-        row.label(text="Distance (m, -1=always):")
-        row.prop(sel, '["og_notice_dist"]', text="")
+        _prop_row(box, sel, "og_notice_dist", "Distance (m, -1=always):", -1.0)
         toggle_row = box.row()
         if notice >= 0:
             op = toggle_row.operator("og.nudge_float_prop", text="Set Always Active", icon="RADIOBUT_ON")
@@ -348,3 +326,27 @@ def _draw_wiki_preview(layout, etype: str, ctx=None):
             out.append(' '.join(line))
         for ln in out:
             col.label(text=ln)
+
+# ---------------------------------------------------------------------------
+# Safe UI helper — never writes to object during draw()
+# ---------------------------------------------------------------------------
+
+def _prop_row(layout, obj, key, label, default):
+    """Draw a labelled input row for a custom property.
+
+    If the key already exists on obj, draws layout.prop() so the user can
+    type directly into the field.  If it is missing, draws a read-only label
+    showing the default value instead — the key will be created the next time
+    the object is saved/exported or the user interacts with it via an operator.
+
+    This avoids writing to obj inside a draw() call, which Blender disallows
+    and which causes panels to silently fail or crash on redraw.
+    """
+    row = layout.row(align=True)
+    row.label(text=label)
+    if key in obj:
+        row.prop(obj, f'["{key}"]', text="")
+    else:
+        sub = row.row()
+        sub.enabled = False
+        sub.label(text=f"{default}  (default)")

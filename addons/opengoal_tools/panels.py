@@ -44,7 +44,7 @@ from .utils import (
     _is_linkable, _is_aggro_target, _vol_for_target,
     _ENEMY_CATS, _NPC_CATS, _PICKUP_CATS, _PROP_CATS,
     _draw_platform_settings, _header_sep, _draw_entity_sub,
-    _draw_wiki_preview,
+    _draw_wiki_preview, _prop_row,
     _preview_collections, _load_previews, _unload_previews,
 )
 from . import model_preview as _mp
@@ -1077,10 +1077,7 @@ def _draw_selected_actor(layout, sel, scene):
     if _actor_is_enemy(etype):
         box = layout.box()
         box.label(text="Activation", icon="RADIOBUT_ON")
-        if "og_idle_distance" not in sel: sel["og_idle_distance"] = 80.0
-        row = box.row(align=True)
-        row.label(text="Idle Distance (m):")
-        row.prop(sel, '["og_idle_distance"]', text="")
+        _prop_row(box, sel, "og_idle_distance", "Idle Distance (m):", 80.0)
         sub = box.row()
         sub.enabled = False
         sub.label(text="Player must be closer than this to wake the enemy", icon="INFO")
@@ -1372,16 +1369,11 @@ def _draw_selected_camera(layout, sel, scene):
         op.cam_name = sel.name; op.prop_name = "og_cam_mode"; op.str_val = m
 
     # ── Blend time ───────────────────────────────────────────────────────
-    if "og_cam_interp" not in sel: sel["og_cam_interp"] = 0.5
-    brow = box.row(align=True)
-    brow.label(text="Blend (s):")
-    brow.prop(sel, '["og_cam_interp"]', text="")
+    # ── Blend time ───────────────────────────────────────────────────────
+    _prop_row(box, sel, "og_cam_interp", "Blend (s):", 0.5)
 
     # ── FOV ──────────────────────────────────────────────────────────────
-    if "og_cam_fov" not in sel: sel["og_cam_fov"] = 0.0
-    frow = box.row(align=True)
-    frow.label(text="FOV (0=default):")
-    frow.prop(sel, '["og_cam_fov"]', text="")
+    _prop_row(box, sel, "og_cam_fov", "FOV (0=default):", 0.0)
 
     # ── Mode-specific helpers ────────────────────────────────────────────
     if mode == "standoff":
@@ -1836,10 +1828,7 @@ class OG_PT_ActorActivation(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        if "og_idle_distance" not in sel: sel["og_idle_distance"] = 80.0
-        row = layout.row(align=True)
-        row.label(text="Idle Distance (m):")
-        row.prop(sel, '["og_idle_distance"]', text="")
+        _prop_row(layout, sel, "og_idle_distance", "Idle Distance (m):", 80.0)
         sub = layout.row(); sub.enabled = False
         sub.label(text="Player must be closer than this to wake the enemy", icon="INFO")
 
@@ -2125,10 +2114,7 @@ class OG_PT_ActorCrate(Panel):
         # ── Amount input (only for orbs) ──────────────────────────────────
         _supports_multi = {uid: sm for (uid, _, _, _, sm) in CRATE_PICKUP_ITEMS}
         if _supports_multi.get(pickup, False):
-            if "og_crate_pickup_amount" not in sel: sel["og_crate_pickup_amount"] = 1
-            row = box2.row(align=True)
-            row.label(text="Amount (1–5):")
-            row.prop(sel, '["og_crate_pickup_amount"]', text="")
+            _prop_row(box2, sel, "og_crate_pickup_amount", "Amount (1–5):", 1)
         elif pickup == "buzzer":
             box2.label(text="Amount: 1  (fixed)", icon="INFO")
 
@@ -2225,8 +2211,10 @@ class OG_PT_ActorLauncher(Panel):
         height = float(sel.get("og_spring_height", -1.0))
         row = box.row(align=True)
         row.label(text="Height (m, -1=default):")
-        if "og_spring_height" not in sel: sel["og_spring_height"] = -1.0
-        row.prop(sel, '["og_spring_height"]', text="")
+        if "og_spring_height" in sel:
+            row.prop(sel, '["og_spring_height"]', text="")
+        else:
+            sub = row.row(); sub.enabled = False; sub.label(text="-1.0  (default)")
         if height >= 0:
             op2 = box.operator("og.nudge_float_prop", text="Reset to Default", icon="LOOP_BACK")
             op2.prop_name = "og_spring_height"; op2.delta = -9999.0; op2.val_min = -1.0
@@ -2274,10 +2262,7 @@ class OG_PT_ActorLauncher(Panel):
             box3 = layout.box()
             box3.label(text="Fly Time (optional)", icon="TIME")
             fly_time = float(sel.get("og_launcher_fly_time", -1.0))
-            if "og_launcher_fly_time" not in sel: sel["og_launcher_fly_time"] = -1.0
-            row3 = box3.row(align=True)
-            row3.label(text="Fly Time (s, -1=default):")
-            row3.prop(sel, '["og_launcher_fly_time"]', text="")
+            _prop_row(box3, sel, "og_launcher_fly_time", "Fly Time (s, -1=default):", -1.0)
             if fly_time >= 0:
                 op2 = box3.operator("og.nudge_float_prop", text="Reset to Default", icon="LOOP_BACK")
                 op2.prop_name = "og_launcher_fly_time"; op2.delta = -9999.0; op2.val_min = -1.0
@@ -2319,10 +2304,7 @@ class OG_PT_ActorSpawner(Panel):
         default_str, hint = defaults.get(etype, ("auto", ""))
 
         count = int(sel.get("og_num_lurkers", -1))
-        if "og_num_lurkers" not in sel: sel["og_num_lurkers"] = -1
-        row = box.row(align=True)
-        row.label(text=f"Count (-1=default {default_str}):")
-        row.prop(sel, '["og_num_lurkers"]', text="")
+        _prop_row(box, sel, "og_num_lurkers", f"Count (-1=default {default_str}):", -1)
 
         if count >= 0:
             op2 = box.operator("og.nudge_int_prop", text="Reset to Default", icon="LOOP_BACK")
@@ -2442,22 +2424,11 @@ class OG_PT_ActorWaterVol(Panel):
         swim_y   = float(sel.get("og_water_swim",    water_y - 1.0))
         bottom_y = float(sel.get("og_water_bottom",  water_y - 5.0))
 
-        for prop, default in [
-            ("og_water_surface", 0.0), ("og_water_wade", water_y - 0.5),
-            ("og_water_swim", water_y - 1.0), ("og_water_bottom", water_y - 5.0),
-        ]:
-            if prop not in sel: sel[prop] = default
-
         col = box.column(align=True)
-        for label, prop in [
-            ("Surface Y:",  "og_water_surface"),
-            ("Wade Y:",     "og_water_wade"),
-            ("Swim Y:",     "og_water_swim"),
-            ("Bottom Y:",   "og_water_bottom"),
-        ]:
-            row = col.row(align=True)
-            row.label(text=label)
-            row.prop(sel, f'["{prop}"]', text="")
+        _prop_row(col, sel, "og_water_surface", "Surface Y:",  water_y)
+        _prop_row(col, sel, "og_water_wade",    "Wade Y:",     wade_y)
+        _prop_row(col, sel, "og_water_swim",    "Swim Y:",     swim_y)
+        _prop_row(col, sel, "og_water_bottom",  "Bottom Y:",   bottom_y)
 
         # Show computed depths relative to surface so user can sanity-check
         sub = box.column(align=True)
@@ -2502,33 +2473,11 @@ class OG_PT_WaterMesh(Panel):
         swim    = float(sel.get("og_water_swim",    1.0))
         bottom  = float(sel.get("og_water_bottom",  surface - 5.0))
 
-        for prop, default in [
-            ("og_water_surface", sel.location.z), ("og_water_wade", 0.5),
-            ("og_water_swim", 1.0), ("og_water_bottom", surface - 5.0),
-        ]:
-            if prop not in sel: sel[prop] = default
-
         col = box.column(align=True)
-
-        # Surface Y
-        row = col.row(align=True)
-        row.label(text="Surface Y:")
-        row.prop(sel, '["og_water_surface"]', text="")
-
-        # Wade depth
-        row = col.row(align=True)
-        row.label(text="Wade depth (m below):")
-        row.prop(sel, '["og_water_wade"]', text="")
-
-        # Swim depth
-        row = col.row(align=True)
-        row.label(text="Swim depth (m below):")
-        row.prop(sel, '["og_water_swim"]', text="")
-
-        # Bottom Y
-        row = col.row(align=True)
-        row.label(text="Bottom Y:")
-        row.prop(sel, '["og_water_bottom"]', text="")
+        _prop_row(col, sel, "og_water_surface", "Surface Y:",          surface)
+        _prop_row(col, sel, "og_water_wade",    "Wade depth (m below):", wade)
+        _prop_row(col, sel, "og_water_swim",    "Swim depth (m below):", swim)
+        _prop_row(col, sel, "og_water_bottom",  "Bottom Y:",             bottom)
 
         # Sanity readout
         sub = box.column(align=True)
@@ -2656,10 +2605,7 @@ class OG_PT_ActorSunIrisDoor(Panel):
         box2 = layout.box()
         box2.label(text="Auto-Close Timeout", icon="TIME")
         timeout = float(sel.get("og_door_timeout", 0.0))
-        if "og_door_timeout" not in sel: sel["og_door_timeout"] = 0.0
-        row2 = box2.row(align=True)
-        row2.label(text="Timeout (s, 0=stays open):")
-        row2.prop(sel, '["og_door_timeout"]', text="")
+        _prop_row(box2, sel, "og_door_timeout", "Timeout (s, 0=stays open):", 0.0)
         if timeout > 0.0:
             op_r = box2.operator("og.nudge_float_prop", text="Reset (no timeout)", icon="LOOP_BACK")
             op_r.prop_name = "og_door_timeout"; op_r.delta = -999.0; op_r.val_min = 0.0
@@ -2697,10 +2643,7 @@ class OG_PT_ActorBaseButton(Panel):
         box = layout.box()
         box.label(text="Reset Timeout", icon="TIME")
         timeout = float(sel.get("og_button_timeout", 0.0))
-        if "og_button_timeout" not in sel: sel["og_button_timeout"] = 0.0
-        row = box.row(align=True)
-        row.label(text="Timeout (s, 0=permanent):")
-        row.prop(sel, '["og_button_timeout"]', text="")
+        _prop_row(box, sel, "og_button_timeout", "Timeout (s, 0=permanent):", 0.0)
         if timeout > 0.0:
             op_r = box.operator("og.nudge_float_prop", text="Reset (permanent)", icon="LOOP_BACK")
             op_r.prop_name = "og_button_timeout"; op_r.delta = -999.0; op_r.val_min = 0.0
@@ -2732,17 +2675,9 @@ class OG_PT_ActorPlatFlip(Panel):
 
         delay_down = float(sel.get("og_flip_delay_down", 2.0))
         delay_up   = float(sel.get("og_flip_delay_up",   2.0))
-        if "og_flip_delay_down" not in sel: sel["og_flip_delay_down"] = 2.0
-        if "og_flip_delay_up"   not in sel: sel["og_flip_delay_up"]   = 2.0
-
         col = box.column(align=True)
-        for label, prop in [
-            ("Delay down (s):", "og_flip_delay_down"),
-            ("Delay up   (s):", "og_flip_delay_up"),
-        ]:
-            row = col.row(align=True)
-            row.label(text=label)
-            row.prop(sel, f'["{prop}"]', text="")
+        _prop_row(col, sel, "og_flip_delay_down", "Delay down (s):", 2.0)
+        _prop_row(col, sel, "og_flip_delay_up",   "Delay up   (s):", 2.0)
 
         sub = box.row(); sub.enabled = False
         sub.label(text="Time before flipping down / recovering up", icon="INFO")
@@ -2750,10 +2685,7 @@ class OG_PT_ActorPlatFlip(Panel):
         # Sync percent — phase offset so multiple flip platforms don't sync
         box2 = layout.box()
         box2.label(text="Phase Offset", icon="TIME")
-        if "og_flip_sync_pct" not in sel: sel["og_flip_sync_pct"] = 0.0
-        row = box2.row(align=True)
-        row.label(text="Phase (0.0–1.0):")
-        row.prop(sel, '["og_flip_sync_pct"]', text="")
+        _prop_row(box2, sel, "og_flip_sync_pct", "Phase (0.0–1.0):", 0.0)
         sub2 = box2.row(); sub2.enabled = False
         sub2.label(text="0.0–1.0. Staggers multiple flip platforms.", icon="INFO")
 
@@ -2780,10 +2712,7 @@ class OG_PT_ActorOrbCache(Panel):
 
         box = layout.box()
         box.label(text="Orb Count", icon="SPHERE")
-        if "og_orb_count" not in sel: sel["og_orb_count"] = 20
-        row = box.row(align=True)
-        row.label(text="Count:")
-        row.prop(sel, '["og_orb_count"]', text="")
+        _prop_row(box, sel, "og_orb_count", "Count:", 20)
         sub = box.row(); sub.enabled = False
         sub.label(text="Default 20. Orbs release when cache is opened.", icon="INFO")
 
@@ -2810,16 +2739,9 @@ class OG_PT_ActorWhirlpool(Panel):
 
         box = layout.box()
         box.label(text="Rotation Speed", icon="FORCE_VORTEX")
-        if "og_whirl_speed" not in sel: sel["og_whirl_speed"] = 0.3
-        if "og_whirl_var"   not in sel: sel["og_whirl_var"]   = 0.1
         col = box.column(align=True)
-        for label, prop in [
-            ("Base speed:", "og_whirl_speed"),
-            ("Variation:",  "og_whirl_var"),
-        ]:
-            row = col.row(align=True)
-            row.label(text=label)
-            row.prop(sel, f'["{prop}"]', text="")
+        _prop_row(col, sel, "og_whirl_speed", "Base speed:", 0.3)
+        _prop_row(col, sel, "og_whirl_var",   "Variation:",  0.1)
         sub = box.row(); sub.enabled = False
         sub.label(text="Internal units. Default ~0.3 / 0.1.", icon="INFO")
 
@@ -2882,18 +2804,11 @@ class OG_PT_ActorOrbitPlat(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        if "og_orbit_scale"   not in sel: sel["og_orbit_scale"]   = 1.0
-        if "og_orbit_timeout" not in sel: sel["og_orbit_timeout"] = 10.0
         box = layout.box()
         box.label(text="Orbit Settings", icon="DRIVER_ROTATIONAL_DIFFERENCE")
         col = box.column(align=True)
-        for (lbl, prop) in [
-            ("Scale:",   "og_orbit_scale"),
-            ("Timeout:", "og_orbit_timeout"),
-        ]:
-            row = col.row(align=True)
-            row.label(text=lbl)
-            row.prop(sel, f'["{prop}"]', text="")
+        _prop_row(col, sel, "og_orbit_scale",   "Scale:",   1.0)
+        _prop_row(col, sel, "og_orbit_timeout", "Timeout:", 10.0)
         sub = box.row(); sub.enabled = False
         sub.label(text="Requires Entity Link → center actor", icon="INFO")
 
@@ -2917,18 +2832,11 @@ class OG_PT_ActorSquarePlatform(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        if "og_sq_down" not in sel: sel["og_sq_down"] = -2.0
-        if "og_sq_up"   not in sel: sel["og_sq_up"]   =  4.0
         box = layout.box()
         box.label(text="Travel Range", icon="MOVE_DOWN_VEC")
         col = box.column(align=True)
-        for (lbl, prop) in [
-            ("Down (m):", "og_sq_down"),
-            ("Up   (m):", "og_sq_up"),
-        ]:
-            row = col.row(align=True)
-            row.label(text=lbl)
-            row.prop(sel, f'["{prop}"]', text="")
+        _prop_row(col, sel, "og_sq_down", "Down (m):", -2.0)
+        _prop_row(col, sel, "og_sq_up",   "Up   (m):",  4.0)
         sub = box.row(); sub.enabled = False
         sub.label(text="Default: 2m down, 4m up", icon="INFO")
 
@@ -2952,28 +2860,16 @@ class OG_PT_ActorCaveFlamePots(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        if "og_flame_shove"  not in sel: sel["og_flame_shove"]  = 2.0
-        if "og_flame_period" not in sel: sel["og_flame_period"] = 4.0
-        if "og_flame_phase"  not in sel: sel["og_flame_phase"]  = 0.0
-        if "og_flame_pause"  not in sel: sel["og_flame_pause"]  = 2.0
-
         box = layout.box()
         box.label(text="Launch Force", icon="TRIA_UP")
-        row = box.row(align=True)
-        row.label(text="Shove (m):")
-        row.prop(sel, '["og_flame_shove"]', text="")
+        _prop_row(box, sel, "og_flame_shove", "Shove (m):", 2.0)
 
         box2 = layout.box()
         box2.label(text="Cycle Timing", icon="TIME")
         col = box2.column(align=True)
-        for (lbl, prop) in [
-            ("Period (s):", "og_flame_period"),
-            ("Phase:",      "og_flame_phase"),
-            ("Pause  (s):", "og_flame_pause"),
-        ]:
-            row = col.row(align=True)
-            row.label(text=lbl)
-            row.prop(sel, f'["{prop}"]', text="")
+        _prop_row(col, sel, "og_flame_period", "Period (s):", 4.0)
+        _prop_row(col, sel, "og_flame_phase",  "Phase:",      0.0)
+        _prop_row(col, sel, "og_flame_pause",  "Pause  (s):", 2.0)
         sub = box2.row(); sub.enabled = False
         sub.label(text="Phase 0–1 staggers multiple pots", icon="INFO")
 
@@ -2997,19 +2893,13 @@ class OG_PT_ActorShover(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        if "og_shover_force" not in sel: sel["og_shover_force"] = 3.0
-        if "og_shover_rot"   not in sel: sel["og_shover_rot"]   = 0.0
         box = layout.box()
         box.label(text="Shove Force", icon="TRIA_UP")
-        row = box.row(align=True)
-        row.label(text="Force (m):")
-        row.prop(sel, '["og_shover_force"]', text="")
+        _prop_row(box, sel, "og_shover_force", "Force (m):", 3.0)
 
         box2 = layout.box()
         box2.label(text="Rotation Offset", icon="CON_ROTLIKE")
-        row2 = box2.row(align=True)
-        row2.label(text="Rotation (°):")
-        row2.prop(sel, '["og_shover_rot"]', text="")
+        _prop_row(box2, sel, "og_shover_rot", "Rotation (°):", 0.0)
 
 
 class OG_PT_ActorLavaMoving(Panel):
@@ -3035,13 +2925,9 @@ class OG_PT_ActorLavaMoving(Panel):
         sel    = ctx.active_object
         etype  = sel.name.split("_", 2)[1]
         default_speed = 3.0 if etype == "lavaballoon" else 15.0
-        if "og_move_speed" not in sel: sel["og_move_speed"] = default_speed
-
         box = layout.box()
         box.label(text="Speed", icon="DRIVER_DISTANCE")
-        row = box.row(align=True)
-        row.label(text="Speed (m/s):")
-        row.prop(sel, '["og_move_speed"]', text="")
+        _prop_row(box, sel, "og_move_speed", "Speed (m/s):", default_speed)
         sub = box.row(); sub.enabled = False
         default = "~3m/s" if etype == "lavaballoon" else "~15m/s"
         sub.label(text=f"Default {default}. Needs waypoints.", icon="INFO")
@@ -3105,12 +2991,9 @@ class OG_PT_ActorCaveElevator(Panel):
             op = row.operator("og.set_elevator_mode", text=label, icon=icon)
             op.mode_val = val
 
-        if "og_elevator_rot" not in sel: sel["og_elevator_rot"] = 0.0
         box2 = layout.box()
         box2.label(text="Rotation Offset", icon="CON_ROTLIKE")
-        row2 = box2.row(align=True)
-        row2.label(text="Rotation (°):")
-        row2.prop(sel, '["og_elevator_rot"]', text="")
+        _prop_row(box2, sel, "og_elevator_rot", "Rotation (°):", 0.0)
 
 
 class OG_PT_ActorMisBoneBridge(Panel):
@@ -3171,19 +3054,11 @@ class OG_PT_ActorBreakaway(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        if "og_breakaway_h1" not in sel: sel["og_breakaway_h1"] = 0.0
-        if "og_breakaway_h2" not in sel: sel["og_breakaway_h2"] = 0.0
-
         box = layout.box()
         box.label(text="Fall Height Offsets", icon="MOVE_DOWN_VEC")
         col = box.column(align=True)
-        for (lbl, prop) in [
-            ("H1:", "og_breakaway_h1"),
-            ("H2:", "og_breakaway_h2"),
-        ]:
-            row = col.row(align=True)
-            row.label(text=lbl)
-            row.prop(sel, f'["{prop}"]', text="")
+        _prop_row(col, sel, "og_breakaway_h1", "H1:", 0.0)
+        _prop_row(col, sel, "og_breakaway_h2", "H2:", 0.0)
         sub = box.row(); sub.enabled = False
         sub.label(text="Controls breakaway platform fall animation heights", icon="INFO")
 
@@ -3207,12 +3082,9 @@ class OG_PT_ActorSunkenFish(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        if "og_fish_count" not in sel: sel["og_fish_count"] = 1
         box = layout.box()
         box.label(text="School Size", icon="COMMUNITY")
-        row = box.row(align=True)
-        row.label(text="Count:")
-        row.prop(sel, '["og_fish_count"]', text="")
+        _prop_row(box, sel, "og_fish_count", "Count:", 1)
         sub = box.row(); sub.enabled = False
         sub.label(text="Spawns count−1 extra child fish. Default 1.", icon="INFO")
 
@@ -3236,23 +3108,13 @@ class OG_PT_ActorSharkey(Panel):
     def draw(self, ctx):
         layout = self.layout
         sel    = ctx.active_object
-        if "og_shark_scale"    not in sel: sel["og_shark_scale"]    = 1.0
-        if "og_shark_delay"    not in sel: sel["og_shark_delay"]    = 1.0
-        if "og_shark_distance" not in sel: sel["og_shark_distance"] = 30.0
-        if "og_shark_speed"    not in sel: sel["og_shark_speed"]    = 12.0
-
         box = layout.box()
         box.label(text="Shark Properties", icon="FORCE_FORCE")
         col = box.column(align=True)
-        for (lbl, prop) in [
-            ("Scale:",      "og_shark_scale"),
-            ("Delay (s):",  "og_shark_delay"),
-            ("Range (m):",  "og_shark_distance"),
-            ("Speed (m/s):", "og_shark_speed"),
-        ]:
-            row = col.row(align=True)
-            row.label(text=lbl)
-            row.prop(sel, f'["{prop}"]', text="")
+        _prop_row(col, sel, "og_shark_scale",    "Scale:",       1.0)
+        _prop_row(col, sel, "og_shark_delay",    "Delay (s):",   1.0)
+        _prop_row(col, sel, "og_shark_distance", "Range (m):",  30.0)
+        _prop_row(col, sel, "og_shark_speed",    "Speed (m/s):", 12.0)
 
         sub = box.row(); sub.enabled = False
         sub.label(text="Needs water-height set via lump panel", icon="INFO")
@@ -3358,10 +3220,7 @@ class OG_PT_ActorVisibility(Panel):
 
         box = layout.box()
         box.label(text="Vis Distance", icon="HIDE_OFF")
-        if "og_vis_dist" not in sel: sel["og_vis_dist"] = 200.0
-        row = box.row(align=True)
-        row.label(text="Distance (m):")
-        row.prop(sel, '["og_vis_dist"]', text="")
+        _prop_row(box, sel, "og_vis_dist", "Distance (m):", 200.0)
         sub = box.row(); sub.enabled = False
         sub.label(text="Default 200m. Reduce for distant background enemies.", icon="INFO")
 
@@ -4000,14 +3859,8 @@ class OG_PT_Camera(Panel):
                 op = mrow.operator("og.set_cam_prop", text=lbl, depress=(mode == m))
                 op.cam_name = cam_obj.name; op.prop_name = "og_cam_mode"; op.str_val = m
 
-            brow = box.row(align=True)
-            brow.label(text="Blend (s):")
-            if "og_cam_interp" not in cam_obj: cam_obj["og_cam_interp"] = 0.5
-            brow.prop(cam_obj, '["og_cam_interp"]', text="")
-            frow = box.row(align=True)
-            frow.label(text="FOV (0=default):")
-            if "og_cam_fov" not in cam_obj: cam_obj["og_cam_fov"] = 0.0
-            frow.prop(cam_obj, '["og_cam_fov"]', text="")
+            _prop_row(box, cam_obj, "og_cam_interp", "Blend (s):", 0.5)
+            _prop_row(box, cam_obj, "og_cam_fov",    "FOV (0=default):", 0.0)
 
             if mode == "standoff":
                 align_name = cam_obj.name + "_ALIGN"
