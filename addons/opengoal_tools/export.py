@@ -1955,11 +1955,18 @@ def collect_ambients(scene):
                 "trans":   [gx, gy, gz, radius],
                 "bsphere": [gx, gy, gz, radius],
                 "lump": {
-                    "name":     o.name[8:].lower() or "music-zone",
-                    "type":     "'music",
-                    "music":    ["symbol", bank],
-                    "flava":    ["float", flava_index],
-                    "priority": ["float", priority],
+                    "name":        o.name[8:].lower() or "music-zone",
+                    "type":        "'music",
+                    # 'music' lump: the engine reads this as a symbol (e.g. 'village1)
+                    # and passes it to (set-setting! 'music <symbol> 0.0 0).
+                    # ["symbol", bank] is correct — ResSymbol stores the GOAL symbol ptr.
+                    "music":       ["symbol", bank],
+                    "flava":       ["float", flava_index],
+                    "priority":    ["float", priority],
+                    # effect-name is listed in the lump quick-ref for music ambients.
+                    # Some vanilla ambient code reads it. Include defensively as a no-op
+                    # symbol — ambient-type-music ignores it but it won't cause a crash.
+                    "effect-name": ["symbol", bank],
                 },
             })
         else:
