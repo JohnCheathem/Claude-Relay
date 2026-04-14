@@ -1736,6 +1736,28 @@ class OG_OT_NudgeCamFloat(Operator):
 # ── Platform ──────────────────────────────────────────────────────────────────
 
 
+class OG_OT_InitActorProp(Operator):
+    """Set a custom property default on the active object (safe write outside draw)."""
+    bl_idname  = "og.init_actor_prop"
+    bl_label   = "Set Default"
+    bl_options = {"REGISTER", "UNDO"}
+
+    prop_name:    bpy.props.StringProperty()
+    float_val:    bpy.props.FloatProperty(default=0.0)
+    int_val:      bpy.props.IntProperty(default=0)
+    use_int:      bpy.props.BoolProperty(default=False)
+
+    def execute(self, ctx):
+        o = ctx.active_object
+        if o:
+            o[self.prop_name] = self.int_val if self.use_int else self.float_val
+            # Force panel redraw
+            for area in ctx.screen.areas:
+                if area.type == "VIEW_3D":
+                    area.tag_redraw()
+        return {"FINISHED"}
+
+
 class OG_OT_NudgeFloatProp(Operator):
     """Nudge a float custom property on the active object by a fixed delta."""
     bl_idname  = "og.nudge_float_prop"

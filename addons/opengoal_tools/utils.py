@@ -335,9 +335,8 @@ def _prop_row(layout, obj, key, label, default):
     """Draw a labelled input row for a custom property.
 
     If the key already exists on obj, draws layout.prop() so the user can
-    type directly into the field.  If it is missing, draws a read-only label
-    showing the default value instead — the key will be created the next time
-    the object is saved/exported or the user interacts with it via an operator.
+    type directly into the field.  If it is missing, draws a small init
+    button that sets the default value via a safe operator call.
 
     This avoids writing to obj inside a draw() call, which Blender disallows
     and which causes panels to silently fail or crash on redraw.
@@ -347,6 +346,14 @@ def _prop_row(layout, obj, key, label, default):
     if key in obj:
         row.prop(obj, f'["{key}"]', text="")
     else:
-        sub = row.row()
-        sub.enabled = False
-        sub.label(text=f"{default}  (default)")
+        use_int = isinstance(default, int) and not isinstance(default, bool)
+        op = row.operator("og.init_actor_prop", text=f"{default}", icon="ADD")
+        op.prop_name = key
+        op.use_int   = use_int
+        if use_int:
+            op.int_val   = int(default)
+        else:
+            try:
+                op.float_val = float(default)
+            except (TypeError, ValueError):
+                op.float_val = 0.0

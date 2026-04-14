@@ -120,6 +120,7 @@ from .operators import (
     OG_OT_SpawnEntity, OG_OT_ClearPreviews,
     OG_OT_SpawnCamera, OG_OT_SpawnCamAlign, OG_OT_SpawnCamPivot,
     OG_OT_SpawnCamLookAt, OG_OT_SetCamProp, OG_OT_NudgeCamFloat,
+    OG_OT_InitActorProp,
     OG_OT_NudgeFloatProp, OG_OT_NudgeIntProp,
     OG_OT_SetLauncherDest, OG_OT_ClearLauncherDest, OG_OT_AddLauncherDest,
     OG_OT_ToggleDoorFlag, OG_OT_SetDoorCP, OG_OT_ClearDoorCP,
