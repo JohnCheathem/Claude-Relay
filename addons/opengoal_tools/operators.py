@@ -797,11 +797,15 @@ class OG_OT_AddWaypoint(Operator):
 
         wp_name = f"{prefix}{idx:02d}"
 
-        # Create empty at 3D cursor
+        # Create empty — at actor position or 3D cursor depending on user preference
+        actor_obj = bpy.data.objects.get(self.enemy_name)
+        use_actor_pos = ctx.scene.og_props.waypoint_spawn_at_actor and actor_obj is not None
+        spawn_loc = actor_obj.location.copy() if use_actor_pos else ctx.scene.cursor.location.copy()
+
         empty = bpy.data.objects.new(wp_name, None)
         empty.empty_display_type = "PLAIN_AXES"
         empty.empty_display_size = 0.5
-        empty.location = ctx.scene.cursor.location.copy()
+        empty.location = spawn_loc
 
         # Custom property to link back to enemy
         empty["og_waypoint_for"] = self.enemy_name
@@ -828,7 +832,8 @@ class OG_OT_AddWaypoint(Operator):
 
         # Do NOT change active object — user needs to keep the actor selected
         # so they can quickly add more waypoints without re-selecting.
-        self.report({"INFO"}, f"Added {wp_name} at cursor")
+        loc_desc = "actor position" if use_actor_pos else "cursor"
+        self.report({"INFO"}, f"Added {wp_name} at {loc_desc}")
         return {"FINISHED"}
 
 
