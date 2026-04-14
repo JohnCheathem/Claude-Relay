@@ -1369,7 +1369,6 @@ def _draw_selected_camera(layout, sel, scene):
         op.cam_name = sel.name; op.prop_name = "og_cam_mode"; op.str_val = m
 
     # ── Blend time ───────────────────────────────────────────────────────
-    # ── Blend time ───────────────────────────────────────────────────────
     _prop_row(box, sel, "og_cam_interp", "Blend (s):", 0.5)
 
     # ── FOV ──────────────────────────────────────────────────────────────
@@ -2208,13 +2207,8 @@ class OG_PT_ActorLauncher(Panel):
         # ── Spring Height ─────────────────────────────────────────────────────
         box = layout.box()
         box.label(text="Launch Height", icon="TRIA_UP")
+        _prop_row(box, sel, "og_spring_height", "Height (m, -1=default):", -1.0)
         height = float(sel.get("og_spring_height", -1.0))
-        row = box.row(align=True)
-        row.label(text="Height (m, -1=default):")
-        if "og_spring_height" in sel:
-            row.prop(sel, '["og_spring_height"]', text="")
-        else:
-            sub = row.row(); sub.enabled = False; sub.label(text="-1.0  (default)")
         if height >= 0:
             op2 = box.operator("og.nudge_float_prop", text="Reset to Default", icon="LOOP_BACK")
             op2.prop_name = "og_spring_height"; op2.delta = -9999.0; op2.val_min = -1.0
@@ -3850,8 +3844,6 @@ class OG_PT_Camera(Panel):
             op.obj_name = cam_obj.name
 
             mode   = cam_obj.get("og_cam_mode",   "fixed")
-            interp = float(cam_obj.get("og_cam_interp", 1.0))
-            fov    = float(cam_obj.get("og_cam_fov",    0.0))
 
             mrow = box.row(align=True)
             mrow.label(text="Mode:")

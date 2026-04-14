@@ -576,13 +576,13 @@ class OG_OT_SpawnEntity(Operator):
         if _actor_is_enemy(etype):
             o["og_idle_distance"] = 80.0
             o["og_vis_dist"]      = 200.0
-        if etype in {"lurker-spawn", "swamp-bat", "yeti", "villa-starfish", "swamp-rat-nest"}:
+        if _actor_is_spawner(etype):
             o["og_num_lurkers"] = -1
         if etype == "orb-cache-top":
             o["og_orb_count"] = 20
-        if etype in {"sunkenfisha", "sunkenfish"}:
+        if etype == "sunkenfisha":
             o["og_fish_count"] = 1
-        if etype in {"lavaballoon", "snowball", "snowy-log"}:
+        if etype in {"lavaballoon", "darkecobarrel"}:
             o["og_move_speed"] = 3.0 if etype == "lavaballoon" else 15.0
 
         # ---- Model preview ------------------------------------------------
@@ -1734,28 +1734,6 @@ class OG_OT_NudgeCamFloat(Operator):
 
 
 # ── Platform ──────────────────────────────────────────────────────────────────
-
-
-class OG_OT_InitActorProp(Operator):
-    """Set a custom property default on the active object (safe write outside draw)."""
-    bl_idname  = "og.init_actor_prop"
-    bl_label   = "Set Default"
-    bl_options = {"REGISTER", "UNDO"}
-
-    prop_name:    bpy.props.StringProperty()
-    float_val:    bpy.props.FloatProperty(default=0.0)
-    int_val:      bpy.props.IntProperty(default=0)
-    use_int:      bpy.props.BoolProperty(default=False)
-
-    def execute(self, ctx):
-        o = ctx.active_object
-        if o:
-            o[self.prop_name] = self.int_val if self.use_int else self.float_val
-            # Force panel redraw
-            for area in ctx.screen.areas:
-                if area.type == "VIEW_3D":
-                    area.tag_redraw()
-        return {"FINISHED"}
 
 
 class OG_OT_NudgeFloatProp(Operator):
