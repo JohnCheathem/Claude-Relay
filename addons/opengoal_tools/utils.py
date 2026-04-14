@@ -334,14 +334,31 @@ def _draw_wiki_preview(layout, etype: str, ctx=None):
 def _prop_row(layout, obj, key, label, default):
     """Draw a labelled input row for a custom property.
 
-    Ensures the key exists on obj (writing the default if missing), then
-    draws a layout.prop() input field. Writing custom ID properties in
-    draw() is safe in Blender — only registered bpy.props cause issues.
-    The real crash risk was calling layout.prop on a missing key, which
-    throws an exception and silently kills the rest of the panel draw.
+    Safe for use inside draw(): never writes to the object.
+    If the key is missing, schedules a one-shot timer to write the default
+    outside of the draw context, and shows a greyed placeholder meanwhile.
+    On the next redraw the key exists and layout.prop() renders normally.
+
+    Blender 4.4+ raises AttributeError on any ID property write inside draw(),
+    including custom dict properties (obj[key] = val). Only operator execute()
+    or timer callbacks are safe write contexts.
     """
     if key not in obj:
-        obj[key] = default
+        # Schedule write outside draw — timer fires after current redraw
+        obj_name = obj.name
+        def _init(name=obj_name, k=key, v=default):
+            o = bpy.data.objects.get(name)
+            if o is not None and k not in o:
+                o[k] = v
+            return None  # don't repeat
+        bpy.app.timers.register(_init, first_interval=0.0)
+        # Show greyed placeholder this frame
+        row = layout.row(align=True)
+        row.label(text=label)
+        sub = row.row()
+        sub.enabled = False
+        sub.label(text=str(default))
+        return
     row = layout.row(align=True)
     row.label(text=label)
     row.prop(obj, f'["{key}"]', text="")
