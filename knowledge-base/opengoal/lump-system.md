@@ -379,10 +379,10 @@ Ambients have a different entity type (`entity-ambient`) but use the same lump s
 **JSONC:** `["uint32", id]`  
 **Notes:** POI location name ID.
 
-### `music` — ResFloat
+### `music` — ResSymbol
 **Used by:** `engine/entity/ambient.gc` (`'music` type)  
-**JSONC:** `["float", value]`  
-**Notes:** Music variant index (alongside `flava`).
+**JSONC:** `["symbol", "village1"]`  
+**Notes:** Music bank symbol to activate. Passed directly to `(set-setting! 'music <symbol> 0.0 0)`. Must be a `["symbol", name]` array — the engine needs the GOAL symbol pointer, not a float index. Previously documented as ResFloat — that was a documentation error. `flava` is the float index, not `music`.
 
 ### `flava` — ResFloat
 **Used by:** `engine/entity/ambient.gc` (`'music` type)  

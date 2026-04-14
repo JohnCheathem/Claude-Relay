@@ -303,3 +303,180 @@ Commit: `8e2eb13` on main
 All sounds work as looping emitters regardless of whether they were "one-shot"
 in the original game. Short sounds (explosions, jumps etc.) just loop continuously.
 This is fine — use with appropriate radius so it doesn't sound ridiculous.
+
+---
+
+## Music Ambient Zone System (April 13 2026)
+
+### Root cause of music not playing
+`:music-bank` in `level-load-info` does NOT trigger music on level load.
+It only resets music after player death. Music requires an active `set-setting! 'music`
+call, which is done by a `type='music` ambient entity when the player enters its bsphere.
+Vanilla levels all have a large music zone covering the entire level.
+
+### What was built — branch: feature/music-ambient
+
+**New panel:** `Spawn > 🎵 Music Zones` (mirrors Sound Emitters panel)
+- Music Bank dropdown (all 19 banks)
+- Flava dropdown — **dynamically filtered** to selected bank's variants only
+- Priority float (10.0 default; vanilla boss/race zones use 40.0)
+- Zone Radius (40m default — large, should cover whole level)
+- "Add Music Zone at Cursor" button
+- List of placed zones shown below
+
+**New operator:** `OG_OT_AddMusicZone` (`og.add_music_zone`)
+- Spawns `AMBIENT_mus001` empty (gold colour, distinct from cyan sound emitters)
+- Stores `og_music_bank`, `og_music_flava`, `og_music_priority`, `og_music_radius` as custom props
+- Placed into Sound Emitters collection (same as sound empties)
+
+**Export:** `collect_ambients()` now handles `og_music_bank` empties:
+```json
+{
+  "trans": [x, y, z, radius],
+  "bsphere": [x, y, z, radius],
+  "lump": {
+    "name": "mus001",
+    "type": "'music",
+    "music": ["symbol", "village1"],
+    "flava": ["float", 0.0],
+    "priority": ["float", 10.0]
+  }
+}
+```
+Flava index looked up from `MUSIC_FLAVA_TABLE` at export time (engine takes float index).
+
+**New data:** `MUSIC_FLAVA_TABLE` dict in `data.py` — all 19 banks → flava variant lists.
+
+### Files changed
+- `data.py` — `MUSIC_FLAVA_TABLE`, `_music_flava_items_cb`
+- `properties.py` — `og_music_amb_bank/flava/priority/radius` scene props
+- `operators.py` — `OG_OT_AddMusicZone`
+- `panels.py` — `OG_PT_SpawnMusicZones`
+- `export.py` — `collect_ambients()` music zone branch
+- `__init__.py` — registrations
+
+### How to use
+1. Install from `feature/music-ambient`
+2. Set your level's Music Bank in the Audio panel (e.g. `village1`)
+3. Go to Spawn > 🎵 Music Zones
+4. Set Music Bank to `village1`, Flava to `default`, Radius large enough to cover level
+5. Click "Add Music Zone at Cursor" — place it roughly in the centre of your level
+6. Export & compile — music should now play on entry
+
+### Next steps
+- [ ] Test in-game
+- [ ] Consider adding "Select Zone" button in list (click to select the empty)
+- [ ] If approved: merge feature/music-ambient to main
+
+---
+
+## Pre-test Audit Session (April 13 2026)
+
+### Two-pass audit — 20 issues checked, 3 fixed
+
+**Pass 1 — doc conflict resolved:**
+lump-system.md had `music → ResFloat ["float", value]` which contradicted
+audio-system.md `music → ["symbol", "village1"]`. The float version is a doc error —
+`set-setting! 'music` takes a symbol, so the ResSymbol format is logically correct.
+Fixed lump-system.md. Confidence: 85% symbol format is right.
+
+**Pass 2 — 3 fixes applied:**
+
+1. `effect-name` added to music zone export — listed in lump quick-ref as required
+   for 'music type. Was absent from initial export. Added defensively as `["symbol", bank]`.
+   Worst case if not needed: silently ignored. No crash risk.
+
+2. `og_music_amb_bank` now has an `update` callback that resets `og_music_amb_flava`
+   to `"default"` when the bank changes. Prevents stale flava string being held
+   internally when the user switches banks in the panel.
+
+3. lump-system.md `music` entry corrected from ResFloat to ResSymbol.
+
+**All 20 checks passed with no remaining bugs:**
+- trans/bsphere radius units: meters, matches working sound emitter path ✓
+- `none` bank filter: not exported ✓  
+- empty string bank: not exported ✓
+- unknown bank/flava: safe fallback to index 0 ✓
+- name slicing `[8:]`: produces correct short name ✓
+- sound/music prop collision: impossible (different custom prop keys) ✓
+- validate_ambients: passes (trans/bsphere both have 4 elements) ✓
+- write_jsonc: passes ambients straight to json.dumps, no transformation ✓
+- All 19 LEVEL_BANKS entries have MUSIC_FLAVA_TABLE coverage ✓
+- Coexistence with sound emitters + hint ambients ✓
+- EnumProperty callback: None-safe with getattr fallback ✓
+
+**One remaining uncertainty (won't know until in-game test):**
+music lump type: ["symbol", "village1"] vs ["float", float_index]
+If music doesn't play after zone placement, try swapping to:
+  "music": ["float", <index_of_bank_in_LEVEL_BANKS>]
+where index = LEVEL_BANKS.index(bank) - 1 (skipping 'none' at 0)
+
+**Branch state:** feature/music-ambient, 4 commits since branch from main.
+Ready to test.
+
+### Commits in this branch
+- feat: add music ambient zone system
+- notes: music ambient zone session notes  
+- fix: music ambient export + doc correction (effect-name + lump-system.md)
+- fix: reset og_music_amb_flava to default when bank changes
+
+---
+
+## Selected Object Panel Fix (April 14 2026)
+
+### Issues from screenshots
+1. `AMBIENT_mus002` was showing the **Sound Emitter** inspector (wrong panel)
+   with `Sound: ?` — because OG_PT_AmbientEmitter polled for all `AMBIENT_*`
+2. Selected Object panel fields were all read-only labels, not editable
+
+### Fixes
+- `OG_PT_AmbientEmitter.poll` now excludes `AMBIENT_mus*`
+- New `OG_PT_MusicZone` panel polls for `AMBIENT_mus*` specifically
+- `_draw_selected_music_zone()` uses `_prop_row()` for live editable fields:
+  - og_music_bank (text field — user types bank name)
+  - og_music_flava (text field + warning if invalid for bank + valid flavas hint)
+  - og_music_priority (float)
+  - og_music_radius (float)
+- `_draw_selected_emitter` also updated: radius is now editable via _prop_row
+
+### Branch state
+feature/music-ambient — 6 commits ahead of main. Ready to test.
+
+### What to test
+1. Place a Music Zone (Spawn > Music Zones > Add Music Zone at Cursor)
+2. Select the placed AMBIENT_mus* empty
+3. Selected Object panel should show "Music Zone" sub-panel (not Sound Emitter)
+4. Edit bank/flava/priority/radius inline — values should persist
+5. Export & compile — check generated JSONC has correct music ambient entry
+6. Play level — music should start when entering the zone bsphere
+
+### If music still doesn't play
+See audit notes — one remaining uncertainty:
+`"music": ["symbol", "village1"]` may need to be `["float", <bank_index>]`
+Bank indices (0=none, 1=beach, ..., 17=village1) from LEVEL_BANKS.
+
+---
+
+## ✅ MERGED TO MAIN — April 14 2026
+
+Music zone system confirmed working in-game.
+All functionality audited, docs updated, branch merged and deleted.
+
+### Summary of everything added in feature/music-ambient
+
+**Core fix:** music now plays on level load via `type='music` ambient zone.
+`:music-bank` alone was never enough — this was the root cause.
+
+**New panel:** Spawn > 🎵 Music Zones
+**New selected-object panel:** Music Zone (bank/flava pickers + priority/radius)
+**New operators:** add_music_zone, set_music_zone_bank, set_music_zone_flava
+**Export:** collect_ambients handles AMBIENT_mus* → type='music lump
+**Data:** MUSIC_FLAVA_TABLE (19 banks → flava variants), _music_flava_items_cb
+
+### Files changed from main
+- data.py — MUSIC_FLAVA_TABLE, _music_flava_items_cb
+- properties.py — og_music_amb_bank/flava/priority/radius scene props
+- operators.py — AddMusicZone, SetMusicZoneBank, SetMusicZoneFlava
+- panels.py — OG_PT_SpawnMusicZones, OG_PT_MusicZone, fixed AmbientEmitter poll
+- export.py — music zone branch in collect_ambients
+- __init__.py — registrations

@@ -990,6 +990,58 @@ class OG_PT_SpawnSounds(Panel):
             layout.label(text="No emitters placed yet", icon="INFO")
 
 
+class OG_PT_SpawnMusicZones(Panel):
+    bl_label       = "🎵  Music Zones"
+    bl_idname      = "OG_PT_spawn_music"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_spawn"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    def draw(self, ctx):
+        layout = self.layout
+        props  = ctx.scene.og_props
+
+        col = layout.column(align=True)
+        col.label(text="New Zone Settings:", icon="SETTINGS")
+        col.prop(props, "og_music_amb_bank",     text="Music Bank")
+        col.prop(props, "og_music_amb_flava",    text="Flava")
+        col.prop(props, "og_music_amb_priority", text="Priority")
+        col.prop(props, "og_music_amb_radius",   text="Radius (m)")
+
+        col.separator(factor=0.6)
+        row = col.row()
+        row.scale_y = 1.4
+        row.operator("og.add_music_zone", text="Add Music Zone at Cursor", icon="ADD")
+
+        # List existing music zones
+        zones = [o for o in _level_objects(ctx.scene)
+                 if o.name.startswith("AMBIENT_mus") and o.type == "EMPTY"
+                 and o.get("og_music_bank")]
+        if zones:
+            layout.separator(factor=0.3)
+            sub = layout.box()
+            sub.label(text=f"{len(zones)} zone(s) in scene:", icon="OUTLINER_OB_EMPTY")
+            for o in zones[:8]:
+                row = sub.row(align=True)
+                bank  = o.get("og_music_bank", "?")
+                flava = o.get("og_music_flava", "default")
+                pri   = o.get("og_music_priority", 10.0)
+                label = f"{o.name}  →  {bank}"
+                if flava and flava != "default":
+                    label += f"  [{flava}]"
+                label += f"  pri:{pri:.0f}"
+                row.label(text=label, icon="SOUND")
+            if len(zones) > 8:
+                sub.label(text=f"… and {len(zones) - 8} more")
+        else:
+            layout.separator(factor=0.3)
+            layout.label(text="No music zones placed yet", icon="INFO")
+            layout.label(text="Tip: one large zone covering the", icon="BLANK1")
+            layout.label(text="whole level is usually enough.",  icon="BLANK1")
+
+
 class OG_PT_SpawnWater(Panel):
     bl_label       = "💧  Water Volumes"
     bl_idname      = "OG_PT_spawn_water"
@@ -1280,17 +1332,40 @@ def _draw_selected_checkpoint(layout, sel, scene):
 
 
 def _draw_selected_emitter(layout, sel):
-    """Draw settings for an AMBIENT_ sound emitter."""
-    snd  = sel.get("og_sound_name", "?")
-    mode = sel.get("og_sound_mode", "loop")
-    radius = float(sel.get("og_sound_radius", 15.0))
-
+    """Draw editable settings for an AMBIENT_snd* sound emitter."""
     layout.label(text=sel.name, icon="SPEAKER")
+    box = layout.box()
+    snd = sel.get("og_sound_name", "?")
+    box.label(text=f"Sound: {snd}", icon="PLAY")
+    _prop_row(box, sel, "og_sound_radius", "Radius (m):", 15.0)
+
+
+def _draw_selected_music_zone(layout, sel):
+    """Draw editable settings for an AMBIENT_mus* music zone."""
+    from .data import MUSIC_FLAVA_TABLE
+    layout.label(text=sel.name, icon="SOUND")
 
     box = layout.box()
-    box.label(text=f"Sound: {snd}", icon="PLAY")
-    box.label(text=f"Mode: {mode}", icon="PREVIEW_RANGE" if mode == "loop" else "PLAYER")
-    box.label(text=f"Radius: {radius:.1f}m", icon="SPHERE")
+    bank  = sel.get("og_music_bank",  "village1")
+    flava = sel.get("og_music_flava", "default")
+    flava_list = MUSIC_FLAVA_TABLE.get(bank, ["default"])
+
+    # Bank picker
+    row = box.row(align=True)
+    row.label(text="Bank:")
+    op = row.operator("og.set_music_zone_bank", text=bank, icon="SOUND")
+
+    # Flava picker — button label shows current value
+    row2 = box.row(align=True)
+    row2.label(text="Flava:")
+    flava_display = flava if flava in flava_list else f"{flava} ⚠"
+    op2 = row2.operator("og.set_music_zone_flava", text=flava_display, icon="ALIGN_JUSTIFY")
+    if flava not in flava_list:
+        box.label(text=f"⚠ '{flava}' not in {bank} — exports as default", icon="ERROR")
+
+    box.separator(factor=0.3)
+    _prop_row(box, sel, "og_music_priority", "Priority:",  10.0)
+    _prop_row(box, sel, "og_music_radius",   "Radius (m):", 40.0)
 
 
 def _draw_selected_volume(layout, sel, scene):
@@ -3338,10 +3413,31 @@ class OG_PT_AmbientEmitter(Panel):
     @classmethod
     def poll(cls, ctx):
         sel = ctx.active_object
-        return sel is not None and sel.name.startswith("AMBIENT_")
+        # Only sound emitters (AMBIENT_snd*), not music zones (AMBIENT_mus*)
+        return (sel is not None
+                and sel.name.startswith("AMBIENT_")
+                and not sel.name.startswith("AMBIENT_mus"))
 
     def draw(self, ctx):
         _draw_selected_emitter(self.layout, ctx.active_object)
+
+
+class OG_PT_MusicZone(Panel):
+    bl_label       = "Music Zone"
+    bl_idname      = "OG_PT_music_zone"
+    bl_space_type  = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category    = "OpenGOAL"
+    bl_parent_id   = "OG_PT_selected_object"
+    bl_options     = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, ctx):
+        sel = ctx.active_object
+        return sel is not None and sel.name.startswith("AMBIENT_mus")
+
+    def draw(self, ctx):
+        _draw_selected_music_zone(self.layout, ctx.active_object)
 
 
 # ── CAMERA sub-panels ───────────────────────────────────────────────────────
