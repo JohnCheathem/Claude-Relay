@@ -1253,7 +1253,7 @@ def _draw_selected_actor(layout, sel, scene):
 
         row = box.row(align=True)
         row.operator("og.add_waypoint", text="Spawn Waypoint", icon="PLUS").enemy_name = sel.name
-        row.prop(ctx.scene.og_props, "waypoint_spawn_at_actor", text="Spawn at Position", toggle=False)
+        row.prop(scene.og_props, "waypoint_spawn_at_actor", text="Spawn at Position", toggle=False)
 
         if einfo.get("needs_path") and len(wps) < 1:
             box.label(text="⚠ Needs ≥ 1 waypoint or will crash", icon="ERROR")
@@ -1280,7 +1280,7 @@ def _draw_selected_actor(layout, sel, scene):
             row2 = box2.row(align=True)
             op2b = row2.operator("og.add_waypoint", text="Spawn Path B Waypoint", icon="PLUS")
             op2b.enemy_name = sel.name; op2b.pathb_mode = True
-            row2.prop(ctx.scene.og_props, "waypoint_spawn_at_actor", text="Spawn at Position", toggle=False)
+            row2.prop(scene.og_props, "waypoint_spawn_at_actor", text="Spawn at Position", toggle=False)
 
             if len(wpsb) < 1:
                 box2.label(text="⚠ swamp-bat crashes without Path B", icon="ERROR")

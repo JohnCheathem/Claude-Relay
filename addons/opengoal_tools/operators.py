@@ -773,7 +773,7 @@ class OG_OT_ExportBuild(Operator):
 # ---------------------------------------------------------------------------
 
 class OG_OT_AddWaypoint(Operator):
-    """Add a waypoint empty at the 3D cursor, linked to the selected enemy."""
+    """Add a waypoint empty linked to the selected enemy. Spawns at the 3D cursor, or at the actor position if Spawn at Position is enabled."""
     bl_idname = "og.add_waypoint"
     bl_label  = "Add Waypoint"
 
