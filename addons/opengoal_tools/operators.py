@@ -631,9 +631,11 @@ class OG_OT_DuplicateEntity(Operator):
         # Give it a fresh unique name (Blender appends .001 etc automatically,
         # but we want to follow the ACTOR_<etype>_<n> convention)
         prefix = f"ACTOR_{etype}_"
-        existing = {o.name for o in _level_objects(ctx.scene)}
+        # Use bpy.data.objects (not just level objects) so we avoid collisions
+        # with the freshly duplicated object which may not yet be in the level col
+        existing = {o.name for o in bpy.data.objects}
         n = 0
-        while f"{prefix}{n}" in existing or f"{prefix}{n}" == src.name:
+        while f"{prefix}{n}" in existing:
             n += 1
         new_empty.name = f"{prefix}{n}"
 
