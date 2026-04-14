@@ -590,3 +590,34 @@ Two separate registration bugs, both now fixed:
 `knowledge-base/opengoal/goal-code-system.md` — full reference for the goal-code
 system: spawner, panel, vol-trigger wiring, die-relay example, obs.gc output order,
 registration bug history.
+
+
+---
+
+## feature/goal-code — Pass 3 bug sweep (April 2026)
+
+### Bugs found and fixed
+
+#### fix: _is_linkable blocked custom actors (9c7ea26)
+`utils.py` `_is_linkable` only passed nav-enemies and cameras/checkpoints.
+Custom GOAL actors returned False — the VOL_ panel Link button never appeared
+and AddLinkFromSelection rejected them. Added `_is_custom_type` check.
+Also added `_is_custom_type` to utils.py data imports (was missing).
+
+### Known minor issues (logged, not yet fixed)
+- VOL_ volume auto-spawned for a custom actor gets yellow colour (checkpoint)
+  instead of a distinct custom-type colour. Cosmetic only.
+- `entry.behaviour = "cue-chase"` default set on custom actor vol links —
+  vol-trigger ignores this field but it's stored as harmless data noise.
+
+### Full bug list for feature/goal-code to date
+1. Duplicate OG_PT_SpawnCustomTypes in import tuple (8fc7e79)
+2. Both panels missing from register() tuple (f509e96)
+3. _is_custom_type per-frame import in panels.py draw() (091502d)
+4. _is_custom_type not imported in export.py (091502d)
+5. _is_linkable blocked custom actors from VOL_ linking (9c7ea26)
+6. _is_custom_type not imported in utils.py (9c7ea26)
+
+### Status
+All blocking bugs fixed. Minor cosmetic issues remain (volume colour, behaviour
+field noise). Branch not yet live-tested — awaiting test session.

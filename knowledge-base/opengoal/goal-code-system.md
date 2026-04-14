@@ -228,3 +228,26 @@ The `vol-trigger` type is always emitted as a built-in — you don't need to wri
 - Both panels register correctly
 - `vol-trigger` export pipeline fully wired
 - **Not yet live-tested in-game** — awaiting first test session
+
+---
+
+## 8. Bug Fix Log
+
+### Registration bugs (fixed 8fc7e79, f509e96)
+Both panels were invisible due to two separate `__init__.py` bugs:
+1. `OG_PT_SpawnCustomTypes` listed twice in import tuple — Blender silently fails and kills everything after it
+2. Both panels were in the import-time tuple but not the `register()` tuple — `bpy.utils.register_class` never called
+
+### Missing imports (fixed 091502d)
+- `panels.py`: `_is_custom_type` was imported inside `draw()` every frame instead of at module level. Moved to top-level import. Fixed empty-string edge case in custom actor filter.
+- `export.py`: `_is_custom_type` used in `_classify_target` but never imported — would throw `NameError` on first export with a custom actor VOL_ link.
+
+### VOL_ link UI blocked custom actors (fixed 9c7ea26)
+`_is_linkable` in `utils.py` only returned `True` for nav-enemies and cameras/checkpoints. Custom GOAL actors returned `False`, so:
+- The "Shift-select target → Link →" button never appeared in the VOL_ panel
+- `OG_OT_AddLinkFromSelection` would reject with "not linkable"
+Fix: added `_is_custom_type` check alongside `_actor_supports_aggro_trigger`.
+
+### Known minor issues (not yet fixed)
+- `SpawnVolumeAutoLink` colours custom-actor-linked volumes yellow (checkpoint colour) — should be a distinct colour. Cosmetic only.
+- `entry.behaviour = "cue-chase"` is set on custom actor links — the `vol-trigger` type ignores this field but it's stored in the data as harmless noise.
