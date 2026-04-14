@@ -334,26 +334,14 @@ def _draw_wiki_preview(layout, etype: str, ctx=None):
 def _prop_row(layout, obj, key, label, default):
     """Draw a labelled input row for a custom property.
 
-    If the key already exists on obj, draws layout.prop() so the user can
-    type directly into the field.  If it is missing, draws a small init
-    button that sets the default value via a safe operator call.
-
-    This avoids writing to obj inside a draw() call, which Blender disallows
-    and which causes panels to silently fail or crash on redraw.
+    Ensures the key exists on obj (writing the default if missing), then
+    draws a layout.prop() input field. Writing custom ID properties in
+    draw() is safe in Blender — only registered bpy.props cause issues.
+    The real crash risk was calling layout.prop on a missing key, which
+    throws an exception and silently kills the rest of the panel draw.
     """
+    if key not in obj:
+        obj[key] = default
     row = layout.row(align=True)
     row.label(text=label)
-    if key in obj:
-        row.prop(obj, f'["{key}"]', text="")
-    else:
-        use_int = isinstance(default, int) and not isinstance(default, bool)
-        op = row.operator("og.init_actor_prop", text=f"{default}", icon="ADD")
-        op.prop_name = key
-        op.use_int   = use_int
-        if use_int:
-            op.int_val   = int(default)
-        else:
-            try:
-                op.float_val = float(default)
-            except (TypeError, ValueError):
-                op.float_val = 0.0
+    row.prop(obj, f'["{key}"]', text="")
