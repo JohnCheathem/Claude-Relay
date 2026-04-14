@@ -563,3 +563,30 @@ When vis-blocker merges, add to audit:
 - Place VOL_ mesh, link it to `ACTOR_die-relay_0`
 - Export+build — walk into zone, platform dies, relay dies
 - Watch for `[vol-trigger] armed`, `[die-relay] armed`, `[vol-trigger] enter`, `[die-relay] killing`
+
+
+---
+
+## feature/goal-code — Registration fix (April 2026, session 2)
+
+### Root cause of panels not appearing
+Two separate registration bugs, both now fixed:
+
+1. **Duplicate in import tuple** (8fc7e79): `OG_PT_SpawnCustomTypes` listed twice
+   in the top-level `classes` import tuple. Blender silently fails on duplicate
+   registration and kills everything after it — including `OG_PT_ActorGoalCode`.
+
+2. **Missing from register() tuple** (f509e96): Both `OG_PT_SpawnCustomTypes` and
+   `OG_PT_ActorGoalCode` were in the import-time tuple but NOT in the actual
+   `register()` function's `classes` tuple. `bpy.utils.register_class` was never
+   called on them. Added both before `*TEXTURING_CLASSES`.
+
+### Status
+- Panels should now register correctly
+- Not yet confirmed by live test — user could not see panels after install
+- Next session: confirm panels appear, then run die-relay test
+
+### Knowledge doc written
+`knowledge-base/opengoal/goal-code-system.md` — full reference for the goal-code
+system: spawner, panel, vol-trigger wiring, die-relay example, obs.gc output order,
+registration bug history.
