@@ -940,24 +940,34 @@ def write_gc(name, has_triggers=False, has_checkpoints=False, has_aggro_triggers
             ";; vol-trigger: AABB volume entity that sends 'trigger/'untrigger to a custom actor.",
             ";; On rising edge (player enters volume), sends 'trigger to target by name.",
             ";; On falling edge (player exits volume), sends 'untrigger to target by name.",
-            ";; Target is looked up each frame via process-by-ename — safe if target dies.",
+            ";; Target is looked up each poll via process-by-ename — safe if target dies.",
+            ";; Mirrors the aggro-trigger pattern (proven working): *target* guard + frame throttle.",
             "(deftype vol-trigger (process-drawable)",
-            "  ((xmin       float)",
-            "   (xmax       float)",
-            "   (ymin       float)",
-            "   (ymax       float)",
-            "   (zmin       float)",
-            "   (zmax       float)",
-            "   (target-name string)",
-            "   (inside      symbol))",
+            "  ((target-name string  :offset-assert 176)",
+            "   (cull-radius float   :offset-assert 180)",
+            "   (xmin        float   :offset-assert 184)",
+            "   (xmax        float   :offset-assert 188)",
+            "   (ymin        float   :offset-assert 192)",
+            "   (ymax        float   :offset-assert 196)",
+            "   (zmin        float   :offset-assert 200)",
+            "   (zmax        float   :offset-assert 204)",
+            "   (inside      symbol  :offset-assert 208))",
+            "  :heap-base #x70",
+            "  :size-assert #xd4",
             "  (:states vol-trigger-active))",
             "",
             "(defstate vol-trigger-active (vol-trigger)",
             "  :code",
-            "    (behavior ()",
-            "      (loop",
-            "        (let ((pos (-> self root trans)))",
-            "          (let ((in-vol (and",
+            "  (behavior ()",
+            "    (loop",
+            "      (when (and *target* (zero? (mod (-> *display* base-frame-counter) 4)))",
+            "        (let* ((pos  (-> *target* control trans))",
+            "               (dx   (- (-> pos x) (-> self root trans x)))",
+            "               (dy   (- (-> pos y) (-> self root trans y)))",
+            "               (dz   (- (-> pos z) (-> self root trans z)))",
+            "               (cr   (-> self cull-radius))",
+            "               (in-vol (and",
+            "                 (< (+ (* dx dx) (* dy dy) (* dz dz)) (* cr cr))",
             "                 (< (-> self xmin) (-> pos x)) (< (-> pos x) (-> self xmax))",
             "                 (< (-> self ymin) (-> pos y)) (< (-> pos y) (-> self ymax))",
             "                 (< (-> self zmin) (-> pos z)) (< (-> pos z) (-> self zmax)))))",
@@ -1007,7 +1017,8 @@ def write_gc(name, has_triggers=False, has_checkpoints=False, has_aggro_triggers
         for obj in _level_objects(scene):
             if not (obj.type == "EMPTY"
                     and obj.name.startswith("ACTOR_")
-                    and "_wp_" not in obj.name):
+                    and "_wp_" not in obj.name
+                    and "_wpb_" not in obj.name):
                 continue
             ref = getattr(obj, "og_goal_code_ref", None)
             if ref is None:
