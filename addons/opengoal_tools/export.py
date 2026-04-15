@@ -1360,6 +1360,11 @@ def collect_spawns(scene):
             "cam_x": cam_x, "cam_y": cam_y, "cam_z": cam_z,
             "cam_rot":       cam_rot,
             "is_checkpoint": is_checkpoint,
+            # Optional secondary level loaded alongside this level on respawn.
+            # og_lev1 = level symbol name (e.g. "village1") or "" for none.
+            # og_disp1 = "display", "special", or "none" (default none = #f).
+            "lev1":  re.sub(r"[^a-z0-9-]", "", str(o.get("og_lev1",  "") or "").strip().lower()),
+            "disp1": str(o.get("og_disp1", "none") or "none"),
         })
     return out
 
@@ -2330,6 +2335,10 @@ def _make_continues(name, spawns):
     def cp(sp):
         cr = sp.get("cam_rot", [1,0,0, 0,1,0, 0,0,1])
         cr_str = " ".join(str(v) for v in cr)
+        lev1  = sp.get("lev1", "")
+        disp1 = sp.get("disp1", "none")
+        lev1_goal  = f"'{lev1}"  if lev1  else "#f"
+        disp1_goal = f"'{disp1}" if disp1 and disp1 != "none" else "#f"
         return (f"(new 'static 'continue-point\n"
                 f"             :name \"{name}-{sp['name']}\"\n"
                 f"             :level '{name}\n"
@@ -2346,8 +2355,8 @@ def _make_continues(name, spawns):
                 f"             :vis-nick 'none\n"
                 f"             :lev0 '{name}\n"
                 f"             :disp0 'display\n"
-                f"             :lev1 #f\n"
-                f"             :disp1 #f)")
+                f"             :lev1 {lev1_goal}\n"
+                f"             :disp1 {disp1_goal})")
 
     if spawns:
         return "'(" + "\n             ".join(cp(s) for s in spawns) + ")"

@@ -1286,6 +1286,23 @@ def _draw_selected_actor(layout, sel, scene):
                 box2.label(text="⚠ swamp-bat crashes without Path B", icon="ERROR")
 
 
+def _draw_lev1_settings(layout, sel):
+    """Draw lev1/disp1 secondary level load settings for a spawn/checkpoint.
+    og_lev1:  level symbol name (e.g. "village1") — blank = #f (standalone level)
+    og_disp1: "display", "special", or "none" — how to show the secondary level
+    """
+    layout.separator(factor=0.3)
+    box = layout.box()
+    box.label(text="Secondary level on respawn (optional)", icon="WORLD")
+    _prop_row(box, sel, "og_lev1",  "Level symbol:", "")
+    _prop_row(box, sel, "og_disp1", "Display mode:", "none")
+    lev1 = str(sel.get("og_lev1", "") or "").strip()
+    if lev1:
+        box.label(text=f"On respawn: loads '{lev1}' alongside this level", icon="INFO")
+    else:
+        box.label(text="Standalone — no secondary level loaded on respawn", icon="INFO")
+
+
 def _draw_selected_spawn(layout, sel, scene):
     """Draw settings for a SPAWN_ object."""
     layout.label(text=sel.name, icon="EMPTY_ARROWS")
@@ -1298,11 +1315,12 @@ def _draw_selected_spawn(layout, sel, scene):
     else:
         layout.label(text="⚠ No camera anchor", icon="ERROR")
         layout.operator("og.spawn_cam_anchor", text="Add Camera", icon="CAMERA_DATA")
+    _draw_lev1_settings(layout, sel)
 
 
 def _draw_selected_checkpoint(layout, sel, scene):
     """Draw settings for a CHECKPOINT_ object."""
-    layout.label(text=sel.name, icon="EMPTY_SINGLE_ARROW")
+    layout.label(text=sel.name, icon="EMPTY_ARROWS")
 
     # Camera
     cam_obj = scene.objects.get(sel.name + "_CAM")
@@ -1330,6 +1348,8 @@ def _draw_selected_checkpoint(layout, sel, scene):
         layout.label(text=f"⚠ No trigger volume (fallback r={r:.1f}m)", icon="ERROR")
         op = layout.operator("og.spawn_volume_autolink", text="Add Trigger Volume", icon="MESH_CUBE")
         op.target_name = sel.name
+
+    _draw_lev1_settings(layout, sel)
 
 
 def _draw_selected_emitter(layout, sel):
