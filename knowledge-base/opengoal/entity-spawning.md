@@ -847,3 +847,66 @@ Alternatively, set `complete` before the level even loads via the `perm-status` 
 
 This makes the entity spawn in its completed state from frame 1, with no GOAL code needed. Confirmed working for eco-door (spawns open). Value 256 = `real-complete` (bit 8).
 
+
+---
+
+## 15. Bypassing Entity Vis-Culling (force-actors)
+
+### The problem
+
+By default, entities only birth when their `vis-id` passes an AABB visibility test against the camera frustum. For custom levels with `vis-id = 0`, this check can produce unpredictable results — some entities don't birth even when the player is standing next to them.
+
+### The bypass: `force-actors?` in the PC settings file
+
+In `goal_src/jak1/engine/entity/entity.gc` the activation check is:
+
+```lisp
+(or (with-pc (not (-> *pc-settings* ps2-actor-vis?)))
+    (is-object-visible? s4-2 (-> sv-32 vis-id)))
+```
+
+When `ps2-actor-vis?` is `#f`, the vis check is skipped entirely — ALL entities birth unconditionally regardless of vis-id.
+
+`ps2-actor-vis?` is controlled by `force-actors?` in the PC settings file (the setting is stored as its logical inverse):
+
+```lisp
+; from pckernel-common.gc
+((\"force-actors?\") (set! (-> obj ps2-actor-vis?) (not (file-stream-read-symbol file))))
+```
+
+**To disable vis-culling for all custom levels:**
+
+Add or edit this line in the OpenGOAL settings file (`OpenGOAL/settings/jak1/pc-settings.gs`):
+```
+(force-actors? #t)
+```
+
+This is a user-accessible setting requiring no code changes, no recompile. It persists across sessions. The game's own debug menu has a "PS2 Actor vis" toggle for the same thing.
+
+**Default:** `ps2-actor-vis? = #t` (culling on). The addon should recommend users enable `force-actors?` in its getting-started docs.
+
+**Caveat:** Speedrunner mode forces `ps2-actor-vis? = #t` for PS2 accuracy parity. Custom level runners may need to disable speedrunner mode.
+
+---
+
+## 16. `actor-pause` Mask — Per-Entity AI Distance Control
+
+`run-logic?` in `process-drawable.gc` returns `#f` (pausing all AI/logic) when:
+- `actor-pause` is set in the entity's process mask, **AND**
+- entity is beyond `*ACTOR-bank*.pause-dist` + `root.pause-adjust-distance` from camera
+
+`process-drawable-from-entity!` sets `actor-pause` on every entity at spawn time. It can be cleared in `init-from-entity!`:
+
+```lisp
+(logclear! (-> this mask) (process-mask actor-pause))
+```
+
+**Practical use:** Entities with `actor-pause` cleared run their full AI loop at any distance — no distance-based LOD pause. Useful for:
+- Enemies that need to be active and patrolling before Jak arrives
+- Platform timers that must stay in sync regardless of camera distance
+- Any entity whose state machine must not pause at range
+
+Custom GOAL code in `obs.gc` can clear this flag in the `init-from-entity!` override for specific actor types.
+
+**Note:** `pause-adjust-distance` is a per-entity float (`root.pause-adjust-distance`) that extends the pause threshold for individual entities without clearing the flag entirely.
+

@@ -252,3 +252,17 @@ Source (`generic-obs.gc`):
 
 **Fix:** Add `darkeco`, `barrel`, `bucket`, `none` to `CRATE_ITEMS` in `data.py` and to the crate panel operator list.
 
+
+---
+
+## [DOCUMENTATION GAP] force-actors? setting not mentioned in getting-started docs
+
+**Symptom:** Custom level entities don't spawn even when Jak is standing next to them.
+
+**Cause:** `ps2-actor-vis? = #t` by default. Entities with `vis-id = 0` (all custom level entities) may fail the visibility AABB check if the camera frustum misses their recorded vis-box.
+
+**Fix:** User adds `(force-actors? #t)` to their OpenGOAL settings file at:
+`OpenGOAL/settings/jak1/pc-settings.gs`
+
+This disables the vis check entirely on PC — all entities birth unconditionally. No recompile needed. Should be documented in the addon's getting-started guide.
+
