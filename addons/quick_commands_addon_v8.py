@@ -1621,7 +1621,10 @@ class SCENEAUDIT_OT_select_object(Operator):
             self.report({'WARNING'}, f"Object '{self.object_name}' not found in scene")
             return {'CANCELLED'}
 
-        # Deselect all via view_layer (avoids operator context requirements)
+        if obj.name not in context.view_layer.objects:
+            self.report({'WARNING'}, f"'{self.object_name}' is not in the active View Layer")
+            return {'CANCELLED'}
+
         for o in context.view_layer.objects:
             o.select_set(False)
 
@@ -1648,16 +1651,22 @@ class SCENEAUDIT_OT_select_all_in_category(Operator):
             o.select_set(False)
 
         last = None
+        skipped = 0
         for r in results:
             obj = bpy.data.objects.get(r.object_name)
-            if obj:
+            if obj and obj.name in context.view_layer.objects:
                 obj.select_set(True)
                 last = obj
+            else:
+                skipped += 1
 
         if last:
             context.view_layer.objects.active = last
 
-        self.report({'INFO'}, f"Selected {len(results)} object(s)")
+        msg = f"Selected {len(results) - skipped} object(s)"
+        if skipped:
+            msg += f" ({skipped} skipped — not in View Layer)"
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
