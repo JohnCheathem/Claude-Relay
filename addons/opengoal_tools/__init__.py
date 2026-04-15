@@ -1,7 +1,7 @@
 bl_info = {
     "name": "OpenGOAL Level Tools",
-    "author": "water111 / JohnCheathem",
-    "version": (1, 2, 0),
+    "author": "John Cheathem",
+    "version": (3, 2, 1),
     "blender": (4, 4, 0),
     "location": "View3D > N-Panel > OpenGOAL",
     "description": "Jak 1 level export, actor placement, build and launch tools",
@@ -140,6 +140,8 @@ from .operators import (
     OG_OT_CreateGoalCodeBlock, OG_OT_ClearGoalCodeBlock,
     OG_OT_OpenGoalCodeInEditor,
     OG_OT_SpawnCustomType,
+    OG_OT_ScanPaths,
+    OG_OT_SetVersionField,
 )
 from .panels import (
     OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
@@ -241,6 +243,8 @@ classes = (
     OG_OT_ClearGoalCodeBlock,
     OG_OT_OpenGoalCodeInEditor,
     OG_OT_SpawnCustomType,
+    OG_OT_ScanPaths,
+    OG_OT_SetVersionField,
     # ── Collection system operators ──────────────────────────────────────
     OG_OT_CreateLevel, OG_OT_AssignCollectionAsLevel,
     OG_OT_SetActiveLevel, OG_OT_NudgeLevelProp,

@@ -71,19 +71,122 @@ def _find_free_nrepl_port():
 
 def _strip(p): return p.strip().rstrip("\\").rstrip("/")
 
+def _active_version_root() -> Path | None:
+    """Return the resolved exe folder path (og_root_path / og_active_version)."""
+    prefs = bpy.context.preferences.addons.get("opengoal_tools")
+    if not prefs:
+        return None
+    p    = prefs.preferences
+    root = _strip(getattr(p, "og_root_path", ""))
+    ver  = _strip(getattr(p, "og_active_version", ""))
+    if root and ver:
+        return Path(root) / ver
+    return None
+
+def _active_data_root() -> Path | None:
+    """Return the resolved data folder path (og_root_path / og_active_data)."""
+    prefs = bpy.context.preferences.addons.get("opengoal_tools")
+    if not prefs:
+        return None
+    p    = prefs.preferences
+    root = _strip(getattr(p, "og_root_path", ""))
+    dat  = _strip(getattr(p, "og_active_data", ""))
+    if root and dat:
+        return Path(root) / dat
+    # Fall back to exe folder if no separate data folder set
+    return _active_version_root()
+
 def _exe_root():
     prefs = bpy.context.preferences.addons.get("opengoal_tools")
-    p = prefs.preferences.exe_path if prefs else ""
-    return Path(_strip(p)) if p.strip() else Path(".")
+    if prefs:
+        manual = _strip(prefs.preferences.exe_path)
+        if manual:
+            return Path(manual)
+    ver = _active_version_root()
+    return ver if ver else Path(".")
 
 def _data_root():
     prefs = bpy.context.preferences.addons.get("opengoal_tools")
-    p = prefs.preferences.data_path if prefs else ""
-    return Path(_strip(p)) if p.strip() else Path(".")
+    if prefs:
+        manual = _strip(prefs.preferences.data_path)
+        if manual:
+            return Path(manual)
+    dat = _active_data_root()
+    return dat if dat else Path(".")
+
+def _scan_for_installs(root: Path, max_depth: int = 4):
+    """Recursively find exe folders and data folders under root.
+
+    Returns (exe_folders, data_folders) as lists of Paths.
+    Skips known leaf dirs (data/, goal_src/, etc.) to avoid going deep
+    into game files. Stops recursing into a folder once it's been claimed
+    as an exe or data folder.
+    """
+    import sys as _sys
+    exe_ext   = ".exe" if _sys.platform == "win32" else ""
+    skip_dirs = {
+        "data", "out", "decompiler_out", "goal_src", "custom_assets",
+        "iso_data", "third_party", "node_modules", ".git",
+    }
+    exe_folders  = []
+    data_folders = []
+
+    def _walk(path: Path, depth: int):
+        if depth > max_depth:
+            return
+        try:
+            for d in sorted(path.iterdir()):
+                if not d.is_dir() or d.name.startswith(".") or d.name.lower() in skip_dirs:
+                    continue
+                if (d / f"gk{exe_ext}").exists() and (d / f"goalc{exe_ext}").exists():
+                    exe_folders.append(d)
+                    continue   # don't recurse further into an exe folder
+                if (d / "goal_src" / "jak1").exists() or (d / "data" / "goal_src" / "jak1").exists():
+                    data_folders.append(d)
+                    continue   # don't recurse further into a data folder
+                _walk(d, depth + 1)
+        except (PermissionError, OSError):
+            pass
+
+    _walk(root, 0)
+    return exe_folders, data_folders
 
 def _gk():         return _exe_root() / f"gk{_EXE}"
 def _goalc():      return _exe_root() / f"goalc{_EXE}"
-def _data():       return _data_root() / "data"
+
+def _data() -> Path:
+    """Return the effective data folder.
+
+    Release layout  — user points data_path at the install root (e.g. .../opengoal/v0.2.29/).
+                      goal_src lives inside a data/ subfolder → return root/data/.
+    Dev layout      — user points data_path at the jak-project clone root.
+                      goal_src lives directly at root, no data/ layer → return root as-is.
+
+    Detection: if <root>/goal_src/jak1/ exists the user is pointing at a dev clone.
+    That path is never created by the addon itself (addon only writes inside
+    goal_src/jak1/levels/ and custom_assets/), so there are no false positives.
+    """
+    root = _data_root()
+    if (root / "goal_src" / "jak1").exists():
+        return root          # dev build — no data/ layer
+    return root / "data"     # release build
+
+def _decompiler_path() -> Path:
+    """Return the decompiler_out/jak1/ folder.
+
+    If the user has set a custom decompiler_path in preferences, use that directly.
+    Otherwise auto-detect as _data() / 'decompiler_out' / 'jak1'.
+
+    This folder contains (when the decompiler has been run with the right flags):
+      textures/<tpage>/<name>.png          — save_texture_pngs: true
+      <level>/<actor>-lod0.glb             — rip_levels: true
+      <level>/<level>-background.glb       — rip_levels: true
+    """
+    prefs = bpy.context.preferences.addons.get("opengoal_tools")
+    custom = (prefs.preferences.decompiler_path.strip().rstrip("\\/") if prefs else "")
+    if custom:
+        return Path(custom)
+    return _data() / "decompiler_out" / "jak1"
 
 
 def _apply_engine_patches():
@@ -97,7 +200,7 @@ def _apply_engine_patches():
     a clean recompile triggered by this patch.
     """
     patched = []
-    vol_h = _data_root() / "goal_src" / "jak1" / "engine" / "geometry" / "vol-h.gc"
+    vol_h = _data() / "goal_src" / "jak1" / "engine" / "geometry" / "vol-h.gc"
     if not vol_h.exists():
         return patched
     text = vol_h.read_text(encoding="utf-8")
@@ -213,7 +316,7 @@ def goalc_ok():
 
 USER_NAME = "blender"
 
-def _user_base(): return _data_root() / "data" / "goal_src" / "user"
+def _user_base(): return _data() / "goal_src" / "user"
 def _user_dir():
     d = _user_base() / USER_NAME
     d.mkdir(parents=True, exist_ok=True)

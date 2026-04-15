@@ -2782,3 +2782,81 @@ class OG_OT_SpawnCustomType(bpy.types.Operator):
             f"Spawned '{o.name}' — open the GOAL Code panel to assign a code block, "
             f"then define 'deftype {etype}' in that block.")
         return {"FINISHED"}
+
+
+
+# ---------------------------------------------------------------------------
+# Setup / path scanning operators
+# ---------------------------------------------------------------------------
+
+class OG_OT_ScanPaths(bpy.types.Operator):
+    bl_idname   = "og.scan_paths"
+    bl_label    = "Find Files"
+    bl_description = "Recursively scan the root folder for OpenGOAL executables and game source folders"
+
+    def execute(self, ctx):
+        import re
+        from pathlib import Path
+        from .build import _scan_for_installs
+        prefs = ctx.preferences.addons.get("opengoal_tools")
+        if not prefs:
+            self.report({"ERROR"}, "Addon preferences not found"); return {"CANCELLED"}
+        p = prefs.preferences
+        raw = p.og_root_path.strip().rstrip("\\/")
+        if not raw:
+            self.report({"WARNING"}, "Set the OpenGOAL Root folder first"); return {"CANCELLED"}
+        root = Path(raw)
+        if not root.exists():
+            self.report({"WARNING"}, f"Folder not found: {root}"); return {"CANCELLED"}
+
+        exe_folders, data_folders = _scan_for_installs(root)
+
+        def _rel(d: Path) -> str:
+            try:
+                return str(d.relative_to(root)).replace("\\", "/")
+            except ValueError:
+                return str(d)
+
+        if not exe_folders and not data_folders:
+            self.report({"WARNING"},
+                "Nothing found — no exe folders (gk+goalc) or data folders (goal_src) "
+                "under the root. Use Manual path overrides below.")
+            return {"CANCELLED"}
+
+        # Auto-select best exe version (highest semver, else last sorted)
+        if exe_folders:
+            def _ver_key(d: Path):
+                m = re.search(r"(\d+)[._-](\d+)[._-](\d+)", d.name)
+                return tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
+            exe_folders.sort(key=_ver_key, reverse=True)
+            p.og_active_version = _rel(exe_folders[0])
+
+        # Auto-select data folder (prefer one named "active", else first found)
+        if data_folders:
+            active_pref = next(
+                (d for d in data_folders if "active" in str(d).lower()), data_folders[0]
+            )
+            p.og_active_data = _rel(active_pref)
+
+        parts = []
+        if exe_folders:
+            parts.append(f"{len(exe_folders)} exe folder(s) — selected: {p.og_active_version}")
+        if data_folders:
+            parts.append(f"{len(data_folders)} data folder(s) — selected: {p.og_active_data}")
+        self.report({"INFO"}, "Found " + " | ".join(parts))
+        return {"FINISHED"}
+
+
+class OG_OT_SetVersionField(bpy.types.Operator):
+    bl_idname   = "og.set_version_field"
+    bl_label    = "Select"
+    bl_description = "Set the active selection for this field"
+
+    field: StringProperty()   # "og_active_version" or "og_active_data"
+    value: StringProperty()
+
+    def execute(self, ctx):
+        prefs = ctx.preferences.addons.get("opengoal_tools")
+        if prefs and self.field in ("og_active_version", "og_active_data"):
+            setattr(prefs.preferences, self.field, self.value)
+        return {"FINISHED"}

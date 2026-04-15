@@ -27,20 +27,53 @@ from .collections import (
 class OGPreferences(AddonPreferences):
     bl_idname = "opengoal_tools"
 
-    exe_path: StringProperty(
-        name="EXE folder",
+    # ── Auto-detect fields ────────────────────────────────────────────────────
+    og_root_path: StringProperty(
+        name="OpenGOAL Root",
         description=(
-            "Folder containing the OpenGOAL executables (gk / gk.exe and goalc / goalc.exe). "
-            "Usually the versioned release folder, e.g. .../opengoal/v0.2.29/"
+            "Parent folder of your OpenGOAL install — the one whose subfolders contain "
+            "gk / goalc. E.g. if your exe is at .../OpenGOAL/jak1/v0.2.29/gk.exe, "
+            "point this at .../OpenGOAL/jak1/"
         ),
         subtype="DIR_PATH",
         default="",
     )
+    og_active_version: StringProperty(
+        name="Active Version",
+        description="Relative path from root to the folder containing gk/goalc",
+        default="",
+    )
+    og_active_data: StringProperty(
+        name="Active Data Folder",
+        description="Relative path from root to the folder containing goal_src or data/goal_src",
+        default="",
+    )
+    show_manual_paths: BoolProperty(
+        name="Manual path overrides (advanced)",
+        default=False,
+    )
+
+    # ── Manual overrides ──────────────────────────────────────────────────────
+    exe_path: StringProperty(
+        name="EXE folder (override)",
+        description="Override: folder containing gk / goalc. Leave blank to use auto-detected version.",
+        subtype="DIR_PATH",
+        default="",
+    )
     data_path: StringProperty(
-        name="Data folder",
+        name="Data folder (override)",
         description=(
-            "Your active jak1 source folder — the one that contains data/goal_src. "
-            "Usually .../jak-project/ or .../active/jak1/"
+            "Override: release build = parent of data/, dev build = repository root. "
+            "Leave blank to use auto-detected data folder."
+        ),
+        subtype="DIR_PATH",
+        default="",
+    )
+    decompiler_path: StringProperty(
+        name="Decompiler output (override)",
+        description=(
+            "Override: path to decompiler_out/jak1/. "
+            "Leave blank to auto-detect from the active data folder."
         ),
         subtype="DIR_PATH",
         default="",
@@ -50,12 +83,129 @@ class OGPreferences(AddonPreferences):
         description="Automatically show the enemy's game model as a viewport stand-in when spawning",
         default=True,
     )
+
     def draw(self, ctx):
+        import sys
+        from pathlib import Path
         layout = self.layout
-        layout.label(text="EXE folder — contains gk / goalc executables:")
-        layout.prop(self, "exe_path", text="")
-        layout.label(text="Data folder — contains data/goal_src (e.g. your jak-project folder):")
-        layout.prop(self, "data_path", text="")
+
+        # ── Root path + scan button ───────────────────────────────────────────
+        row = layout.row(align=True)
+        row.prop(self, "og_root_path", text="OpenGOAL Root")
+        row.operator("og.scan_paths", text="Find Files", icon="VIEWZOOM")
+
+        if not self.og_root_path.strip():
+            layout.separator()
+            layout.prop(self, "preview_models")
+            return
+
+        root    = Path(self.og_root_path.strip().rstrip("\\/"))
+        exe_ext = ".exe" if sys.platform == "win32" else ""
+
+        exe_folders  = []
+        data_folders = []
+        if root.exists():
+            try:
+                from .build import _scan_for_installs
+                exe_folders, data_folders = _scan_for_installs(root)
+            except Exception:
+                pass
+
+        def _rel(p: Path) -> str:
+            try:
+                return str(p.relative_to(root)).replace("\\", "/")
+            except ValueError:
+                return str(p)
+
+        # ── EXE picker ────────────────────────────────────────────────────────
+        box = layout.box()
+        box.label(text="Executables (gk + goalc):", icon="PLAY")
+        if exe_folders:
+            for d in exe_folders:
+                rel       = _rel(d)
+                is_active = (rel == self.og_active_version)
+                row = box.row(align=True)
+                op  = row.operator("og.set_version_field", text=rel,
+                                   icon="CHECKMARK" if is_active else "RADIOBUT_OFF",
+                                   emboss=is_active)
+                op.field = "og_active_version"
+                op.value = rel
+        elif root.exists():
+            box.label(text="None found — click Find Files or use overrides below", icon="ERROR")
+        else:
+            box.label(text="Root folder not found", icon="ERROR")
+
+        # ── Data folder picker ────────────────────────────────────────────────
+        box2 = layout.box()
+        box2.label(text="Game source / data folder:", icon="FILE_FOLDER")
+        if data_folders:
+            for d in data_folders:
+                rel       = _rel(d)
+                is_active = (rel == self.og_active_data)
+                row = box2.row(align=True)
+                op  = row.operator("og.set_version_field", text=rel,
+                                   icon="CHECKMARK" if is_active else "RADIOBUT_OFF",
+                                   emboss=is_active)
+                op.field = "og_active_data"
+                op.value = rel
+        elif root.exists():
+            box2.label(text="None found — click Find Files or use overrides below", icon="ERROR")
+
+        # ── Status summary ────────────────────────────────────────────────────
+        if self.og_active_version or self.og_active_data or self.exe_path.strip() or self.data_path.strip():
+            sbox = layout.box()
+            sbox.scale_y = 0.8
+            if self.og_active_version:
+                vp = root / self.og_active_version
+                ok = (vp / f"gk{exe_ext}").exists() and (vp / f"goalc{exe_ext}").exists()
+                sbox.label(text=f"EXE: {self.og_active_version}",
+                           icon="CHECKMARK" if ok else "ERROR")
+            elif self.exe_path.strip():
+                sbox.label(text="EXE: manual override", icon="CHECKMARK")
+            if self.og_active_data or self.data_path.strip():
+                try:
+                    from .build import _data, _decompiler_path
+                    dp     = _data()
+                    decomp = _decompiler_path()
+                    is_dev = (dp / "goal_src" / "jak1").exists()
+                    layout_txt = "dev" if is_dev else "release"
+                    sbox.label(
+                        text=f"Data: {self.og_active_data or 'manual'} ({layout_txt} layout)",
+                        icon="CHECKMARK" if dp.exists() else "ERROR",
+                    )
+                    sbox.label(
+                        text=f"Decompiler: {decomp}",
+                        icon="CHECKMARK" if decomp.exists() else "INFO",
+                    )
+                except Exception:
+                    pass
+
+        # ── Manual overrides (collapsible) ────────────────────────────────────
+        layout.separator()
+        row = layout.row()
+        row.prop(self, "show_manual_paths",
+                 icon="TRIA_DOWN" if self.show_manual_paths else "TRIA_RIGHT",
+                 emboss=False)
+        if self.show_manual_paths:
+            col = layout.column()
+            col.label(text="EXE folder (overrides auto-detected version):")
+            col.prop(self, "exe_path", text="")
+            col.separator()
+            col.label(text="Data folder (release: parent of data/  |  dev: repo root):")
+            col.prop(self, "data_path", text="")
+            if self.data_path.strip():
+                r = Path(self.data_path.strip().rstrip("\\/"))
+                b = col.box(); b.scale_y = 0.75
+                if (r / "goal_src" / "jak1").exists():
+                    b.label(text="Dev layout detected", icon="CHECKMARK")
+                elif (r / "data" / "goal_src" / "jak1").exists():
+                    b.label(text=f"Release layout detected — using: {r / 'data'}", icon="CHECKMARK")
+                else:
+                    b.label(text="goal_src/jak1/ not found — check path", icon="ERROR")
+            col.separator()
+            col.label(text="Decompiler output (leave blank to auto-detect):")
+            col.prop(self, "decompiler_path", text="")
+
         layout.separator()
         layout.prop(self, "preview_models")
 
