@@ -2777,3 +2777,66 @@ class OG_OT_SpawnCustomType(bpy.types.Operator):
             f"Spawned '{o.name}' — open the GOAL Code panel to assign a code block, "
             f"then define 'deftype {etype}' in that block.")
         return {"FINISHED"}
+
+
+# ---------------------------------------------------------------------------
+# Setup / path scanning operators
+# ---------------------------------------------------------------------------
+
+class OG_OT_ScanPaths(bpy.types.Operator):
+    bl_idname   = "og.scan_paths"
+    bl_label    = "Find Files"
+    bl_description = "Scan the root folder for installed OpenGOAL versions (subfolders containing gk + goalc)"
+
+    def execute(self, ctx):
+        import re, sys
+        from pathlib import Path
+        prefs = ctx.preferences.addons.get("opengoal_tools")
+        if not prefs:
+            self.report({"ERROR"}, "Addon preferences not found"); return {"CANCELLED"}
+        p = prefs.preferences
+        raw = p.og_root_path.strip().rstrip("\\/")
+        if not raw:
+            self.report({"WARNING"}, "Set the OpenGOAL Root folder first"); return {"CANCELLED"}
+        root = Path(raw)
+        if not root.exists():
+            self.report({"WARNING"}, f"Folder not found: {root}"); return {"CANCELLED"}
+
+        exe_ext = ".exe" if sys.platform == "win32" else ""
+        found   = []
+        try:
+            for d in root.iterdir():
+                if d.is_dir() and (d / f"gk{exe_ext}").exists() and (d / f"goalc{exe_ext}").exists():
+                    found.append(d.name)
+        except PermissionError as e:
+            self.report({"ERROR"}, f"Permission denied: {e}"); return {"CANCELLED"}
+
+        if not found:
+            self.report({"WARNING"},
+                f"No versions found in {root} — no subfolders contain both gk and goalc. "
+                "Use Manual path overrides below if your layout is non-standard.")
+            return {"CANCELLED"}
+
+        def _ver_key(name):
+            m = re.search(r"(\d+)[._-](\d+)[._-](\d+)", name)
+            return tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
+
+        found.sort(key=_ver_key, reverse=True)
+        p.og_active_version = found[0]
+        noun = "version" if len(found) == 1 else "versions"
+        self.report({"INFO"}, f"Found {len(found)} {noun} — active set to: {found[0]}")
+        return {"FINISHED"}
+
+
+class OG_OT_SetActiveVersion(bpy.types.Operator):
+    bl_idname   = "og.set_active_version"
+    bl_label    = "Select Version"
+    bl_description = "Set this as the active OpenGOAL version"
+
+    version: StringProperty()
+
+    def execute(self, ctx):
+        prefs = ctx.preferences.addons.get("opengoal_tools")
+        if prefs:
+            prefs.preferences.og_active_version = self.version
+        return {"FINISHED"}

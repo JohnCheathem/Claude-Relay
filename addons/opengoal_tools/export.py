@@ -26,10 +26,18 @@ from .collections import (
 # _data_root reads the addon pref — duplicated here to avoid circular import with build.py
 def _data_root():
     import bpy as _bpy
-    prefs = _bpy.context.preferences.addons.get("opengoal_tools")
-    p = prefs.preferences.data_path if prefs else ""
     from pathlib import Path as _Path
-    return _Path(p.strip().rstrip("\\").rstrip("/")) if p.strip() else _Path(".")
+    def _s(p): return p.strip().rstrip("\\").rstrip("/")
+    prefs = _bpy.context.preferences.addons.get("opengoal_tools")
+    if prefs:
+        manual = _s(prefs.preferences.data_path)
+        if manual:
+            return _Path(manual)
+        root = _s(getattr(prefs.preferences, "og_root_path", ""))
+        ver  = _s(getattr(prefs.preferences, "og_active_version", ""))
+        if root and ver:
+            return _Path(root) / ver
+    return _Path(".")
 
 def _data():
     root = _data_root()

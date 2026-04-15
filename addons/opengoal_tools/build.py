@@ -71,15 +71,35 @@ def _find_free_nrepl_port():
 
 def _strip(p): return p.strip().rstrip("\\").rstrip("/")
 
+def _active_version_root() -> Path | None:
+    """Return og_root_path / og_active_version if both are set, else None."""
+    prefs = bpy.context.preferences.addons.get("opengoal_tools")
+    if not prefs:
+        return None
+    p    = prefs.preferences
+    root = _strip(getattr(p, "og_root_path", ""))
+    ver  = _strip(getattr(p, "og_active_version", ""))
+    if root and ver:
+        return Path(root) / ver
+    return None
+
 def _exe_root():
     prefs = bpy.context.preferences.addons.get("opengoal_tools")
-    p = prefs.preferences.exe_path if prefs else ""
-    return Path(_strip(p)) if p.strip() else Path(".")
+    if prefs:
+        manual = _strip(prefs.preferences.exe_path)
+        if manual:
+            return Path(manual)
+    ver = _active_version_root()
+    return ver if ver else Path(".")
 
 def _data_root():
     prefs = bpy.context.preferences.addons.get("opengoal_tools")
-    p = prefs.preferences.data_path if prefs else ""
-    return Path(_strip(p)) if p.strip() else Path(".")
+    if prefs:
+        manual = _strip(prefs.preferences.data_path)
+        if manual:
+            return Path(manual)
+    ver = _active_version_root()
+    return ver if ver else Path(".")
 
 def _gk():         return _exe_root() / f"gk{_EXE}"
 def _goalc():      return _exe_root() / f"goalc{_EXE}"

@@ -140,8 +140,9 @@ from .operators import (
     OG_OT_CreateGoalCodeBlock, OG_OT_ClearGoalCodeBlock,
     OG_OT_OpenGoalCodeInEditor,
     OG_OT_SpawnCustomType,
+    OG_OT_ScanPaths,
+    OG_OT_SetActiveVersion,
 )
-from .panels import (
     OG_OT_ReloadAddon, OG_OT_CleanLevelFiles,
     OG_OT_UseLumpRef, OG_OT_SortLevelObjects,
     OG_PT_Level, OG_PT_SpawnLevelFlow, OG_PT_LevelManagerSub,
@@ -241,6 +242,8 @@ classes = (
     OG_OT_ClearGoalCodeBlock,
     OG_OT_OpenGoalCodeInEditor,
     OG_OT_SpawnCustomType,
+    OG_OT_ScanPaths,
+    OG_OT_SetActiveVersion,
     # ── Collection system operators ──────────────────────────────────────
     OG_OT_CreateLevel, OG_OT_AssignCollectionAsLevel,
     OG_OT_SetActiveLevel, OG_OT_NudgeLevelProp,
