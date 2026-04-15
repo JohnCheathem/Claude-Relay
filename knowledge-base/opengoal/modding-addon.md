@@ -460,7 +460,7 @@ If textures aren’t found, the panel shows a warning with extraction instructio
 - **Entity links (alt-actor, state-actor, water-actor)** — working for 23+ etypes
 - **Doors** — eco-door family + basebutton confirmed working in-game (v1.7.0)
 
-### GOAL Code panel (feature/goal-code)
+### GOAL Code panel (merged to main, confirmed working in-game)
 
 Allows attaching arbitrary GOAL source code to any `ACTOR_` empty. The code is appended verbatim to `<n>-obs.gc` on every export, compiled with the level as part of the normal build.
 
@@ -493,7 +493,7 @@ Allows attaching arbitrary GOAL source code to any `ACTOR_` empty. The code is a
 
 ---
 
-### Custom Type spawner (feature/goal-code)
+### Custom Type spawner (merged to main, confirmed working in-game)
 
 Enables placing `ACTOR_` empties for user-defined GOAL types that are not in the addon's built-in entity list.
 
