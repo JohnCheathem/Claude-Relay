@@ -1273,52 +1273,23 @@ def collect_spawns(scene):
         gz = round(-l.y, 4)
 
         # ── Facing quaternion ────────────────────────────────────────────────
-        # The game's continue-point quat encodes Jak's spawn facing direction.
-        # ALL native game continue-points (level-info.gc) use ONLY y+w components —
-        # i.e. pure Y-axis (yaw-only) rotations. The engine never pitches/rolls Jak.
+        # Both SPAWN_ (ARROWS) and CHECKPOINT_ (SINGLE_ARROW) empties encode
+        # Jak's horizontal facing direction via rotation around Blender Z.
+        # The arrow on CHECKPOINT_ points straight up — it marks where Jak
+        # stands, not which way to aim. Facing = Z rotation of the empty.
         #
-        # Two different empty types need two different extraction strategies:
-        #
-        # SPAWN_ (ARROWS display): users set facing by rotating around Blender Z only.
-        #   Full similarity transform gives correct pure-Y game quat for Z-only rotation.
-        #   Convention: NO conjugate. (The conjugate was wrong — it inverted the
-        #   facing direction for all non-0°/180° angles, breaking 90°/45° etc.)
-        #
-        # CHECKPOINT_ (SINGLE_ARROW display): the arrow is local +Z. Users aim the
-        #   arrow in the intended facing direction, which may involve X-tilt + Z-yaw.
-        #   A full 3D matrix approach can't extract the right yaw from a compound
-        #   rotation. Instead: project the arrow's horizontal game-space direction
-        #   and build a pure Y-axis quat directly.
-        m3 = o.matrix_world.to_3x3()
-
-        if is_checkpoint:
-            # Local +Z (arrow) in Blender world space
-            arrow_bl = m3.col[2]
-            # Remap Blender→game: game_x=bl_x, game_z=-bl_y (ignore game_y=bl_z)
-            fwd_x = arrow_bl.x
-            fwd_z = -arrow_bl.y
-            mag = math.sqrt(fwd_x * fwd_x + fwd_z * fwd_z)
-            if mag > 1e-4:
-                # Arrow has a horizontal component — use its yaw
-                half_yaw = math.atan2(fwd_x, fwd_z) / 2.0
-            else:
-                # Arrow points straight up or down — yaw undefined, default 0
-                half_yaw = 0.0
-            qx = 0.0
-            qy = round(math.sin(half_yaw), 6)
-            qz = 0.0
-            qw = round(math.cos(half_yaw), 6)
-        else:
-            # SPAWN_: Z-only rotation → similarity transform produces pure-Y game quat.
-            game_m3 = R_remap @ m3 @ R_remap.transposed()
-            gq      = game_m3.to_quaternion()
-            # No conjugate — the similarity transform produces the correct orientation.
-            # (Previous conjugate was erroneously borrowed from the camera system where
-            # a different matrix-building convention requires it.)
-            qx = round(gq.x, 6)
-            qy = round(gq.y, 6)
-            qz = round(gq.z, 6)
-            qw = round(gq.w, 6)
+        # Remap: game_rot = R_remap @ bl_rot @ R_remap^T
+        # Maps Blender Z-rotation → game Y-rotation (yaw). No conjugate —
+        # the similarity transform already produces the correct orientation.
+        # (The previous conjugate was erroneously borrowed from the camera
+        # system; it inverted facing for all non-0°/180° angles.)
+        m3      = o.matrix_world.to_3x3()
+        game_m3 = R_remap @ m3 @ R_remap.transposed()
+        gq      = game_m3.to_quaternion()
+        qx = round(gq.x, 6)
+        qy = round(gq.y, 6)
+        qz = round(gq.z, 6)
+        qw = round(gq.w, 6)
 
         # ── Camera empty (optional) ──────────────────────────────────────────
         # User can place a SPAWN_<uid>_CAM or CHECKPOINT_<uid>_CAM empty to
