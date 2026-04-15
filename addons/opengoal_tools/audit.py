@@ -205,12 +205,15 @@ def check_spawn_points(scene):
     spawns = _spawn_objs(scene)
     if len(spawns) == 0:
         issues.append(_issue("ERROR",
-            "No SPAWN_ empty found. The level has no player start position."))
+            "No Entry Spawn (SPAWN_) found. The level has no player start position. "
+            "Add one from the Checkpoints panel."))
     elif len(spawns) > 1:
         names = ", ".join(o.name for o in spawns)
-        issues.append(_issue("WARNING",
-            f"Multiple SPAWN_ empties found ({names}). "
-            "The engine picks one arbitrarily — remove extras."))
+        issues.append(_issue("INFO",
+            f"Multiple Entry Spawns found ({names}). "
+            "The first in the :continues list is the default; the engine picks "
+            "the nearest one automatically as the player moves through the level. "
+            "This is valid — no action needed unless you only want one spawn point."))
     return issues
 
 
@@ -375,7 +378,7 @@ def check_scene_summary(scene):
     issues.append(_issue("INFO",
         f"Scene: {len(actors)} actor(s) ({cat_str}), "
         f"{len(vols)} volume(s), {len(cameras)} camera(s), "
-        f"{len(checkpts)} checkpoint(s), {len(spawns)} spawn(s)."))
+        f"{len(spawns)} entry spawn(s), {len(checkpts)} checkpoint(s)."))
 
     groups = {}
     for o in actors:

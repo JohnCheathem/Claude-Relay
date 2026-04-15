@@ -463,7 +463,7 @@ class OG_OT_EditLevel(Operator):
 
 class OG_OT_SpawnPlayer(Operator):
     bl_idname = "og.spawn_player"
-    bl_label  = "Add Player Spawn"
+    bl_label  = "Add Entry Spawn"
     bl_description = "Place a player spawn empty at the 3D cursor"
     def execute(self, ctx):
         # Count scene-wide (not just active level) so names stay unique

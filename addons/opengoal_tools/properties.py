@@ -178,11 +178,11 @@ class OGProperties(PropertyGroup):
     spawn_flow_type: EnumProperty(
         name="Type",
         items=[
-            ("SPAWN",      "Player Spawn",  "Place a player spawn / continue point", "EMPTY_ARROWS",        0),
-            ("CHECKPOINT", "Checkpoint",    "Place a mid-level checkpoint trigger",  "EMPTY_SINGLE_ARROW",  1),
+            ("SPAWN",      "Entry Spawn",   "Level entry point — where Jak spawns when the level starts or on death before any checkpoint is triggered", "EMPTY_ARROWS", 0),
+            ("CHECKPOINT", "Checkpoint",    "Mid-level checkpoint trigger — when Jak walks into the volume, this becomes the active respawn point",        "EMPTY_ARROWS", 1),
         ],
         default="SPAWN",
-        description="Select the type of level flow object to place",
+        description="Entry Spawn = starting position for the level. Checkpoint = in-game trigger that updates the respawn point.",
     )
     # Level flow
     bottom_height:     FloatProperty(name="Death Plane (m)", default=-20.0, min=-500.0, max=-1.0,

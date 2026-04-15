@@ -144,7 +144,7 @@ class OG_PT_SpawnLevelFlow(Panel):
             row = layout.row()
             icon = "TRIA_DOWN" if props.show_spawn_list else "TRIA_RIGHT"
             row.prop(props, "show_spawn_list",
-                     text=f"Player Spawns ({len(spawns)})", icon=icon, emboss=False)
+                     text=f"Entry Spawns ({len(spawns)})", icon=icon, emboss=False)
             if props.show_spawn_list:
                 box = layout.box()
                 for o in sorted(spawns, key=lambda x: x.name):
@@ -171,7 +171,7 @@ class OG_PT_SpawnLevelFlow(Panel):
                 box = layout.box()
                 for o in sorted(checkpoints, key=lambda x: x.name):
                     row = box.row(align=True)
-                    row.label(text=o.name, icon="EMPTY_SINGLE_ARROW")
+                    row.label(text=o.name, icon="EMPTY_ARROWS")
                     vol_list = _vols_linking_to(scene, o.name)
                     if vol_list:
                         row.label(text=f"📦 {vol_list[0].name}")
