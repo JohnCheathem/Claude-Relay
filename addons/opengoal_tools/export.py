@@ -1286,6 +1286,9 @@ def collect_spawns(scene):
         m3      = o.matrix_world.to_3x3()
         game_m3 = R_remap @ m3 @ R_remap.transposed()
         gq      = game_m3.to_quaternion()
+        # Cone tip points +Y in Blender, so spawns face backward without this.
+        # Rotate 180° around game Y to flip facing to match cone direction.
+        gq      = mathutils.Quaternion((0.0, 0.0, 1.0, 0.0)) @ gq
         qx = round(gq.x, 6)
         qy = round(gq.y, 6)
         qz = round(gq.z, 6)
