@@ -421,7 +421,8 @@ def collect_aggro_triggers(scene):
 
     One actor is emitted per (volume, enemy_link) pair. The actor's lump holds
     the target enemy's name (string), an event-id integer (0=cue-chase,
-    1=cue-patrol, 2=go-wait-for-cue), and 6 AABB bound-* floats.
+    1=cue-patrol, 2=go-wait-for-cue), a 'cull-radius' float, and a 'vol'
+    vector-vol plane list (one plane per mesh face).
 
     The target-name lump must match the *emitted name lump* on the target
     actor (which is f"{etype}-{uid}", e.g. "babak-1"), NOT the Blender object
@@ -429,7 +430,8 @@ def collect_aggro_triggers(scene):
     actors and matches the 'name lump string verbatim — this lookup is what
     process-by-ename uses at runtime.
 
-    At runtime the aggro-trigger polls AABB; on rising edge it calls
+    At runtime the aggro-trigger does a sphere pre-check then point-in-vol?
+    against the per-face plane set. On rising edge it calls
     (process-by-ename target-name) and sends the appropriate event symbol.
     Implemented entirely with res-lumps — no engine patches required.
 
@@ -535,7 +537,7 @@ def collect_cameras(scene):
 
     Returns (camera_actors, trigger_actors) where both are JSONC actor dicts.
     camera_actors  -- camera-marker entities (hold position/rotation)
-    trigger_actors -- camera-trigger entities (AABB polling, birth on level load)
+    trigger_actors -- camera-trigger entities (convex vol polling, birth on level load)
 
     A volume can hold multiple links. We iterate every VOL_ mesh's links and
     emit one camera-trigger actor per (volume, camera_link) pair.
@@ -1855,9 +1857,9 @@ def collect_actors(scene, depsgraph=None):
     # the spawn position. The actor's continue-name lump must match the
     # continue-point name exactly: "{level_name}-{uid}".
     #
-    # Volume mode: if a CPVOL_ mesh is linked (og_cp_link = checkpoint name),
-    # the actor uses AABB bounds instead of sphere radius. The GOAL code reads
-    # a 'has-volume' lump (uint32 1) to choose AABB vs sphere.
+    # Volume mode: if a VOL_ mesh is linked (og_cp_link = checkpoint name),
+    # the actor uses native vol-control planes instead of sphere radius.
+    # The GOAL code reads a 'has-volume' lump (uint32 1) to choose vol vs sphere.
     level_name_for_cp = str(_get_level_prop(scene, "og_level_name", "")).strip().lower().replace(" ", "-")
 
     # Build cp_name → first linked vol_obj from og_vol_links collections.
