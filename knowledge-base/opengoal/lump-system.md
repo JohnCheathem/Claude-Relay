@@ -718,3 +718,20 @@ These lumps are read by base engine code and work on any actor:
 | `battlecontroller.*` | ❌ | complex — needs dedicated panel |
 | *any custom lump* | ❌ | needs `og_lump_*` passthrough |
 
+
+---
+
+## battlecontroller — Spawned Enemies Inherit Entity Lumps
+
+Confirmed from `nav-enemy.gc` source (`nav-enemy-init-by-other`):
+
+```lisp
+(set! (-> self entity) (-> arg0 entity))
+```
+
+When `battlecontroller` spawns a nav-enemy, it assigns the **controller's own entity** to the spawned enemy. This means every lump you place on the `battlecontroller` actor is readable by all its spawned enemies at runtime — `idle-distance`, `vis-dist`, `notice-dist`, `speed`, etc. all apply to the wave enemies without needing per-enemy actors.
+
+**Practical use:** Put a `vis-dist` lump on the battlecontroller to set the render distance for all spawned enemies in that wave. Put `idle-distance` (if supported) to tune activation range for the whole wave from one place.
+
+**Note:** Lumps that enemies read at `init-from-entity!` time are read once. Lumps read repeatedly at runtime (like anything in a state loop) will also read from the controller's entity.
+
