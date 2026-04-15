@@ -760,3 +760,26 @@ Latest commit: `dfa7fab`
 - [ ] vol-trigger `inside` field typed as `symbol` — should be `basic` or
       `uint32` since we're using `#f`/`#t` — worth checking if `symbol` type
       causes issues on field init in older GOAL runtime
+
+---
+
+## Spawn/Checkpoint Rotation Fix — MERGED TO MAIN ✅
+
+### Branch: feature/native-checkpoints → main
+
+### Bug fixed
+Continue-point quaternions were negated (conjugate applied) after the similarity transform. This inverted the spawn facing direction for all non-0°/180° angles — 90° right made Jak face 90° left.
+
+Root cause: the conjugate was copy-pasted from the camera system which uses a different matrix-building convention that genuinely requires it. The spawn/checkpoint path (R_remap @ bl_rot @ R_remap^T) does not.
+
+### Changes to export.py (collect_spawns)
+- Removed `-` signs from qx/qy/qz
+- Added `mathutils.Matrix.Rotation(math.pi, 3, 'Z') @ m3` before quat conversion to align with cone display direction
+
+### Changes to operators.py
+- SPAWN_ empty: `ARROWS` → `CONE`, `rotation_euler[2] = math.pi`
+- CHECKPOINT_ empty: `SINGLE_ARROW` → `CONE`, `rotation_euler[2] = math.pi`
+- SpawnCamAnchor: `_CAM` empty now parented to its spawn/checkpoint (`o.parent = sel`, `matrix_parent_inverse` set)
+
+### Convention
+Cone tip points in the direction Jak will spawn facing. Rotate the cone around Blender Z to set direction.
