@@ -39,8 +39,22 @@ class OGPreferences(AddonPreferences):
     data_path: StringProperty(
         name="Data folder",
         description=(
-            "Your active jak1 source folder — the one that contains data/goal_src. "
-            "Usually .../jak-project/ or .../active/jak1/"
+            "Release build: the folder containing the 'data/' subfolder "
+            "(e.g. .../opengoal/v0.2.29/). "
+            "Dev build (jak-project clone): the repository root "
+            "(the folder that contains goal_src/ directly). "
+            "The addon auto-detects which layout you have."
+        ),
+        subtype="DIR_PATH",
+        default="",
+    )
+    decompiler_path: StringProperty(
+        name="Decompiler output",
+        description=(
+            "Path to the decompiler_out/jak1/ folder produced by running the OpenGOAL decompiler "
+            "with rip_levels: true and save_texture_pngs: true. "
+            "Used for: enemy model previews, texture browser, and background geometry reference imports. "
+            "Leave blank to auto-detect (looks for decompiler_out/jak1/ next to goal_src/)."
         ),
         subtype="DIR_PATH",
         default="",
@@ -51,11 +65,63 @@ class OGPreferences(AddonPreferences):
         default=True,
     )
     def draw(self, ctx):
+        from pathlib import Path
         layout = self.layout
+
         layout.label(text="EXE folder — contains gk / goalc executables:")
         layout.prop(self, "exe_path", text="")
-        layout.label(text="Data folder — contains data/goal_src (e.g. your jak-project folder):")
+
+        layout.separator()
+        layout.label(text="Data folder — release: parent of data/   |   dev: repository root:")
         layout.prop(self, "data_path", text="")
+
+        if self.data_path.strip():
+            root = Path(self.data_path.strip().rstrip("\\/"))
+            box = layout.box()
+            box.scale_y = 0.75
+            if (root / "goal_src" / "jak1").exists():
+                box.label(text=f"  Dev layout detected — using: {root}", icon="CHECKMARK")
+            elif (root / "data" / "goal_src" / "jak1").exists():
+                box.label(text=f"  Release layout detected — using: {root / 'data'}", icon="CHECKMARK")
+            else:
+                box.label(text="  goal_src/jak1/ not found — check path", icon="ERROR")
+
+        layout.separator()
+        layout.label(text="Decompiler output — leave blank to auto-detect:")
+        layout.prop(self, "decompiler_path", text="")
+
+        if self.decompiler_path.strip():
+            dp = Path(self.decompiler_path.strip().rstrip("\\/"))
+            box = layout.box()
+            box.scale_y = 0.75
+            has_tex  = (dp / "textures").exists()
+            has_glbs = any(
+                list((dp / d).glob("*.glb"))
+                for d in ["beach", "jungle", "village", "misty", "snow"]
+                if (dp / d).is_dir()
+            )
+            if has_tex and has_glbs:
+                box.label(text="  Textures and models found", icon="CHECKMARK")
+            elif has_tex:
+                box.label(text="  Textures found — enable rip_levels for models", icon="INFO")
+            elif dp.exists():
+                box.label(text="  Folder exists but no textures/models found — run decompiler first", icon="ERROR")
+            else:
+                box.label(text="  Folder not found — check path", icon="ERROR")
+        else:
+            if self.data_path.strip():
+                try:
+                    from .build import _decompiler_path
+                    auto = _decompiler_path()
+                    box = layout.box()
+                    box.scale_y = 0.75
+                    if auto.exists():
+                        box.label(text=f"  Auto-detected: {auto}", icon="CHECKMARK")
+                    else:
+                        box.label(text=f"  Auto-detect: {auto} (not found — run decompiler)", icon="INFO")
+                except Exception:
+                    pass
+
         layout.separator()
         layout.prop(self, "preview_models")
 

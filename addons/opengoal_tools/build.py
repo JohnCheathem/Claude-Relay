@@ -83,7 +83,40 @@ def _data_root():
 
 def _gk():         return _exe_root() / f"gk{_EXE}"
 def _goalc():      return _exe_root() / f"goalc{_EXE}"
-def _data():       return _data_root() / "data"
+
+def _data() -> Path:
+    """Return the effective data folder.
+
+    Release layout  — user points data_path at the install root (e.g. .../opengoal/v0.2.29/).
+                      goal_src lives inside a data/ subfolder → return root/data/.
+    Dev layout      — user points data_path at the jak-project clone root.
+                      goal_src lives directly at root, no data/ layer → return root as-is.
+
+    Detection: if <root>/goal_src/jak1/ exists the user is pointing at a dev clone.
+    That path is never created by the addon itself (addon only writes inside
+    goal_src/jak1/levels/ and custom_assets/), so there are no false positives.
+    """
+    root = _data_root()
+    if (root / "goal_src" / "jak1").exists():
+        return root          # dev build — no data/ layer
+    return root / "data"     # release build
+
+def _decompiler_path() -> Path:
+    """Return the decompiler_out/jak1/ folder.
+
+    If the user has set a custom decompiler_path in preferences, use that directly.
+    Otherwise auto-detect as _data() / 'decompiler_out' / 'jak1'.
+
+    This folder contains (when the decompiler has been run with the right flags):
+      textures/<tpage>/<name>.png          — save_texture_pngs: true
+      <level>/<actor>-lod0.glb             — rip_levels: true
+      <level>/<level>-background.glb       — rip_levels: true
+    """
+    prefs = bpy.context.preferences.addons.get("opengoal_tools")
+    custom = (prefs.preferences.decompiler_path.strip().rstrip("\\/") if prefs else "")
+    if custom:
+        return Path(custom)
+    return _data() / "decompiler_out" / "jak1"
 
 
 def _apply_engine_patches():
@@ -97,7 +130,7 @@ def _apply_engine_patches():
     a clean recompile triggered by this patch.
     """
     patched = []
-    vol_h = _data_root() / "goal_src" / "jak1" / "engine" / "geometry" / "vol-h.gc"
+    vol_h = _data() / "goal_src" / "jak1" / "engine" / "geometry" / "vol-h.gc"
     if not vol_h.exists():
         return patched
     text = vol_h.read_text(encoding="utf-8")
@@ -213,7 +246,7 @@ def goalc_ok():
 
 USER_NAME = "blender"
 
-def _user_base(): return _data_root() / "data" / "goal_src" / "user"
+def _user_base(): return _data() / "goal_src" / "user"
 def _user_dir():
     d = _user_base() / USER_NAME
     d.mkdir(parents=True, exist_ok=True)

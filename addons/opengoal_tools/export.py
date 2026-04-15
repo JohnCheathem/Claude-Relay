@@ -31,7 +31,11 @@ def _data_root():
     from pathlib import Path as _Path
     return _Path(p.strip().rstrip("\\").rstrip("/")) if p.strip() else _Path(".")
 
-def _data():       return _data_root() / "data"
+def _data():
+    root = _data_root()
+    if (root / "goal_src" / "jak1").exists():
+        return root      # dev build — no data/ layer
+    return root / "data" # release build
 def _levels_dir(): return _data() / "custom_assets" / "jak1" / "levels"
 def _goal_src():   return _data() / "goal_src" / "jak1"
 def _level_info(): return _goal_src() / "engine" / "level" / "level-info.gc"
