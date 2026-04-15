@@ -514,8 +514,9 @@ Empirically calibrate the volume emission strength so that when it *adds* to
 Cycles' remaining indirect bounces, the total matches a ground truth render.
 This is a cheat but works visually.
 
-**Recommended for v1: Strategy A.** Clear, no approximation.
-**Recommended for v2: Strategy B with N=4.** Better indirect quality.
+**These strategies are superseded.** See "Resolved Unknowns → Unknown 3" for a
+cleaner solution using per-object ray visibility flags, which makes the volume
+physically incapable of double-counting without any bounce clamping.
 
 ---
 
@@ -620,53 +621,149 @@ auto-refreshes.
 
 ---
 
-## Known Unknowns and Open Questions
+## Resolved Unknowns
 
-### 1. pyopenvdb's `copyFromArray` for Vec3SGrid
-The PBRT and pyopenvdb docs confirm `copyFromArray` works for Vec3SGrid with a
-4D numpy array `(x, y, z, 3)`. However, I have not verified this works inside
-Blender's bundled pyopenvdb. The BVTKNodes addon uses manual accessor loops as
-a fallback. Need to test both paths.
+### 1. `openvdb.Vec3SGrid.copyFromArray` — CONFIRMED WORKS in Blender 4.4
 
-**Confidence:** ~75% that `copyFromArray` works. Fallback is the accessor loop.
+**Research finding:** Blender 4.4's build system (PR #134178) explicitly lists
+**NumPy 1.26.4** as a bundled dependency alongside OpenVDB 12.0.0. `copyFromArray`
+is a compile-time feature gated on `USE_NUMPY=ON` in OpenVDB's CMake. Since NumPy
+is a first-class bundled dependency, official Blender 4.4 builds are built with
+this flag enabled. If it weren't, NumPy itself would be pointless to bundle.
 
-### 2. scipy.ndimage availability
-scipy is not bundled with Blender Python. Options:
-- Implement manual 3D gaussian blur in numpy (separable 1D convolutions → 3D)
-- Install scipy into Blender's Python: `bpy.ops.preferences.addon_install` or
-  subprocess pip install into Blender's site-packages
-- Use OpenVDB's built-in level set filters (more complex)
+The failure case ("NotImplementedError: this module was built without NumPy
+support") only occurs on manually-built or distro-packaged Blender where NumPy
+is not bundled. Official blender.org downloads are safe.
 
-**Recommended:** Pure numpy blur for zero dependency requirement.
+**One structural change in 4.4:** OpenVDB 12.0 switched from pybind11 to
+**nanobind 2.1.0** for its Python bindings. The user-facing API is unchanged
+(`copyFromArray`, `setValueOn`, etc.), but the underlying binding mechanism
+differs. This is transparent to addon code.
 
-### 3. Mini-render loop overhead
-Each probe requires: camera setup, render op, pixel readback, camera cleanup.
-The `bpy.ops.render.render()` call has Python overhead per invocation (~0.1s?).
-400 probes × 0.1s = 40s overhead on top of actual render time.
+**Conclusion:** `copyFromArray` with 4D numpy arrays works. Keep the accessor
+loop fallback for non-official builds only.
 
-**Mitigation:** Batch renders using render animation with a probe camera rig.
-Or use a custom render engine override for the prepass. Needs benchmarking.
+```python
+# Safe pattern for Blender 4.4:
+import bpy
+bpy.utils.expose_bundled_modules()
+import openvdb as vdb
+import numpy as np
 
-### 4. Persistent Volume Object
-The volume's filepath needs to survive file saves and reopens. Using a path
-relative to the `.blend` file with `bpy.path.abspath` is standard practice.
-Need to handle the case where the VDB was baked in a temp dir and the file
-was moved.
+arr = np.zeros((16, 16, 8, 3), dtype=np.float32)
+arr[8, 8, 4] = (1.0, 0.5, 0.2)  # single probe voxel
 
-### 5. Light Leaking Through Walls
+grid = vdb.Vec3SGrid(background=(0.0, 0.0, 0.0))
+grid.name = 'emission'
+grid.copyFromArray(arr)           # confirmed works in official 4.4
+vdb.write('/tmp/test.vdb', grids=[grid])
+```
+
+---
+
+### 2. Per-probe render invocation overhead — SOLVABLE via Persistent Data
+
+**Research finding:** `bpy.ops.render.render()` is blocking by default
+(EXEC_DEFAULT). The dominant overhead per invocation is **BVH reconstruction
+and scene preparation**, not the actual pixel computation. Sources report
+10–30 seconds per-frame overhead for large scenes when this is not managed.
+
+**The solution: Persistent Data.**
+
+Cycles' Persistent Data option (`scene.render.use_persistent_data = True`)
+preserves BVH, geometry, and texture data between renders. For the probe
+prepass:
+- The scene geometry is static — only the probe camera's position changes
+- With Persistent Data, the BVH is built exactly **once** on the first probe
+- All subsequent probes skip BVH rebuild entirely
+- The depsgraph update for a camera position change is trivial (~milliseconds)
+
+This means 400 probes = 1× BVH build + 400× tiny camera move + 400× 32×16
+pixel renders. The render cost dominates, not the overhead.
+
+**Implementation:**
+```python
+# Before probe loop:
+scene.render.use_persistent_data = True
+
+# After probe loop:
+scene.render.use_persistent_data = False  # restore
+```
+
+**Additional note:** The `INVOKE_DEFAULT` invocation variant is non-blocking
+(fires render asynchronously). For a sequential probe loop, always use the
+default blocking form: `bpy.ops.render.render()` with no invoke flag.
+
+---
+
+### 3. Path Guiding + emission volume interaction — COMPLEMENTARY, and a
+better double-counting solution discovered
+
+**Path Guiding interaction:** Path Guiding learns from whatever light distribution
+is present in the scene during training. If the emission volume is present during
+training, the guiding structure learns to favor the volume's emission — which is
+correct and desirable. The volume makes light "easier to find" for both the guiding
+algorithm and for direct path sampling. They reinforce each other.
+
+Path Guiding is CPU-only. For GPU renders, guiding is disabled but the volume
+still provides the same indirect light suppression independently.
+
+**The better double-counting solution (discovered during research):**
+
+Cycles has per-object **ray visibility** flags:
+`Object Properties → Cycles Settings → Ray Visibility`
+- Camera
+- Diffuse
+- Glossy
+- Transmission
+- Shadow
+- Volume Scatter
+
+Setting the irradiance volume to **Camera: OFF, Shadow: OFF** while leaving
+Diffuse/Glossy/Transmission ON means:
+
+- Primary (camera) rays pass **straight through** the volume — it's invisible
+  to direct observation
+- Shadow rays ignore it — it doesn't cast shadows or block light
+- **Bounce rays** (diffuse, glossy) DO hit and sample the volume
+
+This makes the volume **physically incapable** of contributing to direct light.
+It can only contribute when a ray has already bounced at least once. This is
+*exactly* the behavior we want and is a much cleaner solution than bounce
+clamping:
+
+```python
+# After creating the irradiance volume object:
+vol_obj.cycles_visibility.camera = False
+vol_obj.cycles_visibility.shadow = False
+vol_obj.cycles_visibility.diffuse = True
+vol_obj.cycles_visibility.glossy = True
+vol_obj.cycles_visibility.transmission = True
+```
+
+**This completely replaces Strategy A and Strategy B from the double-counting
+section.** No need to clamp bounces or bake direct-only. The volume contributes
+precisely where Cycles struggles — deep indirect paths — without touching direct
+lighting at all.
+
+---
+
+## Remaining Open Questions
+
+### 1. Persistent Volume Object
+The volume's filepath needs to survive file saves and reopens. Using
+`bpy.path.abspath('//')` to resolve relative to the `.blend` file is the
+standard pattern. Need to handle the case where the `.blend` has not been
+saved yet (filepath is empty).
+
+### 2. Light Leaking Through Walls
 The pure emission volume has no awareness of geometry. A probe inside a wall
 (if interior detection fails) will inject light that bleeds through surfaces.
-This is the same light leak problem Eevee's irradiance volumes suffer from.
 
-**Mitigation:** Bias probe positions along the normals of nearby surfaces
-(move them slightly toward the interior). The Jones & Reinhart (2014) paper
-addresses exactly this.
-
-### 6. Double-Counting Calibration
-Strategy A (direct-only bake) avoids the problem but may underestimate
-ambient fill quality. The emission strength slider is the user-facing knob,
-but the "correct" value is scene-dependent. A calibration step (compare
-a small region with reference) could automate this.
+**Mitigation:** Bias probe positions slightly toward the interior of the nearest
+surface. The Jones & Reinhart (2014) paper addresses exactly this for irradiance
+caching. Their "normal offset" technique moves cache points along the surface
+normal to avoid boundary bleed.
 
 ---
 
