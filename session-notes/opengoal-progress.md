@@ -5,6 +5,17 @@ All features below are live on main.
 
 ## Features Shipped
 
+### Setup Fixes + Auto-Scan Preferences (feature/setup-fixes → merged)
+- `_data()` now auto-detects dev vs release layout (checks for `goal_src/jak1/` at root)
+- Scan is recursive up to depth 4 — finds `gk`/`goalc` at any nesting (e.g. `versions/official/v0.3.1/`)
+- Separate exe folder and data folder detection — they can be different paths
+- New prefs fields: `og_root_path`, `og_active_version`, `og_active_data`, `show_manual_paths`
+- New operators: `OG_OT_ScanPaths` (Find Files button), `OG_OT_SetVersionField` (generic picker)
+- `decompiler_path` preference added — auto-detects from `_data() / decompiler_out / jak1`
+- All hardcoded `_data_root() / "data"` paths fixed across `build.py`, `export.py`, `model_preview.py`, `textures.py`, `panels.py`
+- Author updated to John Cheathem, version set to 3.2.1 (base-10 rollover of 221 main commits)
+- Branch: feature/setup-fixes
+
 ### Waypoint Spawn Controls
 - All "Add Waypoint at Cursor" buttons → "Spawn Waypoint"
 - "Add Path B Waypoint" → "Spawn Path B Waypoint"  
