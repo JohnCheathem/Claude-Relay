@@ -621,3 +621,81 @@ Also added `_is_custom_type` to utils.py data imports (was missing).
 ### Status
 All blocking bugs fixed. Minor cosmetic issues remain (volume colour, behaviour
 field noise). Branch not yet live-tested — awaiting test session.
+
+---
+
+## feature/goal-code — Rebase onto main + audit (2026-04-14)
+
+### What was done this session
+
+#### Rebase
+- Branch was 23 commits behind main (missing: music zones, duplicate entity,
+  waypoint spawn-at-actor, `_prop_row` Blender 4.4 fix, `og_no_export` RNA fix,
+  preview mesh export/sort fixes)
+- Strategy: copied all main addon files wholesale into branch, then surgically
+  applied only the goal-code additions on top
+- All 6 changed files: `data.py`, `properties.py`, `operators.py`, `export.py`,
+  `build.py`, `panels.py`, `__init__.py`
+- Committed as: `149ebb6 rebase: port goal-code features onto current main`
+
+#### Bug found and fixed during audit
+- `CreateGoalCodeBlock.poll` excluded `_wp_` waypoints but NOT `_wpb_` (path-B)
+  waypoints. `ACTOR_babak_wpb_00` would have passed the poll and shown a Create
+  button. Fixed to match the guard already in `OG_PT_ActorGoalCode.poll`.
+- Committed as: `dfa7fab fix: CreateGoalCodeBlock.poll exclude _wpb_ waypoints`
+
+#### Audits run (all passed after above fix)
+- Syntax: all 7 files
+- Wiring: 32 symbol/import/registration checks
+- vol-trigger GOAL structure: 20 checks (fields, states, init, suspend, cull-radius)
+- Custom code injection: 7 checks (scene guard, _level_objects, dedup, enabled, as_string)
+- SpawnCustomType: 8 checks (validation, regex, collection link, colour, UID count)
+- Integration: all 3 build.py call sites verified (write_gc + write_jsonc)
+- Logic: ordering, boilerplate substitution, poll guard consistency
+
+### Current state
+Branch: `feature/goal-code` — fully rebased on main, audited, ready for testing
+Latest commit: `dfa7fab`
+
+### First test to run (die-relay)
+1. Spawn > Custom Types → type `die-relay` → Spawn
+2. Select `ACTOR_die-relay_0` → GOAL Code → Create boilerplate block
+3. Open in Text Editor (Shift+F11)
+4. Replace boilerplate with:
+   ```
+   (deftype die-relay (process-drawable)
+     ((target-name string))
+     (:states die-relay-idle))
+
+   (defstate die-relay-idle (die-relay)
+     :event (behavior (proc argc message block)
+       (case message
+         (('trigger)
+          (let ((tgt (process-by-ename (-> self target-name))))
+            (when tgt (send-event tgt 'die)))
+          (deactivate self))))
+     :code (behavior () (loop (suspend))))
+
+   (defmethod init-from-entity! ((this die-relay) (arg0 entity-actor))
+     (set! (-> this root) (new 'process 'trsqv))
+     (process-drawable-from-entity! this arg0)
+     (set! (-> this target-name)
+           (res-lump-struct arg0 'target-name string))
+     (go die-relay-idle)
+     (none))
+   ```
+5. Add custom lump `target-name` (string) pointing at e.g. `eco-platform-0`
+6. Place VOL_ mesh, link it to `ACTOR_die-relay_0`
+7. Export + Build
+8. Watch for: `[vol-trigger] armed`, `[die-relay] armed` in build log
+9. In-game: walk into zone — platform dies, relay deactivates
+
+### Open questions before test
+- [ ] Does `process-by-ename` return the right process for `eco-platform-0`?
+      The name lump for built-in platforms is derived from etype+uid — confirm
+      this matches what `write_jsonc` emits for the platform's `name` lump
+- [ ] `(send-event tgt 'die)` — confirm `eco-platform` handles `'die` event
+      (or use `'attack` with an attack-info struct if `'die` is ignored)
+- [ ] vol-trigger `inside` field typed as `symbol` — should be `basic` or
+      `uint32` since we're using `#f`/`#t` — worth checking if `symbol` type
+      causes issues on field init in older GOAL runtime
