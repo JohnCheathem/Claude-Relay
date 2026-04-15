@@ -215,3 +215,40 @@ The loop path (cycle-speed ≥ 0) works because `res-lump-struct` uses `'interp`
 - Inject a GOAL method override via obs.gc that reads the lump in `nav-enemy-method-48`
 
 **Status:** Panel exists in addon, lump is emitted, has no in-game effect.
+
+---
+
+## [CONFIRMED BUG] Launcher fly-time is 300× too long
+
+**Symptom:** Launcher with a destination set sends Jak flying for ~5 minutes instead of seconds.
+
+**Root cause:** `generic-obs.gc` reads `alt-vector.w` and does `(* 300.0 w)` to convert seconds → frames for `seek-time`. Our export writes `w = fly_time_seconds * 300` (already frames). The engine then multiplies by 300 again: `seek_time_frames = fly_time_seconds * 300 * 300 = fly_time * 90000 frames`.
+
+Source (`generic-obs.gc`):
+```lisp
+(set! (-> this seek-time) (the-as time-frame (the int (* 300.0 (-> v1-29 w)))))
+```
+
+**Fix in export.py:** Change `fw = round((fly_time if fly_time >= 0 else 0.5) * 300, 2)` to `fw = fly_time if fly_time >= 0 else 0.5` — write seconds directly, not frames.
+
+**Status:** Bug in current addon. Launcher destination works spatially; only the fly-time duration is wrong.
+
+---
+
+## [CONFIRMED BUG] Missing crate types in addon
+
+**Symptom:** Crates with `darkeco`, `barrel`, `bucket`, or `none` type are not available in the crate panel.
+
+**Root cause:** The `crate-type` lump in the engine accepts these values but `CRATE_ITEMS` in `data.py` only lists `wood`, `iron`, `steel`.
+
+**Valid crate-type values from `crates.gc`:**
+- `wood` — standard breakable (default)
+- `iron` — heavy, requires stronger attack
+- `steel` — indestructible
+- `darkeco` — dark eco crate, damages on break
+- `barrel` — barrel visual
+- `bucket` — bucket visual  
+- `none` — invisible collision-only crate (hidden pickup container)
+
+**Fix:** Add `darkeco`, `barrel`, `bucket`, `none` to `CRATE_ITEMS` in `data.py` and to the crate panel operator list.
+

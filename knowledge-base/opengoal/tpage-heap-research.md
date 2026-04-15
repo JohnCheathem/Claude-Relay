@@ -228,3 +228,53 @@ If visual variety is the goal rather than cross-zone entity mixing, `merc_replac
 | `game/graphics/opengl_renderer/loader/LoaderStages.cpp:12` | `add_texture` — load_to_pool=false means no pool registration |
 | `game/graphics/opengl_renderer/foreground/Merc2.cpp:1261` | `lev->textures[draw.texture]` — direct GL handle, no tpage |
 | `scratch/build_level_patch.diff` (Claude-Relay) | The existing C++ custom_tex_remap patch |
+
+---
+
+## 10. OOM Crash Budget Correction (source-verified April 2026)
+
+Previous documentation said "~4MB free for tpage data." This was wrong. The correct model:
+
+### Level heap layout during DGO load
+
+```
+heap base (0)
+  ↓ content loads from bottom upward
+  [BSP geometry: tfrag/tie/shrub]
+  [tpage .go data — kicked off heap to VRAM after upload]
+  [art group .go data — stays on heap]
+  [entity process heaps, link tables]
+  ↑ current (grows upward)
+
+  ← 6.4MB free gap (roughly) →
+
+  ↓ DGO load buffers allocated from top downward
+  [dgo-level-buf-2: 2MB]   ← top - 2MB
+  [dgo-level-buf-2: 2MB]   ← top - 4MB (= heap_top_base - 4MB)
+heap top_base (10416 * 1024 ≈ 10.4MB)
+```
+
+Source: `level.gc` load-begin:
+```lisp
+(let ((s4-0 (kmalloc (-> this heap) (* 2 1024 1024) (kmalloc-flags align-64 top) "dgo-level-buf-2"))
+      (s5-2 (kmalloc (-> this heap) (* 2 1024 1024) (kmalloc-flags align-64 top) "dgo-level-buf-2")))
+```
+
+The two 2MB buffers are allocated from the **top** of the heap on every DGO load start, and freed when load completes. The crash occurs when `heap.current` (bottom, growing up) meets the buffer region (top - 4MB = ~6.4MB from base). After load the buffers are freed, so runtime heap is the full 10.4MB.
+
+### tpage data is evicted from heap
+
+`texture-page-default-allocate` calls `remove-from-heap` after uploading to VRAM. In the PC port this still runs (not guarded by `#when PC_PORT`), so tpage `.go` data is evicted from the heap immediately after login. Tpages do NOT permanently occupy the level heap — only art group `.go` data does.
+
+### Revised crash budget
+
+| Component | Heap cost |
+|---|---|
+| DGO load buffers (temporary) | 4MB from top |
+| BSP geometry (tfrag/tie/shrub) | 1–3MB |
+| Art groups (.go, stays resident) | ~300–600KB each |
+| Tpages (evicted after login) | 0 (transient during load only) |
+| **Usable for content before OOM** | **~6.4MB sustained, ~5MB during active load** |
+
+**Practical implication:** The "max 2 tpage groups" limit is primarily about the **load-time** peak when all tpages are loaded simultaneously before eviction, not the runtime steady state. Reducing tpage count helps load-time reliability but not runtime heap.
+

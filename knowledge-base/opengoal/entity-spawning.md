@@ -794,3 +794,56 @@ Custom level lumps are stored at key-frame `-1e9`. `'exact 0.0` never matches �
 `collect-ambients` in `ambient.gc` uses only `spheres-overlap?` against the ambient's bsphere. The ambient emitter object's mesh shape, scale, or rotation has zero effect on when it activates. Only the bsphere radius matters. The `vol` lump on light/dark/weather-off ambients controls zone-of-effect *after* activation, not activation itself.
 
 **Practical implication:** For sound emitters, the visual object shape in Blender is irrelevant. Only the bsphere radius (exported from the object's bounding sphere) controls activation distance. This is already correct behavior in the addon — but worth documenting so users don't try to shape sound zones with mesh geometry.
+
+---
+
+## 14. Runtime Entity State Manipulation via perm-status
+
+### process-entity-status! — toggle any perm-status bit on a live entity
+
+```lisp
+(defun process-entity-status! ((arg0 process) (arg1 entity-perm-status) (arg2 symbol)) ...)
+; arg2 = #t to set, #f to clear
+```
+
+Source: `entity.gc:1167`. Works on any process that owns its entity (`(-> arg0 entity extra process) = arg0`).
+
+**entity-perm-status bit reference** (from `process-drawable-h.gc`):
+
+| Bit | Name | Practical meaning |
+|---|---|---|
+| 6 | `complete` | Entity spawns in completed state (door open, crate already gone) |
+| 8 | `real-complete` | Marks entity permanently done in perm table across level reloads |
+| 2 | `dead` | Entity is dead / permanently removed |
+
+### Use from startup.gc injection
+
+To pre-complete a named entity when the level loads:
+
+```lisp
+; In startup.gc — runs once at level load via (start 'play (get-current-continue-point))
+(let ((e (entity-by-name "eco-door-0")))
+  (when (and e (-> e extra process))
+    (process-entity-status! (-> e extra process) (entity-perm-status complete) #t)))
+```
+
+**Requirement:** The target entity's process must already be alive when this runs. Entities birth over multiple frames after level load — run this in a delayed coroutine or use `entity-by-name` polling if timing is an issue.
+
+**Use cases:**
+- Make specific eco-doors spawn open without requiring blue eco or a game-task
+- Permanently remove a crate from a scene (set `real-complete`)
+- Force an oracle to show its "reward already given" state
+- Any door, switch, or collectible whose initial state depends on task completion
+
+### Setting perm-status at spawn time (JSONC)
+
+Alternatively, set `complete` before the level even loads via the `perm-status` lump (int32, value 64 = bit 6):
+
+```json
+"lump": {
+  "perm-status": ["int32", 64]
+}
+```
+
+This makes the entity spawn in its completed state from frame 1, with no GOAL code needed. Confirmed working for eco-door (spawns open). Value 256 = `real-complete` (bit 8).
+
