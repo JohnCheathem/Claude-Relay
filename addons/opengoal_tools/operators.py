@@ -450,7 +450,7 @@ class OG_OT_SpawnPlayer(Operator):
     def execute(self, ctx):
         n   = len([o for o in _level_objects(ctx.scene) if o.name.startswith("SPAWN_") and not o.name.endswith("_CAM")])
         uid = "start" if n == 0 else f"spawn{n}"
-        bpy.ops.object.empty_add(type="ARROWS", location=ctx.scene.cursor.location)
+        bpy.ops.object.empty_add(type="CONE", location=ctx.scene.cursor.location)
         o = ctx.active_object
         o.name = f"SPAWN_{uid}"; o.show_name = True
         o.empty_display_size = 1.0; o.color = (0.0,1.0,0.0,1.0)
@@ -470,7 +470,7 @@ class OG_OT_SpawnCheckpoint(Operator):
     def execute(self, ctx):
         n   = len([o for o in _level_objects(ctx.scene) if o.name.startswith("CHECKPOINT_") and not o.name.endswith("_CAM")])
         uid = f"cp{n}"
-        bpy.ops.object.empty_add(type="SINGLE_ARROW", location=ctx.scene.cursor.location)
+        bpy.ops.object.empty_add(type="CONE", location=ctx.scene.cursor.location)
         o = ctx.active_object
         o.name = f"CHECKPOINT_{uid}"; o.show_name = True
         o.empty_display_size = 1.2; o.color = (1.0, 0.85, 0.0, 1.0)
@@ -512,6 +512,9 @@ class OG_OT_SpawnCamAnchor(Operator):
         if direction.length > 1e-4:
             rot_quat = direction.to_track_quat('-Z', 'Y')
             o.rotation_euler = rot_quat.to_euler()
+        # Parent to the spawn/checkpoint so it moves with it
+        o.parent = sel
+        o.matrix_parent_inverse = sel.matrix_world.inverted()
         _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_SPAWNS)
         self.report({"INFO"}, f"Added {cam_name}")
         return {"FINISHED"}
