@@ -110,7 +110,25 @@ def _data():
     return _data_cache[key]
 
 
-def _patch_vol_h_enabled():
+def _decompiler_path() -> Path:
+    """Return the decompiler_out/jak1/ folder path.
+
+    If the user has set a custom decompiler_path in preferences, that is used directly.
+    Otherwise auto-detects as _data() / 'decompiler_out' / 'jak1'.
+
+    This folder should contain:
+      textures/<tpage_name>/<texture>.png   (save_texture_pngs: true)
+      <level_name>/<actor>-lod0.glb         (rip_levels: true, actor models)
+      <level_name>/<level_name>-background.glb  (rip_levels: true, background geo)
+    """
+    prefs = bpy.context.preferences.addons.get("opengoal_tools")
+    custom = prefs.preferences.decompiler_path.strip() if prefs else ""
+    if custom:
+        return Path(custom.rstrip("\\/"))
+    return _data() / "decompiler_out" / "jak1"
+
+
+
     """Return True if the vol-h.gc auto-patch preference is enabled (default True)."""
     prefs = bpy.context.preferences.addons.get("opengoal_tools")
     if prefs is None:

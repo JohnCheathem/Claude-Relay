@@ -23,11 +23,18 @@ _PREVIEW_PROP  = "og_preview_mesh"  # custom property key on each mesh object
 
 
 def _glb_path(glb_rel: str) -> Path:
-    """Resolve a relative glb path (e.g. 'levels/beach/babak-lod0.glb')
+    """Resolve a relative GLB path (e.g. 'levels/beach/babak-lod0.glb')
     against the decompiler output directory.
-    Uses _data() from build.py so dev env (no data/ subfolder) is handled correctly."""
-    from .build import _data as _get_data
-    return _get_data() / "decompiler_out" / "jak1" / glb_rel
+
+    GLB path convention (set rip_levels: true in jak1_config.jsonc):
+      <decompiler_out>/jak1/levels/<level_name>/<actor>-lod0.glb  (actor/enemy models)
+      <decompiler_out>/jak1/levels/<level_name>/<level>-background.glb  (background geo)
+
+    Uses _decompiler_path() from build.py which respects the decompiler_path
+    preference (or auto-detects from the data folder).
+    """
+    from .build import _decompiler_path
+    return _decompiler_path() / glb_rel
 
 
 def models_available() -> bool:

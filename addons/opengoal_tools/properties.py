@@ -65,6 +65,17 @@ class OGPreferences(AddonPreferences):
         ),
         default=True,
     )
+    decompiler_path: StringProperty(
+        name="Decompiler output",
+        description=(
+            "Path to the decompiler_out/jak1/ folder. Used for: enemy model previews in the "
+            "viewport, the texture browser, and background geometry reference imports. "
+            "Leave blank to auto-detect from the Data folder (data_path/decompiler_out/jak1/). "
+            "Run the decompiler with rip_levels: true and save_texture_pngs: true to populate it."
+        ),
+        subtype="DIR_PATH",
+        default="",
+    )
     def draw(self, ctx):
         layout = self.layout
         layout.label(text="EXE folder — contains gk / goalc executables:")
@@ -84,6 +95,45 @@ class OGPreferences(AddonPreferences):
                 box.label(text=f"✓ goal_src found in data/ — using: {root / 'data'}", icon="CHECKMARK")
             else:
                 box.label(text="⚠  goal_src/jak1 not found — check path", icon="ERROR")
+
+        layout.separator()
+        layout.label(text="Decompiler output — decompiler_out/jak1/ (leave blank to auto-detect):")
+        layout.prop(self, "decompiler_path", text="")
+
+        # Show decompiler output status
+        if self.decompiler_path.strip():
+            from pathlib import Path
+            dp = Path(self.decompiler_path.strip().rstrip("\\/"))
+            box = layout.box()
+            box.scale_y = 0.75
+            has_tex   = (dp / "textures").exists()
+            # probe any level subfolder for GLBs
+            has_glbs  = any((dp / d).is_dir() and any((dp / d).glob("*.glb"))
+                            for d in ["beach", "jungle", "swamp", "village"] if (dp / d).is_dir())
+            if has_tex and has_glbs:
+                box.label(text="✓ Textures and models found", icon="CHECKMARK")
+            elif has_tex:
+                box.label(text="✓ Textures found (no GLBs — enable rip_levels in decompiler config)", icon="INFO")
+            elif has_glbs:
+                box.label(text="✓ Models found (no textures — enable save_texture_pngs in decompiler config)", icon="INFO")
+            elif dp.exists():
+                box.label(text="⚠  Folder exists but empty — run decompiler with rip_levels/save_texture_pngs", icon="ERROR")
+            else:
+                box.label(text="⚠  Folder not found — check path", icon="ERROR")
+        else:
+            # Show the auto-detected path
+            from pathlib import Path
+            from .build import _data
+            try:
+                auto = _data() / "decompiler_out" / "jak1"
+                box = layout.box()
+                box.scale_y = 0.75
+                if auto.exists():
+                    box.label(text=f"✓ Auto-detected: {auto}", icon="CHECKMARK")
+                else:
+                    box.label(text=f"Auto-detect: {auto} (not found — run decompiler)", icon="INFO")
+            except Exception:
+                pass
 
         layout.separator()
         layout.prop(self, "preview_models")

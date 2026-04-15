@@ -16,7 +16,7 @@ from bpy.types import Panel, Operator
 from bpy.props import StringProperty, IntProperty, EnumProperty, CollectionProperty
 from pathlib import Path
 
-from .build import _data
+from .build import _data, _decompiler_path
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -68,7 +68,7 @@ def _get_previews():
 
 
 def _tex_root() -> Path:
-    return _data() / "decompiler_out" / "jak1" / "textures"
+    return _decompiler_path() / "textures"
 
 
 def _prefixes_for_group(group_id: str):
