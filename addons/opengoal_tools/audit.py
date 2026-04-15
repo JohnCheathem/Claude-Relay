@@ -197,7 +197,75 @@ def check_volumes(scene):
 
 
 # ---------------------------------------------------------------------------
-# Check 6 — Spawn points
+# Check 5b — Volume mesh geometry
+# ---------------------------------------------------------------------------
+# Since volumes now export per-face half-space planes (point-in-vol?), the
+# mesh geometry must satisfy three constraints for triggers to fire correctly:
+#   1. The mesh must have at least one face (otherwise zero planes → never fires).
+#   2. The mesh should be convex (non-convex shapes produce planes that slice
+#      through the intended zone, excluding interior pockets).
+#   3. Face normals must point OUTWARD from the mesh centre.  Inward normals
+#      invert the inside/outside test — triggers fire OUTSIDE the volume.
+#
+# Checks 2 & 3 are approximated by comparing each face normal direction
+# against the vector from the mesh centroid to the face centre.  If that dot
+# product is negative the normal points toward the centre (inward).  This
+# catches the most common case (normals flipped via Ctrl+N wrong direction or
+# an imported mesh with inside-out normals).  It is not a full convexity test.
+# ---------------------------------------------------------------------------
+
+def check_vol_geometry(scene):
+    import mathutils
+    issues = []
+    for vol in _vol_objs(scene):
+        mesh = vol.data
+        mat  = vol.matrix_world
+
+        # --- Check 1: must have faces ---
+        if len(mesh.polygons) == 0:
+            issues.append(_issue("ERROR",
+                f"Volume '{vol.name}' has no faces. "
+                "It will export zero vol-control planes and triggers will NEVER fire.",
+                vol.name))
+            continue  # skip further geometry checks
+
+        # --- Compute mesh centroid in world space (average of face centres) ---
+        face_centres = [mat @ f.center for f in mesh.polygons]
+        centroid = sum(face_centres, mathutils.Vector()) / len(face_centres)
+
+        # --- Check 3: outward-facing normals ---
+        rot = mat.to_3x3()
+        inward_count = 0
+        for face in mesh.polygons:
+            world_normal = (rot @ face.normal).normalized()
+            world_centre = mat @ face.center
+            to_face = (world_centre - centroid)
+            if to_face.length < 1e-6:
+                continue  # degenerate face at centroid — skip
+            if world_normal.dot(to_face) < 0:
+                inward_count += 1
+
+        inward_frac = inward_count / len(mesh.polygons)
+        if inward_frac > 0.5:
+            # Majority of normals inward → almost certainly fully flipped
+            issues.append(_issue("ERROR",
+                f"Volume '{vol.name}' has mostly inward-facing normals "
+                f"({inward_count}/{len(mesh.polygons)} faces). "
+                "Triggers will fire OUTSIDE the volume, not inside. "
+                "Fix: Edit Mode → Mesh → Normals → Recalculate Outside (Shift+N).",
+                vol.name))
+        elif inward_count > 0:
+            # Some inward faces — likely non-convex or partially flipped
+            issues.append(_issue("WARNING",
+                f"Volume '{vol.name}' has {inward_count}/{len(mesh.polygons)} "
+                "face(s) with normals that appear to point inward. "
+                "If the volume is convex, recalculate normals (Edit Mode → Shift+N). "
+                "If it is non-convex, split it into multiple convex VOL_ meshes.",
+                vol.name))
+
+    return issues
+
+
 # ---------------------------------------------------------------------------
 
 def check_spawn_points(scene):
@@ -408,6 +476,7 @@ _REGISTERED_CHECKS = [
     check_missing_paths,
     check_actor_links,
     check_volumes,
+    check_vol_geometry,
     check_spawn_points,
     check_duplicate_names,
     check_camera_targets,

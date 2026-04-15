@@ -334,31 +334,15 @@ def _collect_navmesh_actors(scene):
     return result
 
 
-def _camera_aabb_to_planes(b_min, b_max):
-    """Convert an AABB in game-space meters to 6 half-space plane equations.
-
-    Each plane is [nx, ny, nz, d_meters] where a point P (meters) is INSIDE
-    the volume when dot(P, normal) <= d for ALL planes.
-
-    The C++ loader (vector_vol_from_json) multiplies the w component by 4096,
-    so we provide values in meters here.
-    """
-    mn = tuple(min(b_min[i], b_max[i]) for i in range(3))
-    mx = tuple(max(b_min[i], b_max[i]) for i in range(3))
-    return [
-        [ 1.0,  0.0,  0.0,  mx[0]],  # +X wall
-        [-1.0,  0.0,  0.0, -mn[0]],  # -X wall
-        [ 0.0,  1.0,  0.0,  mx[1]],  # +Y ceiling
-        [ 0.0, -1.0,  0.0, -mn[1]],  # -Y floor
-        [ 0.0,  0.0,  1.0,  mx[2]],  # +Z back
-        [ 0.0,  0.0, -1.0, -mn[2]],  # -Z front
-    ]
-
-
 def _vol_aabb(vol_obj):
-    """Compute the game-space AABB of a volume mesh.
+    """Compute the game-space AABB of a mesh object.
+
     Returns (xs_min, xs_max, ys_min, ys_max, zs_min, zs_max, cx, cy, cz, radius).
-    Used by all trigger build passes (camera, checkpoint, aggro).
+
+    NOTE: Still used by the WATER_ mesh export path only, which needs an
+    axis-aligned box because the water surface must be a flat horizontal plane
+    at a specific Y and per-face planes would not preserve that invariant.
+    All trigger volumes (camera/checkpoint/aggro/vol) now use _vol_planes().
     """
     corners = [vol_obj.matrix_world @ v.co for v in vol_obj.data.vertices]
     gc = [(c.x, c.z, -c.y) for c in corners]
