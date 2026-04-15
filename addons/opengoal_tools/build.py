@@ -83,7 +83,25 @@ def _data_root():
 
 def _gk():         return _exe_root() / f"gk{_EXE}"
 def _goalc():      return _exe_root() / f"goalc{_EXE}"
-def _data():       return _data_root() / "data"
+def _data():
+    """Return the effective data folder.
+
+    Release layout: user sets data_path to the folder *containing* data/,
+    so we append 'data/' to reach goal_src, custom_assets, etc.
+
+    Dev env (jak-project clone): goal_src/jak1/ lives directly in the
+    project root — no 'data/' subfolder.  Detected by checking for
+    goal_src/jak1/ at the root level, which is unambiguous and cannot
+    be falsely created by the addon itself (only writes inside
+    goal_src/jak1/levels/ and custom_assets/).
+
+    Heuristic: if <root>/goal_src/jak1/ exists → dev env, return root.
+               otherwise → release layout, return root/data/.
+    """
+    root = _data_root()
+    if (root / "goal_src" / "jak1").exists():
+        return root          # dev env
+    return root / "data"    # release layout
 
 
 def _apply_engine_patches():
@@ -97,7 +115,7 @@ def _apply_engine_patches():
     a clean recompile triggered by this patch.
     """
     patched = []
-    vol_h = _data_root() / "goal_src" / "jak1" / "engine" / "geometry" / "vol-h.gc"
+    vol_h = _data() / "goal_src" / "jak1" / "engine" / "geometry" / "vol-h.gc"
     if not vol_h.exists():
         return patched
     text = vol_h.read_text(encoding="utf-8")
@@ -213,7 +231,7 @@ def goalc_ok():
 
 USER_NAME = "blender"
 
-def _user_base(): return _data_root() / "data" / "goal_src" / "user"
+def _user_base(): return _data() / "goal_src" / "user"
 def _user_dir():
     d = _user_base() / USER_NAME
     d.mkdir(parents=True, exist_ok=True)

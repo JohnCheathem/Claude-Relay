@@ -31,7 +31,26 @@ def _data_root():
     from pathlib import Path as _Path
     return _Path(p.strip().rstrip("\\").rstrip("/")) if p.strip() else _Path(".")
 
-def _data():       return _data_root() / "data"
+def _data():
+    """Return the effective data folder.
+
+    Release layout: user sets data_path to the folder *containing* data/,
+    so we append 'data/' to reach goal_src, custom_assets, etc.
+
+    Dev env (jak-project clone): goal_src/jak1/ lives directly in the
+    project root — no 'data/' subfolder exists.  We detect this by checking
+    for goal_src/jak1/ at the root level, which is unambiguous and cannot
+    be falsely created by the addon itself (the addon only writes inside
+    goal_src/jak1/levels/ and custom_assets/).
+
+    Heuristic: if <root>/goal_src/jak1/ exists → dev env, return root.
+               otherwise → release layout, return root/data/.
+    """
+    root = _data_root()
+    if (root / "goal_src" / "jak1").exists():
+        return root          # dev env
+    return root / "data"    # release layout
+
 def _levels_dir(): return _data() / "custom_assets" / "jak1" / "levels"
 def _goal_src():   return _data() / "goal_src" / "jak1"
 def _level_info(): return _goal_src() / "engine" / "level" / "level-info.gc"
