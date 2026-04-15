@@ -454,6 +454,7 @@ class OG_OT_SpawnPlayer(Operator):
         o = ctx.active_object
         o.name = f"SPAWN_{uid}"; o.show_name = True
         o.empty_display_size = 1.0; o.color = (0.0,1.0,0.0,1.0)
+        o.rotation_euler[2] = math.pi  # cone tip points +Y by default; flip to -Y (game forward)
         _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_SPAWNS)
         self.report({"INFO"}, f"Added {o.name}")
         return {"FINISHED"}
@@ -474,6 +475,7 @@ class OG_OT_SpawnCheckpoint(Operator):
         o = ctx.active_object
         o.name = f"CHECKPOINT_{uid}"; o.show_name = True
         o.empty_display_size = 1.2; o.color = (1.0, 0.85, 0.0, 1.0)
+        o.rotation_euler[2] = math.pi  # cone tip points +Y by default; flip to -Y (game forward)
         o["og_checkpoint_radius"] = 3.0
         _link_object_to_sub_collection(ctx.scene, o, *_COL_PATH_SPAWNS)
         self.report({"INFO"}, f"Added {o.name}")
