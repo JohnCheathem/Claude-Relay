@@ -3,424 +3,198 @@
 Deep-dive into all issues raised by community tester.
 Env: Blender 5.0.1 · mod-base `5599be3` · addon `b0577ea`
 
-**Status:** Path bug fix implemented — commit `2bc1234` on `research/community-feedback-apr15`.
-Awaiting test on a real dev build before merge to main.
+**Status:** Multiple fixes implemented on `research/community-feedback-apr15`.
+Awaiting test on real builds before merge to main.
 
 ---
 
-## 1. 🔴 Dev Build Path Bug — Full Root Cause
+## FIXES IMPLEMENTED
 
-### The single-line culprit
+### 1. 🔴 Dev Build Path Bug (Priority #1) — FIXED
 
-Both `export.py:35` and `build.py:86` define:
-
-```python
-def _data(): return _data_root() / "data"
-```
-
-Every path the addon uses (`_levels_dir`, `_goal_src`, `_level_info`, `_game_gp`, `_entity_gc`)
-builds off `_data()`. So **every path the addon resolves silently appends `/data`** to whatever
-the user set as `data_path`.
-
-### Dev vs release folder structure
-
-**Dev environment (jak-project clone):**
-```
-jak-project/
-├── custom_assets/jak1/levels/     ← where files SHOULD go
-├── goal_src/jak1/                 ← level-info.gc, game.gp live here
-├── decompiler_out/jak1/levels/    ← where rip_levels GLBs land
-└── (NO data/ subfolder)
-```
-
-**Release build:**
-```
-opengoal_vX.Y.Z/
-└── data/
-    ├── custom_assets/jak1/levels/ ← correct for release users
-    ├── goal_src/jak1/             ← correct for release users
-    └── decompiler_out/jak1/       ← correct for release users
-```
-
-For a release user, `data_path = opengoal_vX.Y.Z/`, so `_data()` = `opengoal_vX.Y.Z/data/` ✓
-
-For a dev user, `data_path = jak-project/`, so `_data()` = `jak-project/data/` ✗ (folder doesn't exist, created on first write)
-
-### Full blast radius
-
-Every path resolution in the addon is broken for dev env:
-
-| Path function | Broken result (dev) | Correct dev path |
-|---|---|---|
-| `_levels_dir()` | `jak-project/data/custom_assets/jak1/levels/` | `jak-project/custom_assets/jak1/levels/` |
-| `_goal_src()` | `jak-project/data/goal_src/jak1/` | `jak-project/goal_src/jak1/` |
-| `_level_info()` | `jak-project/data/goal_src/.../level-info.gc` | `jak-project/goal_src/.../level-info.gc` |
-| `_game_gp()` | `jak-project/data/goal_src/jak1/game.gp` | `jak-project/goal_src/jak1/game.gp` |
-| `_user_base()` (build.py:216) | `jak-project/data/goal_src/user/` | `jak-project/goal_src/user/` |
-| `--proj-path` to gk/goalc | `jak-project/data/` (nonexistent) | `jak-project/` |
-| `_glb_path()` in model_preview.py | `jak-project/data/decompiler_out/...` | `jak-project/decompiler_out/...` |
-
-### The inverse bug (release breakage)
-
-`build.py:100` uses `_data_root()` directly instead of `_data()`:
-
-```python
-vol_h = _data_root() / "goal_src" / "jak1" / "engine" / "geometry" / "vol-h.gc"
-```
-
-- **Dev env:** `data_root/goal_src/` exists → vol-h.gc patch works ✓
-- **Release env:** `data_root/goal_src/` does NOT exist (it's at `data_root/data/goal_src/`) → patch silently skips ✗
-
-So the vol-h.gc patch (trigger volume fix) is broken for release users. Opposite of the main bug.
-
-### Why "Missing paths — open Developer Tools" appears
-
-`panels.py:4050` checks:
-```python
-gk_ok  = _gk().exists()    # exe_path/gk — usually fine
-gc_ok  = _goalc().exists()  # exe_path/goalc — usually fine
-gp_ok  = _game_gp().exists() # data_path/data/goal_src/jak1/game.gp — DOESN'T EXIST on dev
-```
-
-The error label fires because `game.gp` resolves to a nonexistent path. Fix the path bug → error disappears.
-
-### How gk/goalc handle --proj-path
-
-From `common/util/FileUtil.cpp:201`:
-1. If `--proj-path` passed → use it directly as "the data folder"
-2. Else if `data/` folder exists next to exe → use that (release auto-detect)
-3. Else if exe path contains `"jak-project"` → use the repo root (dev auto-detect)
-
-The addon currently passes `_data()` (= `data_root/data`) as `--proj-path`. On dev env this
-folder doesn't exist, so gk/goalc would fail immediately on launch. Fix: pass `_data()` after
-it resolves correctly.
-
-### Recommended fix: auto-detect in `_data()`
-
+Root cause and fix documented in commit `2bc1234`. Auto-detect logic:
 ```python
 def _data():
     root = _data_root()
-    # Release: user points to parent of data/ — so data/goal_src exists
-    data_sub = root / "data"
-    if (data_sub / "goal_src").exists() or (data_sub / "custom_assets").exists():
-        return data_sub
-    # Dev env: user points to project root — goal_src/ is at root level
-    return root
+    if (root / "goal_src" / "jak1").exists():
+        return root       # dev env — goal_src at project root
+    return root / "data"  # release — data/ subfolder
 ```
+Affects `export.py`, `build.py`, `model_preview.py`, `textures.py`, `panels.py`.
+Vol-h.gc inverse bug (worked on dev, broke on release) also fixed.
 
-This requires zero UI changes and works transparently. Apply same logic in all three files
-(`export.py`, `build.py`, `model_preview.py`). Also fix the `vol_h` path in `build.py` to
-use `_data() / "goal_src"` instead of `_data_root() / "goal_src"` — resolving both bugs
-at once.
+**Data path description updated:** Now says "point to the `data/` subfolder for
+release, or repository root for dev env. Both the correct folder and its parent
+will work — the addon auto-detects the layout."
 
 ---
 
-## 2. Data Folder Documentation
+### 2. `og_no_export` Bug — FIXED
 
-### Current property description (properties.py:44)
+`_level_objects` and `_recursive_col_objects` defaulted to `exclude_no_export=True`,
+meaning any collection marked no-export dropped ALL its objects (actors, spawns,
+checkpoints) from the level data — not just geometry.
 
-```
-"Your active jak1 source folder — the one that contains data/goal_src.
-Usually .../jak-project/ or .../active/jak1/"
-```
+Fix: defaults changed to `False`. The flag now only applies when `export_glb`
+explicitly passes `exclude_no_export=True` for geometry collection.
 
-This description is contradictory: "contains data/goal_src" implies a release structure,
-but "Usually .../jak-project/" is a dev environment. The auto-detect fix makes this moot,
-but documentation should clarify the two cases anyway.
-
-### Suggested updated description
-
-```
-"Project root folder. For a release build, point to the versioned folder
-containing the 'data/' subfolder. For a dev environment (jak-project clone),
-point directly to the repository root."
-```
+**This was very likely why checkpoint triggers weren't working** — if checkpoints
+were in a no-export collection, they never appeared in the JSONC.
 
 ---
 
-## 3. Per-Blend File Path Override
+### 3. REPL Warning "Compilation generated code, but wasn't supposed to" — FIXED
 
-Currently `data_path` is an addon-level preference (`AddonPreferences`), shared across all
-`.blend` files. To support multiple simultaneous projects, it would need to be promoted to a
-scene-level `OGProperties` field with an "override" flag.
+Caused by `user.gc` containing `define-extern` declarations compiled with
+`allow_emit=false` (the user profile compilation path in GOALC). `define-extern`
+generates code which is forbidden in that context.
 
-Architecture:
-```python
-# In OGProperties (scene-level):
-data_path_override: StringProperty(
-    name="Data Path Override",
-    description="Override the global data path for this blend file only. Leave blank to use addon preferences.",
-    subtype="DIR_PATH",
-    default="",
-)
-```
-
-Then `_data_root()` in export.py becomes:
-```python
-def _data_root():
-    # Check scene-level override first
-    scene = bpy.context.scene
-    if scene and scene.og_props.data_path_override.strip():
-        p = scene.og_props.data_path_override
-    else:
-        prefs = bpy.context.preferences.addons.get("opengoal_tools")
-        p = prefs.preferences.data_path if prefs else ""
-    return Path(p.strip().rstrip("\\").rstrip("/")) if p.strip() else Path(".")
-```
-
-This is a moderate amount of work (update all 3 files + add UI field + expose in panels).
+Fix: removed the `define-extern` lines from `user.gc`. The symbols `bg`,
+`bg-custom`, and `*artist-all-visible*` are already in the game's symbol table
+once connected via `(lt)`, so no forward declarations are needed in `user.gc`.
 
 ---
 
-## 4. Extracted Models Folder (Background Geometry)
+### 4. Checkpoint Empty Display — FIXED
 
-### What already exists
-
-`model_preview.py` already loads enemy preview GLBs from the decompiler output:
-```
-decompiler_out/jak1/levels/<level>/<model>-lod0-mg.glb
-```
-
-Enabled by `rip_levels: true` in `jak1_config.jsonc`. The addon reads these as viewport
-stand-ins for enemy actors. When the path bug is fixed, this will also work for dev users.
-
-### The user's proposal
-
-A third preference path pointing to a folder of extracted level geometry GLBs. Two uses:
-1. **Visual reference:** Load a vanilla level's background geometry as a template to help
-   place custom level elements relative to existing geometry.
-2. **Actor model loading:** When spawning a custom actor type, load its GLB from this folder
-   so the addon doesn't need to bundle game assets (legal + file size win).
-
-### What it would take
-
-The decompiler already extracts level background meshes via `rip_levels: true`:
-```
-decompiler_out/jak1/levels/beach/beach-vis-tfrag-0-mg.glb  (example)
-```
-
-A new preference path field pointing to a folder (defaulting to `decompiler_out/jak1/levels/`)
-would let users browse and import these. The addon would need:
-
-1. New pref: `models_path: StringProperty(subtype="DIR_PATH")` — defaults to auto-resolved
-   `decompiler_out/jak1/` relative to `_data_root()`.
-2. A "Import Background Geo" operator that lists GLBs in the selected level folder and imports
-   them as non-exportable reference objects.
-3. For actor model loading: the actor spawn flow could check `models_path / "<etype>*.glb"`
-   before falling back to bundled preview images.
-
-Effort: medium. The heavy lifting (GLB import pipeline) already exists in `model_preview.py`.
+Changed `SINGLE_ARROW` → `ARROWS` display type on spawn_checkpoint operator.
+Now shows all three axes clearly — user can see which way the checkpoint faces.
 
 ---
 
-## 5. "Level Flow" Panel Rename
+### 5. Camera Anchor Parenting — FIXED
 
-### Current code (panels.py:112)
+`spawn_cam_anchor` now parents the camera empty to the spawn/checkpoint empty
+using `matrix_parent_inverse`. Moving or rotating the spawn drags the camera.
 
-```python
-class OG_PT_SpawnLevelFlow(Panel):
-    bl_label = "🗺  Level Flow"
-```
+`collect_spawns` updated to use `cam_obj.matrix_world.translation` (world coords)
+instead of `cam_obj.location` (local coords). Required for correct export when
+the camera is parented.
 
-One-line change. Suggested: `"🚩  Checkpoints"` or `"🚩  Checkpoints & Boundaries"`.
-
-The class name `OG_PT_SpawnLevelFlow` can stay as-is (internal identifier, not user-visible).
-
----
-
-## 6. SPAWN_ vs CHECKPOINT_ — What's the Actual Difference
-
-This caused user confusion ("you shouldn't need both"). The distinction is real but subtle:
-
-### SPAWN_ empties
-
-- Exported as a **`continue-point` entry** in `level-info.gc` `:continues` list only.
-- No in-game actor. The game uses the first `:continues` entry as the starting spawn point.
-- Purpose: where Jak starts and where he respawns if he dies before hitting any checkpoint.
-
-### CHECKPOINT_ empties
-
-- Exported as a **`continue-point` entry** in `level-info.gc` `:continues` list **AND** a
-  `checkpoint-trigger` actor in the JSONC.
-- The `checkpoint-trigger` actor calls `set-continue!` when Jak walks into its sphere/AABB.
-- Purpose: mid-level save point — once triggered, Jak respawns HERE instead of the start.
-
-### Why you need at least one SPAWN_
-
-The game always initialises to the **first** entry in the `:continues` list. Without a SPAWN_,
-there's no "level entry" continue point — the list would only have mid-level checkpoints, which
-is valid but means you always start mid-level.
-
-### Suggested UI clarification
-
-Rename the dropdown options:
-- "Player Spawn" → **"Level Entry Spawn"** (clearer that this is the starting point)
-- "Checkpoint" → **"Mid-Level Checkpoint"** (clearer that this is a triggered save point)
-
-Add a tooltip: "Entry spawn = where Jak starts the level. Checkpoint = a trigger that updates
-the spawn point when Jak walks through it."
+Spawn/checkpoint position in `collect_spawns` also updated to use
+`o.matrix_world.translation` for consistency and correctness if ever parented.
 
 ---
 
-## 7. Continue-Point Structure (for lev0/lev1 per-checkpoint feature)
+### 6. Misc Code Quality — FIXED
 
-### Full struct (from level-info.gc and game-info-h.gc)
-
-```lisp
-(new 'static 'continue-point
-    :name    "my-level-start"     ; string — must be unique across ALL levels
-    :level   'my-level            ; symbol — which level-load-info owns this
-    :flags   (continue-flags ())  ; optional: warp, game-start, etc.
-    :trans   (new 'static 'vector :x ... :y ... :z ... :w 1.0)
-    :quat    (new 'static 'quaternion :x ... :y ... :z ... :w ...)
-    :camera-trans (new 'static 'vector :x ... :y ... :z ... :w 1.0)
-    :camera-rot   (new 'static 'array float 9 ...)
-    :load-commands '()
-    :vis-nick 'none               ; 'none for custom levels (no vis data)
-    :lev0 'my-level               ; PRIMARY level to load on respawn
-    :disp0 'display               ; display mode for lev0
-    :lev1 #f                      ; SECONDARY level (e.g. 'village1 for backdrop)
-    :disp1 #f)                    ; display mode for lev1 (#f = off)
-```
-
-### How lev0/lev1 work at runtime (target-death.gc:77)
-
-On player death, the engine applies the current continue-point's lev0/lev1 to the load-state:
-```lisp
-(set! (-> *load-state* want 0 name)     (-> arg0 lev0))
-(set! (-> *load-state* want 0 display?) (-> arg0 disp0))
-(set! (-> *load-state* want 1 name)     (-> arg0 lev1))
-(set! (-> *load-state* want 1 display?) (-> arg0 disp1))
-```
-Then waits for both levels to be `'active` before teleporting Jak to `:trans`.
-
-### Display modes
-
-- `'display` — load and fully display the level
-- `'special` — load but use restricted display (used by vanilla for adjacent areas like
-  beach when in village1)
-- `#f` — don't load/display at all
-
-### Addon currently generates
-
-The addon hardcodes:
-```python
-f"             :lev0 '{name}\n"
-f"             :disp0 'display\n"
-f"             :lev1 #f\n"
-f"             :disp1 #f)"
-```
-
-So on respawn, ONLY the custom level loads. If the custom level borders a vanilla level,
-the backdrop disappears on death/respawn until the engine auto-loads the neighbor.
-
-### Exposing lev1/disp1 per checkpoint
-
-Most custom levels won't need this — `:lev1 #f` is correct for standalone levels.
-For levels that border or overlay vanilla geometry, exposing these as optional dropdown
-fields on the SPAWN_/CHECKPOINT_ empty would be useful:
-
-```python
-# On SPAWN_/CHECKPOINT_ empties:
-og_lev1:  StringProperty(default="")      # blank = #f, otherwise e.g. "village1"
-og_disp1: EnumProperty(items=[("none","None",""),("display","Display",""),
-                               ("special","Special","")])
-```
-
-Effort: low. Already-existing lump pattern, just extend `_make_continues()` to read
-these from the empty's custom properties.
+- `patch_level_info`, `patch_game_gp`, `patch_entity_gc` now raise instead of silently
+  skipping when target files aren't found (was "Build complete!" with broken level)
+- Build & Play panel shows specific missing-path messages; buttons disabled appropriately
+- Level name validation: min 3 chars, `^[a-z][a-z0-9-]*$` regex, max 10
+- export_build_play operator was missing the len>10 check
+- Duplicate len>10 check removed from two operators
+- `vis_nick_override` sanitised before embedding in GOAL
+- Spawn/checkpoint uid sanitised before embedding in GOAL string literals
+- `_apply_engine_patches` was missing from `_bg_build_and_play` Phase 1
+- `vol-h pref`: `patch_vol_h: BoolProperty` added to OGPreferences (default True)
+- `_data()` result cached per unique data_path to avoid repeated stat() on panel redraws
 
 ---
 
-## 8. Debug Spawn Point
+## OPEN ISSUES (documented, not yet fixed)
 
-### mod-settings.gc (mod-base only)
+### A. Per-Level `deftype` Architecture — NEEDS WORK
 
-`*debug-continue-point*` is a **mod-base addition** — it does not exist in the vanilla
-`goal_src`. The vanilla `play` function in `level.gc:986` just loads `village1` on boot:
-```lisp
-(('play) (if *debug-segment* 'village1 'title))
-```
+**Problem:** `checkpoint-trigger`, `camera-trigger`, `camera-marker`, `aggro-trigger`,
+`vol-trigger` are all defined as `deftype` in each level's `*-obs.gc`. If two custom
+levels are loaded simultaneously, the type gets defined twice with identical code.
+This is technically safe (same layout = clean re-definition) but:
+- Wastes DGO disk space (same code in every level)
+- GOALC warns during compilation of type redefinitions
+- If the addon's generated type ever changes between levels (different field layout),
+  it would corrupt memory at runtime
 
-And picks the **first `:continues` entry** of whatever level is loaded:
-```lisp
-(if (-> gp-1 info continues)
-    (set-continue! *game-info* (the-as continue-point (car (-> gp-1 info continues)))))
-```
+**Proper fix:** Move shared types to a single common file loaded once. Options:
+1. A mod-base community common file (`goal_src/jak1/engine/mods/og-tools-common.gc`)
+   compiled into GAME.CGO — clearest but requires upstream mod-base changes
+2. A per-mod common DGO compiled alongside the level DGOs, always loaded
+3. Guard with `(when (not (method-of-object (new-stack-vector0) checkpoint-trigger)) (deftype ...))`
+   — pragmatic bandaid but doesn't eliminate code duplication
 
-### What the addon can control today
-
-The `:continues` list order in `level-info.gc` determines the default spawn. If the addon
-exposes "default spawn" selection in the UI — just reordering which SPAWN_ empty appears
-first in the list — it works identically on both vanilla and mod-base.
-
-### mod-base approach
-
-mod-base adds to `mod-settings.gc`:
-```lisp
-(define *debug-continue-point* "village1-hut")
-```
-
-The mod-base engine reads this at startup and calls `set-continue!` with it. The addon
-could either:
-
-**Option A (works for both):** Expose a "Default Spawn" dropdown showing all SPAWN_/
-CHECKPOINT_ names, and reorder the `:continues` list so the selected one is first.
-
-**Option B (mod-base only):** Detect `mod-settings.gc` exists and patch it automatically
-on export to set `*debug-continue-point*` to the selected spawn name.
-
-Option A is simpler and universal. Option B is a bonus for mod-base users.
-
-File locations (from tester's notes):
-- mod-base: `goal_src/jak1/engine/mods/mod-settings.gc` → `(define *debug-continue-point* "village1-hut")`
-- vanilla:  `goal_src/jak1/engine/level/level.gc` → `play` function
+Recommendation for now: live with it (safe for single-level use), document the
+limitation clearly, plan for option 1 when coordinating with mod-base maintainers.
 
 ---
 
-## 9. Checkpoint Level Load State (lev0/lev1 UI)
+### B. Spawn/Checkpoint Rotation for Non-Axis-Aligned Empties — NEEDS TESTING
 
-See section 7 above. The short version: fully supported by engine, not exposed by addon.
-Key valid values for `disp1` when using a vanilla level as backdrop:
+Tester reports: "rotation isn't consistent when rotating the checkpoint's empty in
+blender — only seems to work properly when aligned exactly with the global axis."
 
-| Level context | Suggested lev1 | disp1 |
-|---|---|---|
-| Custom level standalone | `#f` | `#f` |
-| Custom level in beach area | `'beach` | `'special` |
-| Custom level in village1 area | `'village1` | `'special` |
-| Need full secondary level | any level symbol | `'display` |
+**Analysis:** The math (`R_remap @ m3 @ R_remap^T` then conjugate) looks correct
+for single-axis rotations — verified with Python. Could be:
+1. Combined (multi-axis) rotation producing unexpected results
+2. The `ARROWS` empty type in Blender — which arrow represents "forward"?
+   Currently: Blender +Y (green arrow) → game +Z (forward). User might expect +Z (blue) = forward.
+3. A more subtle quaternion sign convention issue
 
-The `'special` mode loads but limits which polygons are drawn — appropriate for backdrops.
-`'display` would be used if two full levels should both be visibly active simultaneously.
+**For next test session:** Verify with specific test cases:
+- Rotate checkpoint empty 90° around Blender Z only → does Jak face left in game?
+- Rotate 90° around Blender Z + 45° around X → does facing make sense?
+- Which Blender arrow should the user align with the desired facing direction?
 
----
-
-## 10. Summary: What to Fix and In What Order
-
-| # | Issue | Effort | Affects |
-|---|---|---|---|
-| 1 | `_data()` auto-detect (path bug) | Low — 1 helper function across 3 files | All dev users, completely blocked |
-| 2 | Fix `vol_h` inverse bug in build.py | Trivial — 1 line | All release users, vol triggers |
-| 3 | Update `data_path` description text | Trivial | Onboarding clarity |
-| 4 | Rename "Level Flow" → "Checkpoints" | Trivial — 1 string | UI clarity |
-| 5 | Rename spawn dropdown items | Trivial — 2 strings | UI clarity |
-| 6 | Per-blend path override | Medium | Multi-project users |
-| 7 | lev1/disp1 per checkpoint | Low | Adjacent-vanilla-level users |
-| 8 | Default spawn ordering / mod-settings.gc | Low–Medium | All users (QoL) |
-| 9 | Extracted models folder pref | Medium | Visual reference workflow |
-
-Items 1–5 can all be done in one session. Items 6–9 are separate features.
+The addon needs a clear UI label: "Green arrow (+Y) = Jak's facing direction"
 
 ---
 
-## Appendix: File Reference
+### C. Volume Trigger System Overhaul — FUTURE WORK
 
-- `addons/opengoal_tools/export.py:27-38` — path helpers (all affected)
-- `addons/opengoal_tools/build.py:79-100,216,249,276` — path helpers + vol-h inverse bug
-- `addons/opengoal_tools/model_preview.py:25-36` — decompiler_out path affected
-- `addons/opengoal_tools/panels.py:112,4050` — Level Flow label + missing-paths check
-- `addons/opengoal_tools/properties.py:44-51` — data_path description
-- `addons/opengoal_tools/export.py:1235-1330` — collect_spawns (SPAWN_ vs CHECKPOINT_)
-- `addons/opengoal_tools/export.py:2285-2333` — _make_continues (lev0/lev1 hardcoded)
-- `jak-project/goal_src/jak1/engine/target/target-death.gc:77` — how lev0/lev1 apply
-- `jak-project/common/util/FileUtil.cpp:201` — how --proj-path is handled
+Current limitations reported by tester:
+- Volume triggers only support AABB (axis-aligned bounding box) — can't create
+  arbitrary-shape volumes
+- Vol-mark debug display doesn't show our volumes (they may use a different system
+  than the game's native volumes)
+
+**Tester-provided Discord resource:**
+https://discord.com/channels/967812267351605298/973327696459358218/1280548232283557938
+A script for creating volumes from arbitrary mesh using the game's native volume
+system via res lumps. This approach should replace the current AABB system.
+
+This would also fix water volumes (which the tester mentions needing the same approach).
+
+**Impact:** Major architectural change to the trigger/volume system. High priority
+for usability but significant work.
+
+---
+
+### D. Checkpoint Radius Sphere Mode — VERIFY AFTER og_no_export FIX
+
+Tester reports: "radius doesn't work even at 10 meters."
+
+The JSONC writes `["meters", r]` for the radius lump. The GOAL code reads this via
+`res-lump-float` with `:default 12288.0` (3m). This should work.
+
+**Most likely explanation:** Checkpoints were in a no-export collection (issue #2 above)
+so the checkpoint-trigger actor was never in the JSONC. Fix #2 should resolve this.
+**Verify in next test session** after the og_no_export fix is deployed.
+
+If still broken after fix #2: check the `res-lump-float` reading of a `meters`-type
+tag in checkpoint-trigger GOAL code.
+
+---
+
+### E. Light Baking UI Reorganization — FUTURE WORK
+
+Tester: "Light baking should probably be its whole new category."
+
+Currently buried in Level settings. Should be a top-level panel, especially when
+time-of-day gets added. Low priority, trivial to implement when ready.
+
+---
+
+### F. Blender 5.0.1 GLB Exporter Bug — NOT ADDON ISSUE
+
+Blender 5.0.1 drops custom properties during GLB export. Confirmed not addon-related
+— affects manual exports too. Users should use Blender 4.5.2 until upstream fixes it.
+
+---
+
+## QUICK REFERENCE: Path Convention for Spawns
+
+In Blender → In Game:
+- Blender +X (red arrow)  → Game +X (right)
+- Blender +Y (green arrow) → Game +Z (forward = Jak's facing)
+- Blender +Z (blue arrow)  → Game -Y (up)
+
+The green (+Y) arrow should point in the direction Jak faces after spawning.

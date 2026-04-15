@@ -39,10 +39,12 @@ class OGPreferences(AddonPreferences):
     data_path: StringProperty(
         name="Data folder",
         description=(
-            "Project root folder. "
-            "Release build: point to the versioned folder containing the 'data/' subfolder. "
-            "Dev environment (jak-project clone): point directly to the repository root "
-            "(the folder that contains goal_src/ and custom_assets/ at the top level)."
+            "The folder containing goal_src/ and custom_assets/. "
+            "Release build: point directly to the 'data/' subfolder inside your OpenGOAL installation. "
+            "Dev environment (jak-project clone): point to the repository root "
+            "(the folder that has goal_src/ and custom_assets/ at the top level). "
+            "Both pointing to the correct folder OR its parent will work — "
+            "the addon auto-detects the layout."
         ),
         subtype="DIR_PATH",
         default="",
@@ -67,7 +69,7 @@ class OGPreferences(AddonPreferences):
         layout = self.layout
         layout.label(text="EXE folder — contains gk / goalc executables:")
         layout.prop(self, "exe_path", text="")
-        layout.label(text="Data folder — release: parent of data/  |  dev env: repository root:")
+        layout.label(text="Data folder — release: the 'data/' subfolder  |  dev env: repository root:")
         layout.prop(self, "data_path", text="")
         layout.separator()
         layout.prop(self, "preview_models")
