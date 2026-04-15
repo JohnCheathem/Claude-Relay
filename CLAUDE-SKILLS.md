@@ -196,3 +196,62 @@ process
         └── nav-enemy
               └── (specific enemy type e.g. babak)
 ```
+
+---
+
+## Addon Audit Contract — MANDATORY for all addon sessions
+
+The addon has a Level Audit system (`addons/opengoal_tools/audit.py`).
+**Every session that touches the addon must follow these rules — no exceptions.**
+
+### Rule 1: New actor type → populate its ENTITY_DEFS audit block
+When adding a new etype to `ENTITY_DEFS` in `data.py`, always include an `"audit"` key:
+
+```python
+"my-new-actor": {
+    "label": "...", "cat": "...", ...,
+    "audit": {
+        "requires_navmesh":  False,   # True if nav_safe=False (nav-enemy)
+        "requires_path":     False,   # True if needs_path=True
+        "requires_pathb":    False,   # True if needs_pathb=True
+        "required_links":    [],      # list of lump_key strings from ACTOR_LINK_DEFS that are required
+        "custom_checks":     [],      # list of callables (scene, obj) → (severity, msg) | None
+    }
+}
+```
+
+The audit system reads this block automatically — no changes to `audit.py` needed for standard cases.
+
+### Rule 2: New structural dependency → register an audit rule
+If a new feature introduces a new structural requirement that can't be expressed
+via ENTITY_DEFS (e.g. a new object prefix, a new scene-level invariant, a new
+inter-object relationship), register a check in `audit_registry.py`:
+
+```python
+from .audit_registry import register_rule
+
+@register_rule(description="my-feature: describe what this checks")
+def check_my_feature(scene, obj):
+    # return (severity, message) if issue found, else None
+    if obj.name.startswith("MYPREFIX_") and not obj.get("og_required_prop"):
+        return "ERROR", f"'{obj.name}' is missing required property X."
+```
+
+`run_audit()` calls all registered rules automatically.
+
+### Rule 3: The audit block is part of the feature — not an afterthought
+Write the audit block / register_rule **in the same commit** as the feature code.
+Do not defer it. If you're unsure what to put in the audit block, ask the user.
+
+### What the audit currently checks (auto-covered by existing data)
+- `nav_safe=False` → requires navmesh link (`og_navmesh_link`)
+- `needs_path=True` → requires waypoints (`ACTOR_<name>_wp_<n>`)
+- `needs_pathb=True` → requires B-path waypoints (`ACTOR_<name>_wpb_<n>`)
+- Required slots in `ACTOR_LINK_DEFS` → checked automatically
+- Tpage budget (>2 non-global groups = WARNING)
+- Duplicate ACTOR_ names, missing SPAWN_, broken VOL_ link targets
+
+### audit_registry.py
+Currently does not exist — needs to be created when the first custom_check
+or register_rule is needed. Until then, one-off checks go directly in `audit.py`
+and a note is left here to migrate them when the registry is built.

@@ -122,3 +122,19 @@ sync/phase/wrap controls, platform list. Confirmed working in Blender 4.4.
 
 Platforms still untested: side-to-side-plat, revcycle, wedge-plat, launcher, warpgate.
 Broken standalone (game-side): balance-plat, wall-plat, teetertotter, plat-flip.
+
+---
+
+## Bug Fix — 2026-04-14 (Blender 4.4 write-in-draw)
+
+**Symptom:** Platform Settings panel disappeared entirely when selecting a `plat-eco` (or any platform actor placed in a previous session).
+
+**Error:** `AttributeError: Writing to ID classes in this context is not allowed: ACTOR_plat-eco_0, Object datablock, error setting Object.og_sync_period`
+
+**Root cause:** Blender 4.4 now raises `AttributeError` on `obj[key] = val` inside any `draw()` context — including custom ID property dict writes, which earlier Blender versions allowed. `_prop_row` was writing the default value when a key was missing on the object, which aborted the entire panel draw.
+
+**Fix:** `_prop_row` in `utils.py` now uses `bpy.app.timers.register(fn, first_interval=0.0)` to schedule the default write outside the draw context. Shows a greyed placeholder on the first frame; live input field on next redraw.
+
+**Affected actors:** Any actor placed before the addon was updated (missing custom prop keys). New actors spawned via SpawnPlatform/SpawnEntity already have all keys initialised in `execute()` — not affected.
+
+**Status:** Fixed in main as of 2026-04-14.

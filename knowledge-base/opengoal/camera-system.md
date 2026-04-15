@@ -178,7 +178,54 @@ first, so camera entities placed in actors array ARE found by `change-to-entity-
 
 ---
 
-## 9. Source File Reference
+## 9. Undiscovered Camera Lumps (source-verified, April 2026)
+
+All confirmed from `camera.gc` `cam-slave-get-*` functions and `cam-state-from-entity`.
+
+### Universal camera lumps (all modes)
+
+| Lump | Type | Notes |
+|---|---|---|
+| `fov` | `float` (degrees constant) | FOV override. Default `11650.845` internal ≈ 75°. Use `["degrees", 75.0]`. |
+| `fov-offset` | `float` | Additive bias on top of `fov`. Rarely needed. |
+| `interpTime` | `float` (seconds) | Blend duration. Use `["float", 0.5]`. |
+| `interpTime-offset` | `float` | Additive bias on `interpTime`. |
+| `intro-time` | `float` (seconds) | Startup animation time before camera settles. |
+| `tiltAdjust` | `float` | Camera tilt correction, default from `*CAMERA-bank*`. |
+| `rot-offset` | quaternion | Additive rotation bias applied after `quat`. |
+| `flags` | `uint32` | Bitfield. Bit `0x8000` = use `rot` matrix for tracking instead of default. |
+
+### `cam-spline` mode lumps
+
+Activated when `campath` + `campath-k` lumps are both present on the camera entity.
+
+| Lump | Type | Notes |
+|---|---|---|
+| `campath` | `vector4m` multi-point | Spline control point positions. |
+| `campath-k` | `float` array | Spline knot values, one per control point. |
+| `spline-offset` | `vector` | Offset applied to the entire spline path. |
+| `spline-follow-dist` | `float` | Distance ahead of Jak to project along spline. `0` = closest-point tracking. |
+
+**Behaviour:** Camera position moves along the spline as Jak moves through the trigger zone. Always aims at Jak unless `flags 0x8000` is set. Supports blending and FOV. Good for scripted flythrough sequences or corridor cameras.
+
+**Not in the addon. Entirely unknown to the current camera panel.**
+
+### `cam-string` mode lumps (rubber-band follow)
+
+Activated when `stringMaxLength > 0.0` on the camera entity.
+
+| Lump | Type | Notes |
+|---|---|---|
+| `stringMaxLength` | `float` (meters) | Max tether distance. Camera freely follows Jak up to this range. |
+| `stringCliffHeight` | `float` | Max upward Y offset the camera will track. |
+
+**Behaviour:** Standard third-person follow camera, triggered only within the camera entity's trigger volume. Useful for zones where free-follow is wanted without any fixed framing. Transitions naturally back to normal camera on exit.
+
+**Not in the addon.**
+
+---
+
+## 10. Source File Reference
 
 | File | Purpose |
 |---|---|

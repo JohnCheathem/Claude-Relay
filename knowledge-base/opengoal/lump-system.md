@@ -184,10 +184,10 @@ These lumps are read by base engine code and apply to every entity.
 **Notes:** Controls how many child enemies are spawned/managed.
 
 ### `notice-dist` (also `distance`) — ResFloat (meters)
-**Used by:** `yeti` (as `notice-dist`), `puffer` (as `distance`), `sunken-fish` (as `distance`)  
-**JSONC:** `["meters", 50.0]`  
-**Defaults:** yeti: 204800.0 (50m), puffer: min/max as two-float array  
-**Notes:** Distance at which AI notice/activate behaviour triggers. For `puffer`, `distance` is a two-float array: `["float", min_dist, max_dist]` where both are in internal units (multiply by 4096 for meters).
+**Used by:** `yeti` (as `notice-dist`), `puffer` (has both — different meanings), `sunken-fish` (as `distance`)  
+**JSONC:** `["meters", 50.0]` for notice-dist; `["float", top_y_offset, bottom_y_offset]` for puffer distance  
+**Defaults:** yeti: 204800.0 (50m)  
+**Notes:** For `yeti`: activation distance. For `puffer`: `distance` is a **two-float array in raw internal units** — `[0]` = top Y offset from patrol bottom, `[1]` = bottom Y offset. This controls **vertical patrol range**, NOT AI activation. For puffer AI activation range use `notice-dist` (single float, default 57344 ≈ 14m). Confirmed from source (`puffer.gc` reads `res-lump-data 'distance (pointer float)` for two floats, `res-lump-float 'notice-dist` separately).
 
 ### `mode` — ResUint32 or ResInt32 (actor-specific)
 **Used by:** many actors — meaning varies completely per type  
@@ -379,10 +379,10 @@ Ambients have a different entity type (`entity-ambient`) but use the same lump s
 **JSONC:** `["uint32", id]`  
 **Notes:** POI location name ID.
 
-### `music` — ResFloat
+### `music` — ResSymbol
 **Used by:** `engine/entity/ambient.gc` (`'music` type)  
-**JSONC:** `["float", value]`  
-**Notes:** Music variant index (alongside `flava`).
+**JSONC:** `["symbol", "village1"]`  
+**Notes:** Music bank symbol to activate. Passed directly to `(set-setting! 'music <symbol> 0.0 0)`. Must be a `["symbol", name]` array — the engine needs the GOAL symbol pointer, not a float index. Previously documented as ResFloat — that was a documentation error. `flava` is the float index, not `music`.
 
 ### `flava` — ResFloat
 **Used by:** `engine/entity/ambient.gc` (`'music` type)  
@@ -464,10 +464,9 @@ Camera actors (entity-actor with type `camera-marker`) use these lumps. These ar
 **Notes:** For whirlpool: both values are internal units (not meters). Two-float array.
 
 ### `distance` — ResFloat (two values for puffer)
-**Used by:** `puffer` (min/max notice distance), `sunken/square-platform`, `sunken-fish`, `sharkey`  
-**JSONC:** `["float", min_dist, max_dist]` for puffer — INTERNAL UNITS (not meters!)  
-**Default puffer:** 57344.0 (~14m) for notice, auto for chase  
-**Notes:** Puffer reads two floats — min and max distance. Both in raw internal units.
+**Used by:** `puffer` (vertical patrol range), `sunken/square-platform`, `sunken-fish`, `sharkey`  
+**JSONC:** `["float", top_y_offset, bottom_y_offset]` for puffer — INTERNAL UNITS (not meters!)  
+**Notes:** For puffer: two-float array defining vertical patrol range from the entity's spawn Y. `[0]` = top Y offset (upward limit), `[1]` = bottom Y offset (downward limit). Both raw internal units. **NOT an activation/notice distance** — for that, use `notice-dist` (separate lump, default 57344 ≈ 14m). Confirmed from `puffer.gc` source: reads `res-lump-data 'distance (pointer float)` for the two-float array, then reads `res-lump-float 'notice-dist` separately.
 
 ### `count` — ResUint32
 **Used by:** `sunken-fish` (spawn count), `citb-drop-plat`  
@@ -627,7 +626,7 @@ def make_path_k(n_points):
 | **swamp-bat** | `path`, `pathb`, `num-lurkers` | BOTH paths required; num-lurkers 2–8 |
 | **yeti** | `path`, `num-lurkers`, `notice-dist` | spawns yeti-slave at path points |
 | **snow-bunny** | `path`, `nav-mesh-sphere` | path REQUIRED, errors without |
-| **puffer** | `path`, `distance` | distance = [min, max] in INTERNAL units |
+| **puffer** | `path`, `notice-dist`, `distance` | `notice-dist` = activation range (meters, default ~14m); `distance` = vertical patrol range [top_y, bottom_y] in INTERNAL units |
 | **flying-lurker** | `path` | standard path follower |
 | **driller-lurker** | `path` (min 2 pts) | errors "bad path" if <2 points |
 | **gnawer** | `path`, `extra-count`, `gnawer` | spline worm, complex lump setup |
@@ -718,4 +717,21 @@ These lumps are read by base engine code and work on any actor:
 | `path-k` | ❌ | auto-generate from waypoint count |
 | `battlecontroller.*` | ❌ | complex — needs dedicated panel |
 | *any custom lump* | ❌ | needs `og_lump_*` passthrough |
+
+
+---
+
+## battlecontroller — Spawned Enemies Inherit Entity Lumps
+
+Confirmed from `nav-enemy.gc` source (`nav-enemy-init-by-other`):
+
+```lisp
+(set! (-> self entity) (-> arg0 entity))
+```
+
+When `battlecontroller` spawns a nav-enemy, it assigns the **controller's own entity** to the spawned enemy. This means every lump you place on the `battlecontroller` actor is readable by all its spawned enemies at runtime — `idle-distance`, `vis-dist`, `notice-dist`, `speed`, etc. all apply to the wave enemies without needing per-enemy actors.
+
+**Practical use:** Put a `vis-dist` lump on the battlecontroller to set the render distance for all spawned enemies in that wave. Put `idle-distance` (if supported) to tune activation range for the whole wave from one place.
+
+**Note:** Lumps that enemies read at `init-from-entity!` time are read once. Lumps read repeatedly at runtime (like anything in a state loop) will also read from the controller's entity.
 
