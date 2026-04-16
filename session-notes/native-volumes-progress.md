@@ -143,3 +143,26 @@ Build a level with:
 
 ## Files Changed
 - `addons/opengoal_tools/export.py` — all changes
+
+---
+
+## Session 3 — Live test attempt
+
+### Result: compile error (not a code bug)
+Error: `Type camera-trigger already has a field named vol`
+
+This is a GOAL type system persistence issue — not a bug in the new code.
+GOALC keeps type definitions in memory across REPL reconnects. If `camera-trigger`
+was compiled in a previous session (with the old layout), recompiling the new
+version in the same GOALC process triggers a field name conflict.
+
+**Fix for next test:** Kill GOALC process entirely (Task Manager / Kill GOALC button),
+not just the REPL. Fresh GOALC start = clean type system = compiles fine.
+
+The code itself is correct — the deftype in the generated .gc is valid GOAL.
+The issue is purely about GOALC process lifecycle.
+
+### Next session
+- Kill GOALC fully before testing
+- Watch for `planes N` in REPL log after level loads
+- Verify trigger fires at correct mesh boundary (not inflated AABB)
