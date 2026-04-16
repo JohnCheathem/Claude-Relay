@@ -166,3 +166,16 @@ The issue is purely about GOALC process lifecycle.
 - Kill GOALC fully before testing
 - Watch for `planes N` in REPL log after level loads
 - Verify trigger fires at correct mesh boundary (not inflated AABB)
+
+### Correction
+Killing GOALC fully was attempted and the error persisted. The branch does NOT
+work yet. The `camera-trigger already has a field named vol` error is not just
+a GOALC session issue — there is an unresolved conflict preventing compilation.
+
+**Status: BROKEN. Do not test further until the root cause is diagnosed.**
+
+Likely causes to investigate next session:
+- A previously compiled .o file or cached type from an older build
+- The field name `vol` conflicting with something already defined in the engine
+- The `vol-control` type or `vol` field name being reserved/used elsewhere in the
+  GOAL type system before our deftype runs
