@@ -76,5 +76,56 @@ These come after UI/flow decisions, which is the next conversation.
 - [x] Session 2: Sequence containment validation (5 more validation tests)
 - [x] Session 2: Design doc
 - [x] Session 2: Vocabulary catalogue
+- [x] Session 2: Pushed to origin (commit 98a87b2)
+- [x] Session 3: Comprehensive brainstorm of advanced vocabulary
+      — `knowledge-base/blender/goal-node-advanced-vocabulary-brainstorm.md`
+- [x] Session 3: 22 T1-candidate IR skeletons added to ir.py (no templates yet)
+- [ ] Session 4: Research pass on T3 items (camera-spline, particles, battlecontroller)
 - [ ] Blender-side adapter (after UI discussion)
 - [ ] End-to-end compile-and-build against a real level (after adapter)
+
+## Session 3 outputs
+
+### Brainstorm doc
+23 sections covering categories the Level-A vocabulary doesn't touch:
+- Scene-query & iteration (the critical gap — collections, ForEach, scene metadata)
+- Level & world control (loading, checkpoints, screen effects, mood, time-of-day)
+- Game state & progression (perm-status, game tasks, pickup spawning)
+- Entity lifecycle (spawn, birth, child processes)
+- Conditionals, variables, data flow
+- Motion beyond Rotate/Oscillate/Lerp (look-at, path-follow, Jak interactions)
+- Expanded camera (cam-spline, cam-string flagged in future-research.md)
+- Animation, sound, particle, enemy AI, water, doors-wiring
+- Dialogue/HUD, debug/authoring, advanced flow control
+- Subgraphs (reusable node groups)
+- "What haven't we thought of" section — novel categories worth exploring
+
+### IR skeleton additions
+22 new action types as dataclasses (declarations only, no templates):
+- ActorSet, ActionForEach (scene iteration)
+- ActionSetPermFlag, ActionCheckPermFlag (game state)
+- ActionBlackout, ActionFadeToBlack/FromBlack (screen effects)
+- ActionCameraSwitchToMarker, ActionCameraClear, ActionCameraTeleport
+- ActionLookAtTarget, ActionLookAtJak, ActionPathFollow
+- ActionLaunchJak, ActionResetJakHeight
+- ActionCueEnemyChase, ActionCueEnemyPatrol, ActionFreezeEnemy
+- ActionPlayMusicTrack, ActionStopMusic
+- ActionDebugPrint, ActionComment (debug/authoring)
+- ActionBirthEntity, ActionMarkEntityDead (level-flow commands)
+- ActionIf, ActionRandomChance (conditionals)
+- ActorSetSource enum
+
+None have templates yet — attempting to compile a graph with one of these
+will raise NotImplementedError from `contrib_for`. That's by design: the
+skeleton makes the IR shape tangible before we commit to template bodies.
+
+## Open questions from Session 3 brainstorm (§21)
+
+Need user input before more implementation:
+1. Scope ceiling — ~45-node polished Level-A or ~100+ ambitious platform?
+2. Subgraphs (Blender node groups) — yes/no?
+3. Runtime iteration vs compile-time unrolling for ForEach?
+4. Full data-flow graph (variables) or stay pure control-flow?
+5. Per-node validation-warning suppression?
+6. Graph integration with existing Blender Actor Links / Volume Links panels — own or coexist?
+7. ActorsByType prefix matching vs exact match?
