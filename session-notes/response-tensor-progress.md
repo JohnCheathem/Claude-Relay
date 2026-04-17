@@ -2,7 +2,7 @@
 
 **Branch:** `research/response-tensor`
 **Started:** April 2026
-**Status:** Session 02 complete (2 of up to 10)
+**Status:** Session 03 complete (3 of up to 10). Pivoted after literature survey showed sessions 1-2 rediscovered known work; session 3 produced a clean negative result that reshapes the program.
 
 ## Research Question
 
@@ -38,9 +38,25 @@ The candidate R proposed: the collection of input-output Jacobians `{J(x) = dy/d
 - Full writeup: `scratch/response-tensor/session02_findings.md`
 - Scripts: `scratch/response-tensor/session02_unified_M.py`
 
-### Session 03 — planned
-1. **Scale check.** Reproduce T7 on 3-layer MLP + MNIST (or char-LM on Shakespeare). Does on-manifold agreement survive at depth and with real data? Defines a "data manifold" operationally via local PCA or input statistics.
-2. **NTK connection.** NTK kernel `K(x,x') = (df/dθ)(x)(df/dθ)(x')^T` is a known function-invariant at infinite width. Our on-manifold J is the input-side analog. Work out the exact map between the two. Likely finding: they are dual descriptions of the same function-space structure, the long-sought third object.
+### Session 03 — pivot after lit survey; self-modeling with J(x) fails cleanly
+- **Lit survey finding:** sessions 1-2 rediscovered established work. EDJM (Wang 2016), on-manifold Jacobian and generalization (Novak 2018), information/nuisance split of Jacobian spectrum (Oymak 2019), Jacobian matching between networks (Srinivas 2018), empirical NTK, Git-Rebasin. The "unified object" framing was mostly a re-presentation of standard algebra.
+- **Pivot:** tested whether USING J(x) as a self-modeling input channel produces qualitatively different behavior. Six conditions with proper null controls (pure noise, static noise, shuffled J, x-projection).
+- **Headline negative result:** self_access, shuffled_J, pure_noise, and static_noise are statistically indistinguishable on every metric. Off-manifold stability improves dramatically with ANY side pathway (std 0.44 → 0.13), but independent of what flows through it.
+- **Why:** J(x) is a deterministic function of x and θ; the network already has both. Formally zero new information. Side-channel usage is ~0.03 RMS, vs 0.52 for a genuine extra-info signal (x_proj).
+- **Reframing:** for self-knowledge to matter, the signal must carry information the network cannot compute from its current inputs. Candidates: past states (temporal), perturbation responses (Fisher), external analysis (recursion), held-out behavior.
+- Methodological catch: first run had a broken "random control" that was actually informative about x — had to rerun with proper nulls.
+- Full writeup: `scratch/response-tensor/session03_findings.md`
+- Scripts: `scratch/response-tensor/session03_self_modeling.py`, `session03b_controls.py`
+
+### Session 04 — planned: temporal self-knowledge
+The closest candidate to the user's original framing ("as its latent space evolves it can see that and learn more") is giving the network access to its *own past states* — activations/weights from earlier training steps. This is genuinely not in the current forward pass.
+
+Design sketch:
+- Checkpoint the network every K steps during training
+- During forward pass, let network access a compressed summary of its state from step t-K, t-2K, etc.
+- Compare: (a) no self-knowledge, (b) access to past-self states, (c) access to *other seeds'* past states (to test if it's "self" specifically or just "any past state")
+
+Key question: does access to past states help adapt during training (faster convergence) or does it help after training (different learned solutions)?
 
 ### Sessions 03+ — tentative
 - Scale up (larger model, real task) to see if the mean-vs-residual energy partition survives.
