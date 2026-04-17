@@ -2,7 +2,7 @@
 
 **Branch:** `research/response-tensor`
 **Started:** April 2026
-**Status:** Session 06 complete (6 of up to 10). Novel characterization found: dream dynamics = Fisher-metric Brownian motion on weight-space. Preserved macro-invariants define "type" as a level set, not a point.
+**Status:** Session 07 complete (7 of up to 10). Three practical applications tested; none beat existing baselines. One modest positive (dream beats noise at matched diversity). Theory validated, but the manifold is a description, not a lever.
 
 ## Research Question
 
@@ -82,12 +82,28 @@ Committed direction: combined Möbius + dreams. Networks evolve under their own 
 - Full writeup: `scratch/response-tensor/session06_findings.md`
 - Scripts: `scratch/response-tensor/session06_dream_attractor.py`, `session06b_macro_invariants.py`
 
-### Session 07 — options
-1. Longer-timescale probe: 50k steps, test Brownian-motion prediction formally — does weight distribution asymptote to Fisher-predicted shape?
-2. Scale test: 4-layer net + MNIST — do the preserved invariants survive?
-3. Enumerate invariants via symmetry group of the Fisher walk (Lie-theoretic framing)
-4. Biology connection: REM sleep has drift term (consolidation) that our dynamics lacks. Adding back drift might reveal something.
-5. Stop and write final synthesis. Session 6 may be the best place to wrap.
+### Session 07 — practical application tests; manifold is description not lever
+Tested three obvious ways to USE the manifold finding:
+
+- **7A Dream ensembles:** clone trained net, dream-walk each copy, use as ensemble. Result: ties with single net; beaten by independent ensemble (0.0004 vs 0.0006). Beats Gaussian weight noise by ~30% at matched diversity — confirms manifold theory.
+- **7B Task-orthogonal dream:** project dream updates orthogonal to task gradient to preserve task direction while diffusing. Marginal ~10-20% improvement. Still doesn't beat independent ensemble.
+- **7C Dream-regularized training:** interleave dream steps between training steps. Result: **identical** to standard training in every run (21/21 ties). Zero-mean property of Fisher Brownian motion means dream regularization is a no-op. Theory confirmed but no practical benefit.
+
+**Honest summary:** the manifold is a real theoretical characterization. Three obvious applications don't beat existing baselines. The manifold describes networks but walking on it doesn't produce useful improvements, because the dynamics is zero-mean (no directed signal) while task improvement requires directed signal (which is just training).
+
+**Remaining practical candidates (untested):** model fingerprinting, catastrophic forgetting metric, backdoor detection, compressed checkpoints. All diagnostic, not capability-improving.
+
+Full writeup: `scratch/response-tensor/session07_findings.md`
+Scripts: `scratch/response-tensor/session07{_dream_ensembles,b_task_orthogonal,c_dream_regularization}.py`
+
+### Final state of the research
+7 sessions produced:
+- One substantive theoretical finding (session 6: Fisher Brownian motion characterization, type = level set)
+- One mild practical observation (session 7: dream > noise at preserving task accuracy)
+- Several clean negative results that validated the theory
+- Coherent answer to user's original turn-1 question: recursive AI interpretation likely converges on type-fingerprint, not distinct objects
+
+Recommendation: WRAP UP. Writing a final synthesis doc covering the whole arc would be more valuable than more toy-scale experiments.
 
 ### Sessions 03+ — tentative
 - Scale up (larger model, real task) to see if the mean-vs-residual energy partition survives.
