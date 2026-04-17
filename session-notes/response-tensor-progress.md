@@ -2,7 +2,7 @@
 
 **Branch:** `research/response-tensor`
 **Started:** April 2026
-**Status:** Session 11 complete. The 25% "ceiling" was an ES-gradient artifact. With exact gradients + tuned λ + combined (output+hidden) targets, K=128 gives ~52% recovery on teacher task. Shakespeare test reveals task-dependence: low K is useless for char-level LM, compression requires many probes. Compression ratio = intrinsic task structure.
+**Status:** Session 12 complete. Ceiling pushed to +64.6% with K=128, λ=12, α_h=0.3 (output+hidden matching, analytic gradients). Jacobian matching doesn't help. Task spectrum reveals signature compression is about architecture-task alignment, not task complexity. Previous "% recovery" metric was confounded by baseline variability. Three prior claims corrected.
 
 ## Research Question
 
