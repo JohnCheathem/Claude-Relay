@@ -2,7 +2,7 @@
 
 **Branch:** `research/response-tensor`
 **Started:** April 2026
-**Status:** Session 03 complete (3 of up to 10). Pivoted after literature survey showed sessions 1-2 rediscovered known work; session 3 produced a clean negative result that reshapes the program.
+**Status:** Session 04 complete (4 of up to 10). First positive (though small-effect) result — temporal past-self signal through active gating helps, and "self" turns out to be about type not identity.
 
 ## Research Question
 
@@ -48,15 +48,27 @@ The candidate R proposed: the collection of input-output Jacobians `{J(x) = dy/d
 - Full writeup: `scratch/response-tensor/session03_findings.md`
 - Scripts: `scratch/response-tensor/session03_self_modeling.py`, `session03b_controls.py`
 
-### Session 04 — planned: temporal self-knowledge
-The closest candidate to the user's original framing ("as its latent space evolves it can see that and learn more") is giving the network access to its *own past states* — activations/weights from earlier training steps. This is genuinely not in the current forward pass.
+### Session 04 — temporal past-M via active gating; works modestly; "self" is type not identity
+- Combined all three: temporal (past_M, not current J), unified object (M not J), active feedback (multiplicative gate).
+- Architecture: h_mod = tanh(W1 x + b1) · (1 + tanh(W_g · flatten(M(x; θ_{t-K})) + b_g)). Gate starts at identity, can learn to modulate.
+- Why the signal isn't redundant: M(x; θ_{t-K}) depends on past weights that the current network doesn't have. Unlike session 3's J(x; θ_t), which was fully determined by current state.
+- **Result:** test loss 0.0027 (no_feedback) → 0.0022 (self_temporal), ~20% improvement, ~1σ. Gate_dev ~0.07 (network actively uses the gate).
+- **Surprise:** other_temporal (past from a *different seed*) performs the same as self_temporal (0.0023 vs 0.0022). Shuffled_temporal and random_history don't help. So what matters is *coherent* M(x; θ_past) paired correctly with x — whether θ_past is literally mine or a peer's is irrelevant.
+- **Philosophical implication:** if self-knowledge is the local response structure M(x), then "self" is about TYPE (competent network solving this task), not IDENTITY (this specific network). For the recursion question from turn 1: interpretation chains A→B→C might collapse to a shared functional type rather than diverge into genuinely distinct objects.
+- Effect size is modest and needs replication with more seeds and real data to be trusted.
+- Full writeup: `scratch/response-tensor/session04_findings.md`
+- Script: `scratch/response-tensor/session04_temporal_feedback.py`
 
-Design sketch:
-- Checkpoint the network every K steps during training
-- During forward pass, let network access a compressed summary of its state from step t-K, t-2K, etc.
-- Compare: (a) no self-knowledge, (b) access to past-self states, (c) access to *other seeds'* past states (to test if it's "self" specifically or just "any past state")
+### Session 05 — options
+Three possible directions, each answering a different open question:
 
-Key question: does access to past states help adapt during training (faster convergence) or does it help after training (different learned solutions)?
+1. **Cross-task past-self.** Use net-on-task-P's past snapshots as signal for net-on-task-Q. Tests whether the "type" is task-bounded or broader (any trained network). Answers: how general is the equivalence class?
+
+2. **Scale up.** 20 seeds on MNIST or char-LM. Pure replication/validation — converts 1σ effect into robust claim (or kills it).
+
+3. **Direct recursion test.** A trains, save trajectory. Train B using A's trajectory as signal. Train C using B's trajectory. Does C learn something A didn't? This is the direct form of the original question from turn 1 of the conversation.
+
+Option 3 is most ambitious and most directly answers the user's starting question. Option 2 is de-risking. Option 1 sharpens the "type vs identity" finding.
 
 ### Sessions 03+ — tentative
 - Scale up (larger model, real task) to see if the mean-vs-residual energy partition survives.
