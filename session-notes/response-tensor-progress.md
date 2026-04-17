@@ -2,7 +2,7 @@
 
 **Branch:** `research/response-tensor`
 **Started:** April 2026
-**Status:** Session 07 complete (7 of up to 10). Three practical applications tested; none beat existing baselines. One modest positive (dream beats noise at matched diversity). Theory validated, but the manifold is a description, not a lever.
+**Status:** Session 09 complete. Signatures are a lossy functional compression (~23% recovery with K=4 behavioral probes, 16 numbers). Best probes live off-manifold: "identity lives in extrapolation." Session 8 established writeability + spoofing.
 
 ## Research Question
 
