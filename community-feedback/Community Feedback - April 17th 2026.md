@@ -14,6 +14,10 @@
 
 Hat Kid [GOAL] suggests adding macros for level-info to keep code shorter and easier to generate from the plugin — for example, continue point macros like those used in TFL. A `define-level` macro with sensible defaults where you only need to specify what differs would be ideal.
 
+Reference: the TFL continue point macro implementation can be seen here:
+- [tfl-dev-commentary-data.gc L1205–L1242](https://github.com/Kuitar5/the-forgotten-lands/blob/e8618a3022879ce45eee7ffd227e7d41949638df/goal_src/jak1/levels/tfl_common/commentary/tfl-dev-commentary-data.gc#L1205-L1242)
+- [tfl-dev-commentary-data.gc L1292–L1296](https://github.com/Kuitar5/the-forgotten-lands/blob/e8618a3022879ce45eee7ffd227e7d41949638df/goal_src/jak1/levels/tfl_common/commentary/tfl-dev-commentary-data.gc#L1292-L1296)
+
 barg [GOAL] shared a commonly used macro for meters-based vectors:
 
 ```lisp
@@ -29,23 +33,23 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 - Most platform crashes are caused by code not being included in the level. Much of that code lives in a specific level's `-obs.gc` file; some platforms have their own code file.
 - For platforms with their own code file: add it to the level's `.gd`.
 - For platforms with code in another level's `-obs.gc`: copy only the required code blocks rather than importing the whole file — cleaner, and allows custom res-lump additions.
-- Consider renaming **Waypoints** to **Path** and adding a button to connect to an existing path using the `path-k` lump. More info on curves: [JakMods.dev](https://jakmods.dev)
+- Consider renaming **Waypoints** to **Path** and keeping both the existing waypoint attachment method and adding a new button to connect to an existing path using the `path-k` lump. More info on curves: [JakMods.dev](https://jakmods.dev)
 - Add a *select without centering view* button next to waypoints.
 - Consider adding cameras as children of platforms, similar to checkpoints — though note that you may sometimes want to move the platform without moving the path. Since the platform would go to the path automatically anyway, this is less of an issue; Blender also has a *Move Parents Only* option for these cases.
 
 ---
 
 ### Button Platform
-- Disappears when button is pressed by default. Consider auto-adding two waypoints so it works out of the box.
+- Disappears when button is pressed by default. Consider auto-adding two waypoints so it works out of the box — though the UI already tells you to do this, so it may not be necessary.
 - With two or more waypoints added, works correctly — moves from 1st to last waypoint through all intermediate points.
 - No default length/speed; stuck at default duration unless code is edited.
-  - Useful res-lump to expose: `bidirectional` (int, `0`/`1`) — allows the platform to return when it reaches the endpoint.
+  - Useful res-lump to expose: `bidirectional` (int, `0`/`1`) — allows the platform to be used again once it reaches the end, travelling back the way it came (continuous back-and-forth, not just a single return).
 
 ---
 
 ### Cave Flame Pots
 - **Compiler crash:** `No rule to make out/jak1/obj/caveflamepots-ag.go` — no art group exists; visuals are all particles defined in code.
-- Probably should not be in Platforms — it is an obstacle (damages the player, not something to stand on). Consider Enemies, Props/Objects, or a new Obstacles section.
+- Probably should not be in Platforms — it is an obstacle (damages the player, not something to stand on). Possible alternatives: Enemies, Props/Objects, or a new Obstacles section — though it's not entirely clear where they belong.
 
 ---
 
@@ -83,9 +87,9 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 
 ### Launcher
 - Works fine out of the box.
-- **Fly time** does not appear to be working — it should control how long the player is locked into the trajectory before being free to move.
+- **Fly time** does not appear to be working — it should control how long the player is locked into the trajectory before being free to move, but no value seems to change anything right now.
 - Pressing X on the destination does not delete the destination empty (may or may not be intended).
-- Suggestion: display the destination empty as a single arrow scaled to the jump height for easy in-level visualisation.
+- Suggestion: display the destination empty as a single arrow whose size matches the height of the launcher jump. This makes it very easy to visualise in-level how high the player will go and when that value should be adjusted.
 
 ---
 
@@ -181,7 +185,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 
 ### Warp Gate
 - Probably should not be in Platforms.
-- The original warp gate is not modular — a custom, more modular version is worth building (see Zed's *Jak the Chicken* for reference).
+- The original warp gate is an actual mess and very not modular — a custom, more modular version is worth building. Zed's *Jak the Chicken* has some custom warp gates, or at least heavily modified ones, which may be a good reference.
 - Does nothing currently without a linked button.
 
 ---
@@ -200,10 +204,10 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 ## Pickups / Collectables
 
 ### General Pickups Feedback
-- Almost every collectable supports the `eco-info` res-lump to control what is given/spawned on break — at minimum this should be in the lump documentation.
+- Almost every collectable supports the `eco-info` res-lump to control what is given/spawned on break — at minimum this should be in the lump documentation. Note that many actors here are just wrappers that set this argument on their parent: for example, `ventblue` simply sets the `pickup-type` of a vent to `eco-blue`. This parent/child relationship is worth documenting.
 - The `options` lump is already referenced in the lump documentation but currently has no explanation of which options are valid — this needs to be filled in.
-- `collectables.o` does not need to be in a level's `.gd` — it is loaded via `game.gd`.
-- Vents could be unified like crates: one list entry, then a selector for eco type. The same approach could work for eco blobs.
+- `collectables.o` does not need to be in a level's `.gd` — it is loaded via `game.gd`. As a general rule, anything already loaded in `game.gd` never needs to be re-loaded in a specific level.
+- Vents could be unified like crates: one list entry, then a selector for eco type. The same approach could work for eco blobs. Note: technically vents can also be configured to give other collectables entirely (e.g. a vent that gives infinite orbs) — whether that should be an exposed option is an open question.
 
 ---
 
@@ -215,7 +219,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 ---
 
 ### Blue Eco Vent
-- **Compiler crash:** `No rule to make out/jak1/obj/vent-ag.go` — no art group; the vent is geometry and the particle blocker is in common.
+- **Compiler crash:** `No rule to make out/jak1/obj/vent-ag.go` — no art group exists for eco-vents; the vent itself is part of the geometry. For some vents the particle blocker is in common, so it doesn't need to be loaded separately.
 - The blocker triggers when its object is destroyed, not through a task.
 - Needs a parameter to activate only when a specific task is complete (see fire canyon vents for reference).
 
@@ -241,7 +245,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 
 - Missing eco-pill content type (small health), which also accepts a numeric quantity.
 - Orb count description of `1–5` is misleading — base game includes crates with 10 orbs (e.g. fire canyon).
-- Suggestion: button to auto-align a crate to the ground beneath it.
+- Suggestion: button to auto-align a crate to the ground beneath it. This is already doable manually via Blender's *Snap to Face* with *Align Rotation to Target*, but having it as a one-click button would be a quality-of-life improvement.
 - Scout Flies require special handling: the `amount` field identifies which of the 7 flies for a specific task it is. There may be an easier way to set these up compared to the past — worth investigating. Multiple scout flies currently can't all be collected to spawn the cell. Required setup:
   - `game-task` res-lump
   - `movie-pos` to place the cell when the final fly is collected
@@ -265,12 +269,12 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 ### Orb (Precursor)
 - Works fine.
 - Suggestion: button to float selected orbs at a consistent height above the ground (`1`–`2` metres default), with multi-selection support so all orbs can be adjusted at once.
-- Feature idea (also suggested by another community member) — distribute orbs along a curve:
+- Feature idea (also suggested by another community member) — distribute orbs along a curve. There could be several ways to implement this; one possible approach:
   1. Spawn the desired orbs
   2. Create a curve
   3. Select orbs + curve and use a link option
   4. Orbs spread evenly along the curve and follow edits to it
-  5. Optional height offset so the curve can be drawn on the ground
+  5. Optional height offset so the curve can be drawn on the ground and orbs float consistently above it
 
 ---
 
@@ -290,7 +294,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 ---
 
 ### Power Cell (alt)
-- Appears to be specific to the final boss door visual (cells flying out of Jak to the door). Probably should not be in Collectables.
+- Appears to be specific to the final boss door visual — it is likely what is used for the cells that visually fly out of Jak toward the door, as stand-ins rather than real cell actors. Probably should not be in Collectables.
 
 ---
 
