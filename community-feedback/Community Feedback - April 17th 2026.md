@@ -29,9 +29,9 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 - Most platform crashes are caused by code not being included in the level. Much of that code lives in a specific level's `-obs.gc` file; some platforms have their own code file.
 - For platforms with their own code file: add it to the level's `.gd`.
 - For platforms with code in another level's `-obs.gc`: copy only the required code blocks rather than importing the whole file — cleaner, and allows custom res-lump additions.
-- Consider renaming **Waypoints** to **Path** and adding a button to connect to an existing path using the `path-k` lump.
+- Consider renaming **Waypoints** to **Path** and adding a button to connect to an existing path using the `path-k` lump. More info on curves: [JakMods.dev](https://jakmods.dev)
 - Add a *select without centering view* button next to waypoints.
-- Consider adding cameras as children of platforms, similar to checkpoints.
+- Consider adding cameras as children of platforms, similar to checkpoints — though note that you may sometimes want to move the platform without moving the path. Since the platform would go to the path automatically anyway, this is less of an issue; Blender also has a *Move Parents Only* option for these cases.
 
 ---
 
@@ -108,7 +108,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 ---
 
 ### Orbit Platform
-- No obvious way to link the alt-actor for the center entity. If a specific actor type is required, it should be documented and a button added to spawn it directly.
+- No obvious way to link the alt-actor for the center entity — tried adding a random empty but that doesn't seem to work. If a specific actor type is required, it should be documented and a button added to spawn it directly.
 - **Export error:** `cannot access local variable '_actor_get_link' where it is not associated with a value`
 
 ---
@@ -201,6 +201,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 
 ### General Pickups Feedback
 - Almost every collectable supports the `eco-info` res-lump to control what is given/spawned on break — at minimum this should be in the lump documentation.
+- The `options` lump is already referenced in the lump documentation but currently has no explanation of which options are valid — this needs to be filled in.
 - `collectables.o` does not need to be in a level's `.gd` — it is loaded via `game.gd`.
 - Vents could be unified like crates: one list entry, then a selector for eco type. The same approach could work for eco blobs.
 
@@ -241,7 +242,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 - Missing eco-pill content type (small health), which also accepts a numeric quantity.
 - Orb count description of `1–5` is misleading — base game includes crates with 10 orbs (e.g. fire canyon).
 - Suggestion: button to auto-align a crate to the ground beneath it.
-- Scout Flies require special handling: the `amount` field identifies which of the 7 flies for a specific task it is. Multiple scout flies currently can't all be collected to spawn the cell. Required setup:
+- Scout Flies require special handling: the `amount` field identifies which of the 7 flies for a specific task it is. There may be an easier way to set these up compared to the past — worth investigating. Multiple scout flies currently can't all be collected to spawn the cell. Required setup:
   - `game-task` res-lump
   - `movie-pos` to place the cell when the final fly is collected
 - `crate-ag.go` does not need to be loaded in the level's `.gd`.
@@ -264,7 +265,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 ### Orb (Precursor)
 - Works fine.
 - Suggestion: button to float selected orbs at a consistent height above the ground (`1`–`2` metres default), with multi-selection support so all orbs can be adjusted at once.
-- Feature idea — distribute orbs along a curve:
+- Feature idea (also suggested by another community member) — distribute orbs along a curve:
   1. Spawn the desired orbs
   2. Create a curve
   3. Select orbs + curve and use a link option
@@ -326,7 +327,7 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 
 ### Eco Vent (Rock)
 - Works fine.
-- Probably should not be in Collectables — it is a breakable rock, not a collectable.
+- Probably should not be in Collectables — it is just a rock that breaks. It can be used to block a vent, but so can any actor, so there is nothing collectable-specific about it.
 - How the cell spawn from these works is unclear; may be tightly coupled to the Beach cell.
 
 ---
@@ -339,4 +340,4 @@ barg [GOAL] shared a commonly used macro for meters-based vectors:
 
 ## Bugs & Misc
 
-- **Collection visibility export bug:** Making the collection containing the level un-selectable causes it to disappear on export. Suspected cause: the addon performs a selection-only export pass and marking the collection un-selectable breaks it. Needs investigation.
+- **Collection visibility export bug:** Making the collection containing the level un-selectable (a common workflow so you don't constantly accidentally select the level while working on actors) causes it to disappear on export. Suspected cause: the addon performs a selection-only export pass and marking the collection un-selectable breaks it. Needs investigation.
