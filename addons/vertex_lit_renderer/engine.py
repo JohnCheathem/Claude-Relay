@@ -6,11 +6,30 @@ import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
+from mathutils.bvhtree import BVHTree
 
 from .shaders import SHADOW_VERT, SHADOW_FRAG, MAIN_VERT, MAIN_FRAG
-from .gi import build_scene_bvh, ProgressiveGI
+from .gi import ProgressiveGI
 
 MAX_LIGHTS = 8
+
+# ── GI redraw timer ───────────────────────────────────────────────────────────
+# Backup for self.tag_redraw() — forces redraws at 20 fps while GI runs.
+# Uses bpy.data (always valid in timers) not bpy.context (may be None).
+
+_gi_active = False
+
+def _gi_redraw_timer():
+    if _gi_active:
+        try:
+            for wm in bpy.data.window_managers:
+                for window in wm.windows:
+                    for area in window.screen.areas:
+                        if area.type == 'VIEW_3D':
+                            area.tag_redraw()
+        except Exception:
+            pass
+    return 0.05
 
 # ── Shader singletons ─────────────────────────────────────────────────────────
 
@@ -42,7 +61,7 @@ def _get_gpu_tex(image):
         try:
             _tex_cache[image.name] = gpu.texture.from_image(image)
         except Exception as e:
-            print(f"[VertexLit] texture error ({image.name}): {e}")
+            print(f"[VertexLit] tex error ({image.name}): {e}")
             _tex_cache[image.name] = None
     return _tex_cache[image.name]
 
@@ -84,44 +103,25 @@ def _get_shadow_map(size):
 # ── Scene helpers ─────────────────────────────────────────────────────────────
 
 def _collect_lights(depsgraph, energy_scale):
-    lights = []; ltype = {'POINT':0,'SUN':1,'SPOT':0,'AREA':0}
-
-    # Try depsgraph instances first, fall back to scene objects
-    candidates = []
+    lights=[]; ltype={'POINT':0,'SUN':1,'SPOT':0,'AREA':0}
     for inst in depsgraph.object_instances:
-        obj = inst.object
-        if obj.type == 'LIGHT':
-            candidates.append((obj, inst.matrix_world))
-
-    if not candidates:
-        # Fallback: iterate scene objects directly
-        for obj in depsgraph.scene.objects:
-            if obj.type == 'LIGHT' and not obj.hide_viewport:
-                candidates.append((obj, obj.matrix_world))
-
-    for obj, mat in candidates:
-        ld = obj.data
-        if ld.type == 'SUN':
-            energy = ld.energy * energy_scale
-            radius = 1.0
+        obj=inst.object
+        if obj.type!='LIGHT': continue
+        ld=obj.data; mat=inst.matrix_world
+        if ld.type=='SUN':
+            energy=ld.energy*energy_scale*10.0; radius=1.0
         else:
-            energy = ld.energy * energy_scale
-            if getattr(ld, 'use_custom_distance', False):
-                radius = float(ld.cutoff_distance)
-            else:
-                radius = 20.0
-
+            energy=ld.energy*energy_scale
+            radius=float(ld.cutoff_distance) if getattr(ld,'use_custom_distance',False) else 20.0
         lights.append({
-            'pos':    tuple(mat.to_translation()),
-            'dir':    tuple(mat.to_3x3() @ Vector((0,0,-1))),
-            'color':  (float(ld.color.r), float(ld.color.g), float(ld.color.b)),
-            'energy': energy,
-            'type':   ltype.get(ld.type, 0),
-            'radius': radius,
-            'is_sun': ld.type == 'SUN',
+            'pos': tuple(mat.to_translation()),
+            'dir': tuple(mat.to_3x3()@Vector((0,0,-1))),
+            'color': (float(ld.color.r),float(ld.color.g),float(ld.color.b)),
+            'energy': energy, 'type': ltype.get(ld.type,0),
+            'radius': radius, 'is_sun': ld.type=='SUN',
             'matrix_world': mat.copy(),
         })
-        if len(lights) >= MAX_LIGHTS: break
+        if len(lights)>=MAX_LIGHTS: break
     return lights
 
 def _scene_bounds(depsgraph):
@@ -150,37 +150,62 @@ def _build_light_space(light,center,radius):
     ortho=Matrix([[1/s,0,0,0],[0,1/s,0,0],[0,0,-2/(f-n),-(f+n)/(f-n)],[0,0,0,1]])
     return ortho@view
 
-# ── Mesh helpers ──────────────────────────────────────────────────────────────
+# ── Mesh extraction (one new_from_object call per object, everything derived from it) ──
 
 def _extract_mesh_data(obj, depsgraph):
     """
-    Extract mesh data using numpy foreach_get (~28x faster than Python loops).
-    Stores numpy arrays so batch_for_shader receives them without conversion.
+    Single new_from_object call per object. Returns all data needed for:
+      - Main draw batch  (positions / normals / colors / uvs — per loop)
+      - Shadow batch     (vert_co_local + vi_map — build indexed batch without extra call)
+      - GI / BVH        (vert_co_local / vert_no_local — transform to world in _rebuild)
     """
     mesh = None
     try:
         eval_obj = obj.evaluated_get(depsgraph)
         mesh = bpy.data.meshes.new_from_object(
             eval_obj, preserve_all_data_layers=True, depsgraph=depsgraph)
-        if not mesh:
-            return None
+        if not mesh: return None
 
         mesh.calc_loop_triangles()
-        n_tris = len(mesh.loop_triangles)
-        if n_tris == 0:
+        if not mesh.loop_triangles:
             bpy.data.meshes.remove(mesh); return None
 
-        n_verts = len(mesh.vertices)
-        n_flat  = n_tris * 3
+        corner_normals = mesh.corner_normals
 
-        # ── Positions & normals via foreach_get (bulk C-level read) ─────────
-        vc = np.empty(n_verts * 3, dtype=np.float32)
-        mesh.vertices.foreach_get('co', vc)
-        vc = vc.reshape(n_verts, 3)
+        mat_slot = eval_obj.active_material
+        tex     = _get_gpu_tex(_find_base_texture(mat_slot))
+        default = [1.0,1.0,1.0,1.0]
+        if mat_slot:
+            c=mat_slot.diffuse_color; default=[c[0],c[1],c[2],1.0]
 
-        vn = np.empty(n_verts * 3, dtype=np.float32)
-        mesh.vertices.foreach_get('normal', vn)
-        vn = vn.reshape(n_verts, 3)
+        vcol_point={}; vcol_corner={}
+        if mesh.color_attributes:
+            attr=None
+            try: attr=mesh.color_attributes.active_color
+            except Exception: pass
+            if attr is None and len(mesh.color_attributes): attr=mesh.color_attributes[0]
+            if attr:
+                for idx,d in enumerate(attr.data):
+                    c=d.color; rgba=[c[0],c[1],c[2],c[3] if len(c)>3 else 1.0]
+                    if attr.domain=='POINT': vcol_point[idx]=rgba
+                    elif attr.domain=='CORNER': vcol_corner[idx]=rgba
+
+        uv_layer=mesh.uv_layers.active
+        n_verts=len(mesh.vertices)
+
+        # Per-vertex arrays (needed for shadow batch indices + GI world transform)
+        vert_co_local=[(v.co.x,v.co.y,v.co.z) for v in mesh.vertices]
+        vert_no_local=[(v.normal.x,v.normal.y,v.normal.z) for v in mesh.vertices]
+
+        # Material albedo for GI/BVH face colours
+        mat_diffuse=(0.8,0.8,0.8)
+        if mat_slot:
+            c=mat_slot.diffuse_color
+            mat_diffuse=(float(c[0]),float(c[1]),float(c[2]))
+
+        # Numpy bulk reads — ~28x faster than Python loops for large meshes
+        n_tris = len(mesh.loop_triangles)
+        n_flat = n_tris * 3
 
         tv = np.empty(n_tris * 3, dtype=np.int32)
         mesh.loop_triangles.foreach_get('vertices', tv)
@@ -190,64 +215,51 @@ def _extract_mesh_data(obj, depsgraph):
         mesh.loop_triangles.foreach_get('loops', tl)
         tl = tl.reshape(n_tris, 3)
 
-        vi_flat   = tv.ravel()
-        positions = vc[vi_flat]
-        normals   = vn[vi_flat]
+        vi_flat = tv.ravel()
+        li_flat = tl.ravel()
 
-        # ── UVs ─────────────────────────────────────────────────────────────
-        uv_layer = mesh.uv_layers.active
+        # Positions from vertex coords
+        vc = np.empty(n_verts * 3, dtype=np.float32)
+        mesh.vertices.foreach_get('co', vc)
+        vc = vc.reshape(n_verts, 3)
+        positions = vc[vi_flat]  # numpy (n_flat, 3)
+
+        # Normals: per-vertex smooth (fast). corner_normals for hard edges
+        # would need a Python loop — for geo nodes scenes smooth is fine.
+        vn = np.empty(n_verts * 3, dtype=np.float32)
+        mesh.vertices.foreach_get('normal', vn)
+        vn = vn.reshape(n_verts, 3)
+        normals = vn[vi_flat]    # numpy (n_flat, 3)
+
+        # UVs
         if uv_layer:
-            n_loops  = len(mesh.loops)
-            uv_raw   = np.empty(n_loops * 2, dtype=np.float32)
+            n_loops = len(mesh.loops)
+            uv_raw = np.empty(n_loops * 2, dtype=np.float32)
             uv_layer.data.foreach_get('uv', uv_raw)
-            uvs = uv_raw.reshape(n_loops, 2)[tl.ravel()]
+            uvs = uv_raw.reshape(n_loops, 2)[li_flat]  # numpy (n_flat, 2)
         else:
             uvs = np.zeros((n_flat, 2), dtype=np.float32)
 
-        # ── Material colour + vertex colours ────────────────────────────────
-        mat = eval_obj.active_material
-        tex = _get_gpu_tex(_find_base_texture(mat))
-        # vertColor = WHITE unless mesh has actual vertex paint attributes.
-        # Material colour goes to fragment shader as uDiffuseColor.
-        # This keeps lighting unattenuated by near-black diffuse_color values.
-        colors = np.ones((n_flat, 4), dtype=np.float32)
-
-        if mesh.color_attributes:
-            attr = None
-            try: attr = mesh.color_attributes.active_color
-            except Exception: pass
-            if attr is None and len(mesh.color_attributes):
-                attr = mesh.color_attributes[0]
-            if attr and attr.domain == 'POINT':
-                col_raw = np.empty(n_verts * 4, dtype=np.float32)
-                attr.data.foreach_get('color', col_raw)
-                colors = col_raw.reshape(n_verts, 4)[vi_flat]
-
-        # ── GI / BVH cache (no second new_from_object needed) ───────────────
-        if mat:
-            c = mat.diffuse_color
-            alb = (float(c[0]), float(c[1]), float(c[2]))
+        # Colors: build per-loop from vertex/corner dicts (still dict-based,
+        # but only for objects that actually have vertex paint)
+        if vcol_point or vcol_corner:
+            colors = np.array(
+                [vcol_corner.get(int(li_flat[i]), vcol_point.get(int(vi_flat[i]), default))
+                 for i in range(n_flat)], dtype=np.float32)
         else:
-            alb = (0.8, 0.8, 0.8)
+            colors = np.tile(np.array(default, dtype=np.float32), (n_flat, 1))
+
+        vi_map = vi_flat.tolist()
 
         bpy.data.meshes.remove(mesh)
         return dict(
-            positions=positions,        # np (n_flat, 3)
-            normals=normals,            # np (n_flat, 3)
-            colors=colors,             # np (n_flat, 4)
-            uvs=uvs,                   # np (n_flat, 2)
-            vi_map=vi_flat,            # np (n_flat,)
-            texture=tex, n_verts=n_verts,
-            vert_co_local=vc,          # np (n_verts, 3)
-            vert_no_local=vn,          # np (n_verts, 3)
-            bvh_tris=tv.tolist(),      # list for BVHTree
-            face_albedo=[alb] * n_tris,
+            positions=positions, normals=normals, colors=colors,
+            uvs=uvs, vi_map=vi_map, texture=tex, n_verts=n_verts,
+            vert_co_local=vert_co_local, vert_no_local=vert_no_local,
+            mat_diffuse=mat_diffuse,
         )
-
     except Exception as e:
-        import traceback
         print(f"[VertexLit] extract error ({obj.name}): {e}")
-        traceback.print_exc()
         if mesh:
             try: bpy.data.meshes.remove(mesh)
             except Exception: pass
@@ -255,18 +267,11 @@ def _extract_mesh_data(obj, depsgraph):
 
 
 def _build_batch_from_cache(cached, gi_per_vert=None):
-    shader = _get_main_shader()
-    vi_map = cached['vi_map']
-    n_v    = cached['n_verts']
-    n_flat = len(vi_map)
-
-    if gi_per_vert and len(gi_per_vert) == n_v:
-        gi_arr  = np.array(gi_per_vert, dtype=np.float32)
-        bounces = gi_arr[vi_map]
-    else:
-        bounces = np.zeros((n_flat, 3), dtype=np.float32)
-
-    return batch_for_shader(shader, 'TRIS', {
+    shader=_get_main_shader()
+    vi_map=cached['vi_map']; n_v=cached['n_verts']
+    bounces=[gi_per_vert[vi] for vi in vi_map] if (gi_per_vert and len(gi_per_vert)==n_v) \
+            else [(0.0,0.0,0.0)]*len(vi_map)
+    return batch_for_shader(shader,'TRIS',{
         'position':    cached['positions'],
         'normal':      cached['normals'],
         'vertColor':   cached['colors'],
@@ -275,27 +280,38 @@ def _build_batch_from_cache(cached, gi_per_vert=None):
     })
 
 
-def _build_shadow_batch(obj, depsgraph, shader):
-    mesh = None
-    try:
-        eval_obj = obj.evaluated_get(depsgraph)
-        mesh = bpy.data.meshes.new_from_object(
-            eval_obj, preserve_all_data_layers=False, depsgraph=depsgraph)
-        if not mesh or not mesh.loop_triangles:
-            if mesh: bpy.data.meshes.remove(mesh)
-            return None
-        positions = [(v.co.x, v.co.y, v.co.z) for v in mesh.vertices]
-        indices   = [(t.vertices[0], t.vertices[1], t.vertices[2])
-                     for t in mesh.loop_triangles]
-        batch = batch_for_shader(shader, 'TRIS', {'position': positions}, indices=indices)
-        bpy.data.meshes.remove(mesh)
-        return batch
-    except Exception as e:
-        print(f"[VertexLit] shadow batch ({obj.name}): {e}")
-        if mesh:
-            try: bpy.data.meshes.remove(mesh)
-            except Exception: pass
-        return None
+def _build_shadow_batch_from_cache(cached):
+    """Build shadow batch from already-extracted vertex data — no extra new_from_object."""
+    shader=_get_shadow_shader()
+    positions=cached['vert_co_local']
+    vi_map=cached['vi_map']
+    n_tris=len(vi_map)//3
+    indices=[(vi_map[i*3],vi_map[i*3+1],vi_map[i*3+2]) for i in range(n_tris)]
+    return batch_for_shader(shader,'TRIS',{'position':positions},indices=indices)
+
+
+def _build_bvh_from_cache(mesh_cache, objects):
+    """
+    Build world-space BVH from cached vert data.
+    No new_from_object — uses vert_co_local transformed by matrix_world.
+    """
+    all_verts=[]; all_polys=[]; face_albedo=[]; v_offset=0
+    for name,data in mesh_cache.items():
+        obj=objects.get(name)
+        if obj is None: continue
+        inst_mat=obj.matrix_world
+        for co in data['vert_co_local']:
+            wv=inst_mat@Vector(co)
+            all_verts.append((wv.x,wv.y,wv.z))
+        vi_map=data['vi_map']
+        alb=data['mat_diffuse']
+        for i in range(0,len(vi_map),3):
+            all_polys.append([vi_map[i]+v_offset,vi_map[i+1]+v_offset,vi_map[i+2]+v_offset])
+            face_albedo.append(alb)
+        v_offset+=len(data['vert_co_local'])
+    if not all_verts: return None,[]
+    bvh=BVHTree.FromPolygons(all_verts,all_polys,epsilon=1e-6)
+    return bvh,face_albedo
 
 # ── Render Engine ─────────────────────────────────────────────────────────────
 
@@ -304,21 +320,22 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
     def _ensure_state(self):
         if getattr(self,'_state_ready',False): return
-        self._dirty        = True
-        self._lights_dirty = False
-        self._shadow_dirty = True    # re-render shadow map on first draw
-        self._rebuilding   = False   # Bug 2: guard against self-triggered rebuilds
-        self._mesh_cache   = {}
-        self._batch_dict   = {}
-        self._shadow_dict  = {}
-        self._dummy_depth  = None
-        self._white_tex    = None
-        self._gi           = ProgressiveGI()
-        # Bug 3: cached scene data (set by _rebuild, read by view_draw)
-        self._lights       = []
-        self._sun          = None
-        self._ls_matrix    = Matrix.Identity(4)
-        self._state_ready  = True
+        self._dirty            = True
+        self._mesh_cache       = {}
+        self._batch_dict       = {}
+        self._shadow_dict      = {}
+        self._dummy_depth      = None
+        self._white_tex        = None
+        self._gi               = ProgressiveGI()
+        self._lights_cache     = []
+        self._bounds_cache     = (Vector((0,0,0)),10.0)
+        self._shadow_dirty     = True
+        self._shadow_tex_cache = None
+        # After rebuild, skip N view_update cycles. new_from_object / remove
+        # queue deferred depsgraph events that arrive after _rebuild returns.
+        # The drain absorbs them so they don't re-trigger a rebuild.
+        self._drain_cycles     = 0
+        self._state_ready      = True
 
     def _ensure_resources(self):
         if self._dummy_depth is None:
@@ -326,214 +343,146 @@ class VertexLitEngine(bpy.types.RenderEngine):
         if self._white_tex is None:
             self._white_tex=gpu.types.GPUTexture((1,1),format='RGBA8')
 
-    # ── Lifecycle ─────────────────────────────────────────────────────────
-
     def update(self, data=None, depsgraph=None):
-        """Called before render() — stop GI thread so it doesn't conflict."""
-        if hasattr(self, '_gi'):
-            self._gi.stop()
+        if hasattr(self,'_gi'): self._gi.stop()
 
     def render(self, depsgraph):
-        """F12 render — not implemented (viewport only). Just stops GI thread."""
-        if hasattr(self, '_gi'):
-            self._gi.stop()
+        if hasattr(self,'_gi'): self._gi.stop()
 
     def free(self):
-        """Called when Blender frees this engine instance."""
-        if hasattr(self, '_gi'):
-            self._gi.stop()
+        if hasattr(self,'_gi'): self._gi.stop()
 
-    # ── Update ────────────────────────────────────────────────────────────
+    # ── view_update ───────────────────────────────────────────────────────
 
     def view_update(self, context, depsgraph):
+        global _gi_active
         self._ensure_state()
-        # _rebuilding guard: new_from_object/remove fire Mesh geo-updates that
-        # Blender queues and delivers in the *next* view_update (after view_draw
-        # completes), so checking _rebuilding here is not enough by itself.
-        # We also only watch bpy.types.Object for geometry — never bpy.types.Mesh.
-        # Mesh datablock updates are exclusively from our own new_from_object calls.
-        if getattr(self, '_rebuilding', False):
+
+        if self._drain_cycles > 0:
+            self._drain_cycles -= 1
             return
+
         for update in depsgraph.updates:
-            id_data = update.id
-            if update.is_updated_geometry and isinstance(id_data, bpy.types.Object):
-                if id_data.type != 'MESH':
-                    continue
-                # Use bounding-box fingerprint to skip spurious per-frame geo-node
-                # re-evaluations (addons, time-dep modifiers) that didn't change output.
-                bb  = id_data.bound_box
-                fp  = (round(bb[0][0],4), round(bb[0][1],4), round(bb[0][2],4),
-                       round(bb[6][0],4), round(bb[6][1],4), round(bb[6][2],4))
-                fps = getattr(self, '_geo_fps', {})
-                if fps.get(id_data.name) == fp:
-                    continue   # bounding box unchanged — skip
-                fps[id_data.name] = fp
-                self._geo_fps = fps
-                self._dirty = True
-                return
-            if update.is_updated_transform:
-                if isinstance(id_data, bpy.types.Object) and id_data.type == 'MESH':
-                    self._shadow_dirty = True
-            if isinstance(id_data, bpy.types.Light):
-                self._lights_dirty = True
-            if isinstance(id_data, bpy.types.Material):
-                self._dirty = True
-                return
-            if isinstance(id_data, bpy.types.Image):
+            id_data=update.id
+            if update.is_updated_geometry:
+                if isinstance(id_data,bpy.types.Mesh):
+                    # users==0 → orphaned temp mesh from new_from_object, skip it.
+                    # Real scene meshes always have ≥1 user (their linked object).
+                    # DO NOT check bpy.types.Object here unconditionally — that fires
+                    # on every render evaluation cycle and causes a rebuild loop.
+                    if getattr(id_data,'users',0)>0:
+                        self._dirty=True; self._shadow_dirty=True
+                        _gi_active=True; return
+                if isinstance(id_data,bpy.types.Object) and id_data.type=='MESH':
+                    # Safe Object check: only dirty if this object isn't already
+                    # in our cache. New/duplicated objects aren't cached yet.
+                    # Existing objects re-evaluating every frame ARE cached → skip.
+                    if id_data.name not in self._mesh_cache:
+                        self._dirty=True; self._shadow_dirty=True
+                        _gi_active=True; return
+                if isinstance(id_data,bpy.types.Object) and id_data.type=='LIGHT':
+                    self._dirty=True; self._shadow_dirty=True
+                    _gi_active=True; return
+            if isinstance(id_data,bpy.types.Material):
+                self._dirty=True; self._shadow_dirty=True
+                _gi_active=True; return
+            if isinstance(id_data,bpy.types.Image):
                 _invalidate_tex(id_data.name)
 
-    # ── Rebuild (geometry + GI restart) ──────────────────────────────────
-
-    def _cache_lights(self, depsgraph, en_scale, use_shadows, shadow_res):
-        """Collect lights and compute shadow matrix. Bug 3: called once, cached."""
-        self._lights = _collect_lights(depsgraph, en_scale)
-        self._sun    = next((l for l in self._lights if l['is_sun']), None)
-        do_shad      = use_shadows and self._sun is not None
-        if do_shad:
-            self._ls_matrix = _build_light_space(self._sun, *_scene_bounds(depsgraph))
-        else:
-            self._ls_matrix = Matrix.Identity(4)
-        self._lights_dirty  = False
-        self._shadow_dirty  = True   # light moved → shadow map needs re-render
+    # ── Rebuild ───────────────────────────────────────────────────────────
 
     def _rebuild(self, depsgraph, vls):
-        t0 = time.time()
+        self._rebuild_inner(depsgraph, vls)
+        self._drain_cycles=4  # absorb deferred events from new_from_object calls
 
-        # Bug 2: set flag so view_update ignores the bpy.types.Mesh updates
-        # that new_from_object / remove will fire during this rebuild.
-        self._rebuilding = True
-        try:
-            self._gi.cancel()
+    def _rebuild_inner(self, depsgraph, vls):
+        t0=time.time()
+        self._gi.cancel()
 
-            use_gi    = vls.use_gi        if vls else False
-            gi_samp   = vls.gi_samples    if vls else 8
-            en_scale  = vls.energy_scale  if vls else 0.1
-            use_shad  = vls.use_shadows   if vls else True
-            shad_res  = int(vls.shadow_resolution) if vls else 1024
+        use_gi  =vls.use_gi        if vls else True
+        gi_samp =vls.gi_samples    if vls else 128
+        en_scale=vls.energy_scale  if vls else 0.01
+        lights  =_collect_lights(depsgraph,en_scale)
 
-            # Bug 3: cache lights/shadow matrix once here
-            self._cache_lights(depsgraph, en_scale, use_shad, shad_res)
+        self._lights_cache=lights
+        self._bounds_cache=_scene_bounds(depsgraph)
 
-            ss = _get_shadow_shader()
-            new_mesh = {}; new_shadow = {}; seen = set()
+        new_mesh={}; new_shadow={}; seen=set()
 
-            for inst in depsgraph.object_instances:
-                obj = inst.object
-                if obj.type != 'MESH' or obj.hide_get(): continue
-                if obj.name in seen: continue
-                seen.add(obj.name)
+        for inst in depsgraph.object_instances:
+            obj=inst.object
+            if obj.type!='MESH' or obj.hide_get(): continue
+            if obj.name in seen: continue
+            seen.add(obj.name)
 
-                data = _extract_mesh_data(obj, depsgraph)
-                if data:
-                    new_mesh[obj.name] = data
-                    batch = _build_batch_from_cache(data)
-                    self._batch_dict[obj.name] = (batch, data['texture'])
+            data=_extract_mesh_data(obj,depsgraph)  # ONE new_from_object per object
+            if data:
+                new_mesh[obj.name]=data
+                self._batch_dict[obj.name]=(_build_batch_from_cache(data), data['texture'])
+                # Shadow batch built from cached data — no extra new_from_object
+                sb=_build_shadow_batch_from_cache(data)
+                if sb: new_shadow[obj.name]=sb
 
-                b = _build_shadow_batch(obj, depsgraph, ss)
-                if b: new_shadow[obj.name] = b
+        self._mesh_cache  =new_mesh
+        self._shadow_dict =new_shadow
+        self._dirty       =False
+        self._shadow_dirty=True
+        print(f"[VertexLit] rebuilt {len(new_mesh)} objs ({time.time()-t0:.2f}s)")
 
-            self._mesh_cache  = new_mesh
-            self._shadow_dict = new_shadow
-            self._dirty       = False
-            self._shadow_dirty = True
+        if use_gi:
+            # BVH built from cached vertex data — no extra new_from_object
+            bpy_objects={name:bpy.data.objects.get(name) for name in new_mesh}
+            bvh,face_albedo=_build_bvh_from_cache(new_mesh,bpy_objects)
+            if bvh is None: return
 
-            # Snapshot bounding boxes so the first post-rebuild view_update
-            # sees the current fingerprints and doesn't immediately re-dirty.
-            fps = {}
-            for obj_name in new_mesh:
-                obj = bpy.data.objects.get(obj_name)
-                if obj:
-                    bb = obj.bound_box
-                    fps[obj_name] = (round(bb[0][0],4), round(bb[0][1],4), round(bb[0][2],4),
-                                     round(bb[6][0],4), round(bb[6][1],4), round(bb[6][2],4))
-            self._geo_fps = fps
+            plain_lights=[{
+                'pos':tuple(l['pos']),'dir':tuple(l['dir']),
+                'color':tuple(l['color']),'energy':float(l['energy']),
+                'type':int(l['type']),'radius':float(l['radius']),
+            } for l in lights]
 
-            print(f"[VertexLit] rebuilt: {len(new_mesh)} meshes  lights: {len(self._lights)}", end="")
-            for l in self._lights:
-                t = 'SUN' if l['type']==1 else 'POINT'
-                print(f"  [{t} e={l['energy']:.3f}]", end="")
-            print(f"  ({time.time()-t0:.2f}s)")
+            gi_verts={}; gi_norms={}
+            for name,data in new_mesh.items():
+                obj=bpy_objects.get(name)
+                if obj is None: continue
+                m=obj.matrix_world; m3=m.to_3x3()
+                gi_verts[name]=[tuple(m@Vector(co)) for co in data['vert_co_local']]
+                gi_norms[name]=[tuple(m3@Vector(no)) for no in data['vert_no_local']]
 
-            # Bug 5: build GI data from cache — no second new_from_object call
-            if use_gi and new_mesh:
-                all_verts = []; all_polys = []; all_albedo = []
-                gi_verts  = {}; gi_norms = {}
-                v_offset  = 0
+            self._gi.start(
+                dict(bvh=bvh,face_albedo=face_albedo,
+                     lights=plain_lights,verts=gi_verts,normals=gi_norms),
+                target_samples=gi_samp)
+            print(f"[VertexLit] GI started ({gi_samp} samples)")
 
-                for name, data in new_mesh.items():
-                    obj = bpy.data.objects.get(name)
-                    if obj is None: continue
-                    mat_w = obj.matrix_world
-                    mat3  = mat_w.to_3x3()
-
-                    # World-space verts/normals from cached local data
-                    wv = [tuple(mat_w @ Vector(co)) for co in data['vert_co_local']]
-                    wn = [tuple(mat3  @ Vector(no)) for no in data['vert_no_local']]
-                    gi_verts[name] = wv
-                    gi_norms[name] = wn
-
-                    # BVH data
-                    all_verts.extend(wv)
-                    for (i0,i1,i2) in data['bvh_tris']:
-                        all_polys.append([i0+v_offset, i1+v_offset, i2+v_offset])
-                    all_albedo.extend(data['face_albedo'])
-                    v_offset += len(data['vert_co_local'])
-
-                from mathutils.bvhtree import BVHTree
-                bvh = BVHTree.FromPolygons(all_verts, all_polys, epsilon=1e-6) \
-                      if all_verts else None
-
-                plain_lights = [{
-                    'pos': tuple(l['pos']), 'dir': tuple(l['dir']),
-                    'color': tuple(l['color']), 'energy': float(l['energy']),
-                    'type': int(l['type']),  'radius': float(l['radius']),
-                } for l in self._lights]
-
-                scene_data = dict(bvh=bvh, face_albedo=all_albedo,
-                                  lights=plain_lights,
-                                  verts=gi_verts, normals=gi_norms)
-                self._gi.start(scene_data, target_samples=gi_samp)
-
-        finally:
-            self._rebuilding = False
-
-    # ── Apply GI update (fast — geometry stays cached) ────────────────────
+    # ── Apply GI ──────────────────────────────────────────────────────────
 
     def _apply_gi_update(self, gi_data):
-        for name, cached in self._mesh_cache.items():
-            gi_per_vert = gi_data.get(name)
-            if gi_per_vert is None: continue
-            batch = _build_batch_from_cache(cached, gi_per_vert)
-            tex   = cached['texture']
-            self._batch_dict[name] = (batch, tex)
+        for name,cached in self._mesh_cache.items():
+            gv=gi_data.get(name)
+            if gv is None: continue
+            self._batch_dict[name]=(_build_batch_from_cache(cached,gv), cached['texture'])
 
     # ── Shadow pass ───────────────────────────────────────────────────────
 
-    def _shadow_pass(self, ls_mat, shad_res, depsgraph):
-        """Re-render shadow map only when geometry or lights changed."""
-        if not self._shadow_dirty:
-            # Return cached texture — nothing that affects shadows changed
-            return getattr(self, '_shadow_tex_cache', self._dummy_depth)
-
-        smap   = _get_shadow_map(shad_res)
-        shader = _get_shadow_shader()
+    def _shadow_pass(self, ls_mat, shad_res):
+        if not self._shadow_dirty and self._shadow_tex_cache is not None:
+            return self._shadow_tex_cache
+        smap=_get_shadow_map(shad_res); shader=_get_shadow_shader()
         with smap.fb.bind():
             smap.fb.clear(depth=1.0)
             gpu.state.depth_test_set('LESS_EQUAL')
             gpu.state.depth_mask_set(True)
-            gpu.state.viewport_set(0, 0, shad_res, shad_res)
+            gpu.state.viewport_set(0,0,shad_res,shad_res)
             shader.bind()
-            shader.uniform_float('uLightSpace', ls_mat)
-            for inst in depsgraph.object_instances:
-                obj = inst.object
-                if obj.type != 'MESH' or obj.hide_get(): continue
-                batch = self._shadow_dict.get(obj.name)
-                if batch is None: continue
-                shader.uniform_float('uModel', inst.matrix_world)
+            shader.uniform_float('uLightSpace',ls_mat)
+            for name,batch in self._shadow_dict.items():
+                obj=bpy.data.objects.get(name)
+                if obj is None: continue
+                shader.uniform_float('uModel',obj.matrix_world)
                 batch.draw(shader)
-
-        self._shadow_tex_cache = smap.tex
-        self._shadow_dirty     = False
+        self._shadow_tex_cache=smap.tex
+        self._shadow_dirty=False
         return smap.tex
 
     # ── Main draw ─────────────────────────────────────────────────────────
@@ -542,71 +491,72 @@ class VertexLitEngine(bpy.types.RenderEngine):
         self._ensure_state()
         self._ensure_resources()
 
-        scene = depsgraph.scene
-        vls   = getattr(scene, 'vertex_lit', None)
+        scene=depsgraph.scene
+        vls=getattr(scene,'vertex_lit',None)
 
         if self._dirty:
-            self._rebuild(depsgraph, vls)
-
-        # Bug 3: if lights moved, recollect without full mesh rebuild
-        if self._lights_dirty:
-            en_sc   = vls.energy_scale if vls else 0.1
-            u_shad  = vls.use_shadows  if vls else True
-            s_res   = int(vls.shadow_resolution) if vls else 1024
-            self._cache_lights(depsgraph, en_sc, u_shad, s_res)
+            self._rebuild(depsgraph,vls)
 
         if self._gi.has_update():
-            gi_data, _ = self._gi.get_update()
+            gi_data,n=self._gi.get_update()
             self._apply_gi_update(gi_data)
-        if self._gi.is_running:
-            try: self.tag_redraw()
+            print(f"[VertexLit] GI sample {n} applied")
+
+        # Drive continuous redraws while GI accumulates.
+        # self.tag_redraw() is the RenderEngine API; context.region.tag_redraw()
+        # is more direct and reliable in Blender 4.x.
+        # The module-level timer is a third-layer fallback.
+        global _gi_active
+        _gi_active=self._gi.is_running
+        if _gi_active:
+            self.tag_redraw()
+            try: context.region.tag_redraw()
             except Exception: pass
 
-        # Bug 3: read from cache — no depsgraph iteration here
-        lights  = self._lights
-        ls_mat  = self._ls_matrix
-        sun     = self._sun
+        sky   =tuple(c*(vls.gi_bounce_strength if vls else 1.0)
+                     for c in (tuple(vls.sky_color) if vls else (0.05,0.07,0.10)))
+        ground=tuple(c*(vls.gi_bounce_strength if vls else 1.0)
+                     for c in (tuple(vls.ground_color) if vls else (0.03,0.02,0.02)))
+        bstr  =vls.gi_bounce_strength if vls else 1.0
+        u_shad=vls.use_shadows        if vls else True
+        s_res =int(vls.shadow_resolution) if vls else 1024
+        s_bias=vls.shadow_bias        if vls else 0.005
+        s_dark=vls.shadow_darkness    if vls else 0.25
 
-        sky    = tuple(vls.sky_color)    if vls else (0.08, 0.10, 0.14)
-        ground = tuple(vls.ground_color) if vls else (0.03, 0.03, 0.04)
-        u_shad = vls.use_shadows         if vls else True
-        s_res  = int(vls.shadow_resolution) if vls else 1024
-        s_bias = vls.shadow_bias         if vls else 0.005
-        s_dark = vls.shadow_darkness     if vls else 0.25
+        lights=self._lights_cache
+        sun=next((l for l in lights if l['is_sun']),None)
+        do_shad=u_shad and sun is not None
+        center,radius=self._bounds_cache
+        ls_mat=_build_light_space(sun,center,radius) if do_shad else Matrix.Identity(4)
+        shad_tex=self._shadow_pass(ls_mat,s_res) if do_shad else self._dummy_depth
 
-        do_shad  = u_shad and sun is not None
-        shad_tex = self._shadow_pass(ls_mat, s_res, depsgraph) \
-                   if do_shad else self._dummy_depth
-
-        region = context.region; rv3d = context.region_data
-        w, h   = region.width, region.height
-        gpu.state.viewport_set(0, 0, w, h)
+        region=context.region; rv3d=context.region_data
+        gpu.state.viewport_set(0,0,region.width,region.height)
         try:
-            fb = gpu.state.active_framebuffer_get()
-            wc = scene.world.color if scene.world else None
-            fb.clear(color=(wc[0],wc[1],wc[2],1.0) if wc
-                     else (0.08,0.08,0.08,1.0), depth=1.0)
-        except Exception as e:
-            print(f"[VertexLit] clear: {e}")
+            fb=gpu.state.active_framebuffer_get()
+            wc=scene.world.color if scene.world else None
+            fb.clear(color=(wc[0],wc[1],wc[2],1.0) if wc else (0.08,0.08,0.08,1.0),depth=1.0)
+        except Exception as e: print(f"[VertexLit] clear: {e}")
 
         gpu.state.depth_test_set('LESS_EQUAL')
         gpu.state.depth_mask_set(True)
         gpu.state.face_culling_set('BACK')
 
-        shader    = _get_main_shader()
-        view_proj = rv3d.window_matrix @ rv3d.view_matrix
+        shader=_get_main_shader()
+        view_proj=rv3d.window_matrix@rv3d.view_matrix
         shader.bind()
-        shader.uniform_float('uViewProj',   view_proj)
-        shader.uniform_float('uLightSpace', ls_mat)
-        shader.uniform_float('uSkyColor',   sky)
-        shader.uniform_float('uGroundColor', ground)
-        shader.uniform_int  ('uUseShadow',  1 if do_shad else 0)
-        shader.uniform_float('uShadowBias', s_bias)
-        shader.uniform_float('uShadowDark', s_dark)
-        shader.uniform_sampler('uShadowMap', shad_tex)
-        shader.uniform_int('uNumLights', len(lights))
+        shader.uniform_float('uViewProj',       view_proj)
+        shader.uniform_float('uLightSpace',     ls_mat)
+        shader.uniform_float('uSkyColor',       sky)
+        shader.uniform_float('uGroundColor',    ground)
+        shader.uniform_float('uBounceStrength', bstr)
+        shader.uniform_int  ('uUseShadow',      1 if do_shad else 0)
+        shader.uniform_float('uShadowBias',     s_bias)
+        shader.uniform_float('uShadowDark',     s_dark)
+        shader.uniform_sampler('uShadowMap',    shad_tex)
+        shader.uniform_int('uNumLights',        len(lights))
         for i in range(8):
-            l = lights[i] if i < len(lights) else None
+            l=lights[i] if i<len(lights) else None
             try:
                 shader.uniform_float(f'uLPos[{i}]',    tuple(l['pos'])  if l else (0,0,0))
                 shader.uniform_float(f'uLDir[{i}]',    tuple(l['dir'])  if l else (0,0,-1))
@@ -617,22 +567,17 @@ class VertexLitEngine(bpy.types.RenderEngine):
             except ValueError: pass
 
         for inst in depsgraph.object_instances:
-            obj = inst.object
-            if obj.type != 'MESH' or obj.hide_get(): continue
-            entry = self._batch_dict.get(obj.name)
+            obj=inst.object
+            if obj.type!='MESH' or obj.hide_get(): continue
+            entry=self._batch_dict.get(obj.name)
             if entry is None: continue
-            batch, tex = entry
-            shader.uniform_float('uModel', inst.matrix_world)
-            # Pass material diffuse_color for untextured objects
-            mat = bpy.data.objects.get(obj.name)
-            if mat and mat.active_material:
-                c = mat.active_material.diffuse_color
-                shader.uniform_float('uDiffuseColor', (c[0], c[1], c[2]))
-            else:
-                shader.uniform_float('uDiffuseColor', (0.8, 0.8, 0.8))
-            albedo = tex if tex is not None else self._white_tex
-            shader.uniform_sampler('uAlbedo',   albedo)
-            shader.uniform_int('uHasTexture',   1 if tex is not None else 0)
+            batch,tex=entry
+            shader.uniform_float('uModel',inst.matrix_world)
+            try:   normal_mat=inst.matrix_world.to_3x3().inverted().transposed()
+            except Exception: normal_mat=inst.matrix_world.to_3x3()
+            shader.uniform_float('uNormalMat',normal_mat)
+            shader.uniform_sampler('uAlbedo',  tex if tex is not None else self._white_tex)
+            shader.uniform_int('uHasTexture',  1 if tex is not None else 0)
             batch.draw(shader)
 
         gpu.state.depth_test_set('NONE')
@@ -642,6 +587,10 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
 def register():
     bpy.utils.register_class(VertexLitEngine)
+    if not bpy.app.timers.is_registered(_gi_redraw_timer):
+        bpy.app.timers.register(_gi_redraw_timer, persistent=True)
 
 def unregister():
+    if bpy.app.timers.is_registered(_gi_redraw_timer):
+        bpy.app.timers.unregister(_gi_redraw_timer)
     bpy.utils.unregister_class(VertexLitEngine)

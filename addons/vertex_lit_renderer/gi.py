@@ -110,15 +110,11 @@ def _one_sample(pos_t, norm_t, lights, bvh, face_albedo, bias=0.003):
         ar = ag = ab = 0.8
 
     cos_in = max(dx*nx + dy*ny + dz*nz, 0.0)
+    scale  = 2.0 * math.pi * cos_in   # hemisphere Monte Carlo factor
 
-    # Use cos_in only — the full 2π MC factor makes bounce ~6x brighter than
-    # direct light, washing out all directional shading after the first sample.
-    # This conservative scale keeps bounce as a subtle fill light.
-    scale = cos_in
-
-    return (min(dr*ar*scale, 2.0),
-            min(dg*ag*scale, 2.0),
-            min(db*ab*scale, 2.0))
+    return (min(dr*ar*scale, 20.0),
+            min(dg*ag*scale, 20.0),
+            min(db*ab*scale, 20.0))
 
 
 # ── Scene BVH builder ─────────────────────────────────────────────────────────
@@ -286,11 +282,12 @@ class ProgressiveGI:
                     contrib[vi, 0] = r
                     contrib[vi, 1] = g
                     contrib[vi, 2] = b
-                    # Sleep every 100 vertices to guarantee main thread time.
-                    # sleep(0) is not enough — the GI thread immediately
-                    # reclaims the GIL.  5ms sleep gives Blender ~15% of CPU.
-                    if vi % 500 == 499:
-                        time.sleep(0.001)
+                    # Sleep every 16 vertices. time.sleep(0) only yields
+                    # the GIL momentarily but lets this thread reacquire it
+                    # immediately — bvh.ray_cast holds GIL and blocks Blender.
+                    # A real sleep gives the main thread guaranteed CPU time.
+                    if vi & 15 == 15:
+                        time.sleep(0.008)
 
                 pass_data[name] = contrib
 

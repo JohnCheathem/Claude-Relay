@@ -1,3 +1,5 @@
+# vertex_lit_renderer/shaders.py
+
 SHADOW_VERT = """
 uniform mat4 uLightSpace;
 uniform mat4 uModel;
@@ -8,10 +10,21 @@ void main() {
 """
 SHADOW_FRAG = """void main() {}"""
 
+# Direct diffuse + shadow: per-vertex (Gouraud)
+# GI bounce:               pre-computed per vertex, added to light accumulator
+# Texture:                 per-fragment
+
 MAIN_VERT = """
 uniform mat4 uViewProj;
 uniform mat4 uModel;
 uniform mat4 uLightSpace;
+
+/* FIX: normal matrix now passed from CPU as a uniform.
+   Was computed per-vertex as transpose(inverse(mat3(uModel))) — a full
+   matrix inversion inside the vertex shader for every vertex every frame.
+   Computing it once on the CPU and uploading as a uniform is equivalent
+   and avoids ~6x the GPU work per draw call. */
+uniform mat3 uNormalMat;
 
 uniform vec3  uLPos[8];
 uniform vec3  uLDir[8];
@@ -21,9 +34,14 @@ uniform int   uLType[8];
 uniform float uLRadius[8];
 uniform int   uNumLights;
 
+/* Hemisphere fallback ambient (used when GI is disabled) */
 uniform vec3 uSkyColor;
 uniform vec3 uGroundColor;
 
+/* GI */
+uniform float uBounceStrength;
+
+/* Shadow */
 uniform sampler2D uShadowMap;
 uniform int       uUseShadow;
 uniform float     uShadowBias;
@@ -31,25 +49,25 @@ uniform float     uShadowDark;
 
 in vec3 position;
 in vec3 normal;
-in vec4 vertColor;   /* vertex paint attribute, or white if none */
+in vec4 vertColor;
 in vec2 texCoord;
-in vec3 bounceColor;
+in vec3 bounceColor;   /* one-bounce GI baked at rebuild time */
 
 out vec4 vLight;
 out vec2 vUV;
-out vec4 vVertColor;
 
 void main() {
-    vec4 wPos4  = uModel * vec4(position, 1.0);
-    vec3 wPos   = wPos4.xyz;
-    mat3 nMat   = transpose(inverse(mat3(uModel)));
-    vec3 N      = normalize(nMat * normal);
+    vec4 wPos4 = uModel * vec4(position, 1.0);
+    vec3 wPos  = wPos4.xyz;
+    vec3 N     = normalize(uNormalMat * normal);
 
-    float hemi  = dot(N, vec3(0.0, 0.0, 1.0)) * 0.5 + 0.5;
-    vec3  light = mix(uGroundColor, uSkyColor, hemi);
+    /* Hemisphere ambient as fallback / fill */
+    float hemi = dot(N, vec3(0.0, 0.0, 1.0)) * 0.5 + 0.5;
+    vec3 light = mix(uGroundColor, uSkyColor, hemi);
 
+    /* Direct lights */
     for (int i = 0; i < 8; i++) {
-        if (i >= uNumLights) break;
+        float lightOn = (i < uNumLights) ? 1.0 : 0.0;
         vec3  L;
         float att = 1.0;
         if (uLType[i] == 1) {
@@ -58,15 +76,17 @@ void main() {
             vec3  d  = uLPos[i] - wPos;
             float di = length(d);
             L   = d / max(di, 1e-5);
-            float x = di / max(uLRadius[i], 0.001);
+            float x  = di / max(uLRadius[i], 0.001);
             att = pow(max(1.0 - x*x*x*x, 0.0), 2.0);
         }
         float diff = max(dot(N, L), 0.0);
-        light += uLCol[i] * (uLEnergy[i] * diff * att);
+        light += uLCol[i] * (uLEnergy[i] * diff * att) * lightOn;
     }
 
-    light += bounceColor;
+    /* Add pre-computed one-bounce GI */
+    light += bounceColor * uBounceStrength;
 
+    /* Per-vertex shadow */
     float shadow = 1.0;
     if (uUseShadow != 0) {
         vec4 lsPos = uLightSpace * wPos4;
@@ -78,11 +98,7 @@ void main() {
         }
     }
 
-    /* vLight carries ONLY the lighting term — no material colour here.
-       Material colour lives in the fragment shader (albedo / diffuse_color).
-       Keeps vertex paint separate from material base colour. */
-    vLight      = vec4(clamp(light, 0.0, 12.0) * shadow, 1.0);
-    vVertColor  = vertColor;
+    vLight      = vec4(clamp(light, 0.0, 12.0) * shadow * vertColor.rgb, vertColor.a);
     vUV         = texCoord;
     gl_Position = uViewProj * wPos4;
 }
@@ -91,20 +107,11 @@ void main() {
 MAIN_FRAG = """
 uniform sampler2D uAlbedo;
 uniform int       uHasTexture;
-uniform vec3      uDiffuseColor;  /* mat.diffuse_color — only used when no texture */
-
 in vec4 vLight;
-in vec4 vVertColor;
 in vec2 vUV;
 out vec4 outColor;
-
 void main() {
-    /* Albedo: texture if present, else viewport material colour */
-    vec3 albedo = (uHasTexture != 0)
-        ? texture(uAlbedo, vUV).rgb
-        : uDiffuseColor;
-
-    /* Vertex paint tint (white = no effect when no vertex colours set) */
-    outColor = vec4(vLight.rgb * albedo * vVertColor.rgb, vLight.a);
+    vec4 albedo = (uHasTexture != 0) ? texture(uAlbedo, vUV) : vec4(1.0);
+    outColor = vec4(vLight.rgb * albedo.rgb, vLight.a * albedo.a);
 }
 """
