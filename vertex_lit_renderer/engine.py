@@ -443,6 +443,16 @@ class VertexLitEngine(bpy.types.RenderEngine):
         self._ensure_state()
         global _edit_dirty, _edit_dirty_time
 
+        # Global edit-mode pause: mirrors _edit_depsgraph_post. view_update
+        # also fires for depsgraph dependents (scatter objects re-evaluating
+        # because their source is being edited, modifier-chain downstream,
+        # etc.) — and its geometry/mesh/transform branches would otherwise
+        # queue rebuilds for them. Returning early here keeps the pause
+        # genuinely global.
+        active = getattr(bpy.context, 'active_object', None)
+        if active is not None and active.mode != 'OBJECT':
+            return
+
         # ── Deletion detection ────────────────────────────────────────────
         # Check if any cached object no longer exists in the scene.
         # Without this, deleted objects leave stale batches, and re-adding
