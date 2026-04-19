@@ -115,7 +115,8 @@ def _gi_pass_embree(origins, normals, lights, intersector,
     averaged by ProgressiveGI._count in get_update(). Direct is
     deterministic so averaging it is a no-op; bounce converges over passes.
     """
-    BIAS    = 0.003
+    BIAS      = 0.01    # 1cm — robust against scene-scale self-intersection
+    MIN_DIST  = BIAS * 2   # discard hits closer than this (self-hit)
     n_verts = len(origins)
     contrib = np.zeros((n_verts, 3))
 
@@ -133,6 +134,17 @@ def _gi_pass_embree(origins, normals, lights, intersector,
         return contrib
 
     # ── 2. Shadow + direct at bounce hit points (indirect GI) ────────────
+    if len(hit_locs) > 0 and not stop_event.is_set():
+        # Discard self-intersections: hits too close to their ray origin
+        hit_dist = np.linalg.norm(hit_locs - ray_o[hit_ray_idx], axis=1)
+        valid    = hit_dist > MIN_DIST
+        if not np.any(valid):
+            hit_locs = np.zeros((0,3)); hit_ray_idx = np.array([], dtype=np.int64)
+            hit_tri_idx = np.array([], dtype=np.int64)
+        else:
+            hit_locs, hit_ray_idx, hit_tri_idx = (
+                hit_locs[valid], hit_ray_idx[valid], hit_tri_idx[valid])
+
     if len(hit_locs) > 0 and not stop_event.is_set():
         hit_albedo    = face_albedo_arr[hit_tri_idx]
         hit_face_norm = face_normals_arr[hit_tri_idx]
@@ -356,8 +368,6 @@ class ProgressiveGI:
         print(f"[VertexLit] GI (embreex): {len(all_v)} verts, {target_samples} samples")
 
         while not stop_event.is_set():
-            if self._count >= target_samples:
-                time.sleep(0.05); continue
             cf = _gi_pass_embree(all_v, all_n, lights, intersector,
                                  face_albedo_arr, face_normals_arr,
                                  n_samp, stop_event)
@@ -376,8 +386,6 @@ class ProgressiveGI:
                      lights, bvh, face_albedo, n_samp):
         SLEEP = float(scene_data.get('thread_pause', 0.001))
         while not stop_event.is_set():
-            if self._count >= target_samples:
-                time.sleep(0.05); continue
             pass_data = {}
             for name, world_verts in scene_data['verts'].items():
                 if stop_event.is_set(): break
