@@ -170,8 +170,6 @@ def _extract_mesh_data(obj, depsgraph):
         if not mesh.loop_triangles:
             bpy.data.meshes.remove(mesh); return None
 
-        corner_normals = mesh.corner_normals
-
         mat_slot = eval_obj.active_material
         tex     = _get_gpu_tex(_find_base_texture(mat_slot))
         default = [1.0,1.0,1.0,1.0]
@@ -199,10 +197,8 @@ def _extract_mesh_data(obj, depsgraph):
 
         uv_layer=mesh.uv_layers.active
         n_verts=len(mesh.vertices)
-
-        # Per-vertex arrays (needed for shadow batch indices + GI world transform)
-        vert_co_local=[(v.co.x,v.co.y,v.co.z) for v in mesh.vertices]
-        vert_no_local=[(v.normal.x,v.normal.y,v.normal.z) for v in mesh.vertices]
+        n_tris = len(mesh.loop_triangles)
+        n_flat = n_tris * 3
 
         # Material albedo for GI/BVH face colours
         mat_diffuse=(0.8,0.8,0.8)
@@ -210,10 +206,7 @@ def _extract_mesh_data(obj, depsgraph):
             c=mat_slot.diffuse_color
             mat_diffuse=(float(c[0]),float(c[1]),float(c[2]))
 
-        # Numpy bulk reads — ~4x faster than Python loops for large meshes
-        n_tris = len(mesh.loop_triangles)
-        n_flat = n_tris * 3
-
+        # Numpy bulk reads — one allocation per array, no Python loops
         tv = np.empty(n_tris * 3, dtype=np.int32)
         mesh.loop_triangles.foreach_get('vertices', tv)
         tv = tv.reshape(n_tris, 3)
@@ -227,11 +220,17 @@ def _extract_mesh_data(obj, depsgraph):
 
         vc = np.empty(n_verts * 3, dtype=np.float32)
         mesh.vertices.foreach_get('co', vc)
-        positions = vc.reshape(n_verts, 3)[vi_flat]
+        vc = vc.reshape(n_verts, 3)
+        positions = vc[vi_flat]
 
         vn = np.empty(n_verts * 3, dtype=np.float32)
         mesh.vertices.foreach_get('normal', vn)
-        normals = vn.reshape(n_verts, 3)[vi_flat]
+        vn = vn.reshape(n_verts, 3)
+        normals = vn[vi_flat]
+
+        # Keep numpy arrays for shadow batch + GI/BVH (no extra Python loops needed)
+        vert_co_local = vc  # (n_verts, 3) local positions
+        vert_no_local = vn  # (n_verts, 3) local normals
 
         if uv_layer:
             uv_raw = np.empty(len(mesh.loops) * 2, dtype=np.float32)
@@ -267,8 +266,11 @@ def _extract_mesh_data(obj, depsgraph):
 def _build_batch_from_cache(cached, gi_per_vert=None):
     shader=_get_main_shader()
     vi_map=cached['vi_map']; n_v=cached['n_verts']
-    bounces=[gi_per_vert[vi] for vi in vi_map] if (gi_per_vert and len(gi_per_vert)==n_v) \
-            else [(0.0,0.0,0.0)]*len(vi_map)
+    if gi_per_vert and len(gi_per_vert) == n_v:
+        gi_arr = np.array(gi_per_vert, dtype=np.float32)
+        bounces = gi_arr[np.array(vi_map, dtype=np.int32)]
+    else:
+        bounces = np.zeros((len(vi_map), 3), dtype=np.float32)
     return batch_for_shader(shader,'TRIS',{
         'position':    cached['positions'],
         'normal':      cached['normals'],
@@ -297,10 +299,13 @@ def _build_bvh_from_cache(mesh_cache, objects):
     for name,data in mesh_cache.items():
         obj=objects.get(name)
         if obj is None: continue
-        inst_mat=obj.matrix_world
-        for co in data['vert_co_local']:
-            wv=inst_mat@Vector(co)
-            all_verts.append((wv.x,wv.y,wv.z))
+        mat4 = np.array(obj.matrix_world, dtype=np.float32)
+        vc_local = data['vert_co_local']  # numpy (n_v, 3)
+        n_v = len(vc_local)
+        vc_h = np.ones((n_v, 4), dtype=np.float32)
+        vc_h[:, :3] = vc_local
+        wv = (mat4 @ vc_h.T).T[:, :3]
+        all_verts.extend(map(tuple, wv.tolist()))
         vi_map=data['vi_map']
         alb=data['mat_diffuse']
         for i in range(0,len(vi_map),3):
@@ -458,8 +463,14 @@ class VertexLitEngine(bpy.types.RenderEngine):
                 obj=bpy_objects.get(name)
                 if obj is None: continue
                 m=obj.matrix_world; m3=m.to_3x3()
-                gi_verts[name]=[tuple(m@Vector(co)) for co in data['vert_co_local']]
-                gi_norms[name]=[tuple(m3@Vector(no)) for no in data['vert_no_local']]
+                mat4_np = np.array(m, dtype=np.float32)
+                mat3_np = np.array(m3, dtype=np.float32)
+                vc = data['vert_co_local']  # numpy (n_v, 3)
+                vn = data['vert_no_local']  # numpy (n_v, 3)
+                n_v = len(vc)
+                vc_h = np.ones((n_v, 4), dtype=np.float32); vc_h[:,:3] = vc
+                gi_verts[name] = (mat4_np @ vc_h.T).T[:,:3].tolist()
+                gi_norms[name] = (mat3_np @ vn.T).T.tolist()
 
             self._gi.start(
                 dict(bvh=bvh, face_albedo=face_albedo,
@@ -479,7 +490,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
     # ── Shadow pass ───────────────────────────────────────────────────────
 
-    def _shadow_pass(self, ls_mat, shad_res):
+    def _shadow_pass(self, ls_mat, shad_res, depsgraph):
         if not self._shadow_dirty and self._shadow_tex_cache is not None:
             return self._shadow_tex_cache
         smap=_get_shadow_map(shad_res); shader=_get_shadow_shader()
@@ -490,10 +501,13 @@ class VertexLitEngine(bpy.types.RenderEngine):
             gpu.state.viewport_set(0,0,shad_res,shad_res)
             shader.bind()
             shader.uniform_float('uLightSpace',ls_mat)
-            for name,batch in self._shadow_dict.items():
-                obj=bpy.data.objects.get(name)
-                if obj is None: continue
-                shader.uniform_float('uModel',obj.matrix_world)
+            # Iterate instances so each gets its own matrix_world (not source object's)
+            for inst in depsgraph.object_instances:
+                obj = inst.object
+                if obj.type != 'MESH': continue
+                batch = self._shadow_dict.get(obj.name)
+                if batch is None: continue
+                shader.uniform_float('uModel', inst.matrix_world)
                 batch.draw(shader)
         self._shadow_tex_cache=smap.tex
         self._shadow_dirty=False
@@ -542,7 +556,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
         do_shad=u_shad and sun is not None
         center,radius=self._bounds_cache
         ls_mat=_build_light_space(sun,center,radius) if do_shad else Matrix.Identity(4)
-        shad_tex=self._shadow_pass(ls_mat,s_res) if do_shad else self._dummy_depth
+        shad_tex=self._shadow_pass(ls_mat,s_res,depsgraph) if do_shad else self._dummy_depth
 
         region=context.region; rv3d=context.region_data
         gpu.state.viewport_set(0,0,region.width,region.height)
