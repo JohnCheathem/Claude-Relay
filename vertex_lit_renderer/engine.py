@@ -3,7 +3,7 @@
 import time
 import bpy
 import gpu
-from gpu_extras.batch import batch_for_shader
+import numpy as np
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
@@ -260,17 +260,81 @@ def _extract_mesh_data(obj, vp_dg):
         return None   # nothing to remove
 
 
-def _build_batch_from_cache(cached, gi_per_vert=None):
-    shader=_get_main_shader()
-    vi_map=cached['vi_map']; n_v=cached['n_verts']
-    bounces=[gi_per_vert[vi] for vi in vi_map] if (gi_per_vert and len(gi_per_vert)==n_v)             else [(0.0,0.0,0.0)]*len(vi_map)
-    return batch_for_shader(shader,'TRIS',{
-        'position':    cached['positions'],
-        'normal':      cached['normals'],
-        'vertColor':   cached['colors'],
-        'texCoord':    cached['uvs'],
-        'bounceColor': bounces,
-    })
+def _build_vbos_and_batch(cached, gi_per_vert=None):
+    """Build a batch backed by TWO vertex buffers:
+      - static VBO  (position, normal, vertColor, texCoord) — uploaded once, never touched again
+      - bounce VBO  (bounceColor) — re-uploaded in place on every GI pass via attr_fill
+
+    This separation is the core of the smooth-editing work: GI updates no longer
+    re-upload static vertex data every pass. Only the bounce VBO is re-uploaded.
+
+    Returns (batch, bounce_vbo). Callers keep both; bounce_vbo is what
+    _update_bounce_vbo later writes into.
+    """
+    vi_map  = cached['vi_map']
+    n_v     = cached['n_verts']
+    n_loops = len(vi_map)
+
+    # ── Static VBO ────────────────────────────────────────────────────────────
+    static_fmt = gpu.types.GPUVertFormat()
+    static_fmt.attr_add(id="position",  comp_type='F32', len=3, fetch_mode='FLOAT')
+    static_fmt.attr_add(id="normal",    comp_type='F32', len=3, fetch_mode='FLOAT')
+    static_fmt.attr_add(id="vertColor", comp_type='F32', len=4, fetch_mode='FLOAT')
+    static_fmt.attr_add(id="texCoord",  comp_type='F32', len=2, fetch_mode='FLOAT')
+    static_vbo = gpu.types.GPUVertBuf(len=n_loops, format=static_fmt)
+    static_vbo.attr_fill("position",  cached['positions'])
+    static_vbo.attr_fill("normal",    cached['normals'])
+    static_vbo.attr_fill("vertColor", cached['colors'])
+    static_vbo.attr_fill("texCoord",  cached['uvs'])
+
+    # ── Bounce VBO (dynamic) ──────────────────────────────────────────────────
+    bounce_fmt = gpu.types.GPUVertFormat()
+    bounce_fmt.attr_add(id="bounceColor", comp_type='F32', len=3, fetch_mode='FLOAT')
+    bounce_vbo = gpu.types.GPUVertBuf(len=n_loops, format=bounce_fmt)
+
+    # Cache the per-loop index lookup as numpy once; reused on every GI update.
+    vi_map_np = cached.get('vi_map_np')
+    if vi_map_np is None:
+        vi_map_np = np.asarray(vi_map, dtype=np.int32)
+        cached['vi_map_np'] = vi_map_np
+
+    if gi_per_vert is not None and len(gi_per_vert) == n_v:
+        if isinstance(gi_per_vert, np.ndarray):
+            gi_np = gi_per_vert.astype(np.float32, copy=False)
+        else:
+            gi_np = np.asarray(gi_per_vert, dtype=np.float32)
+        bounces = gi_np[vi_map_np]  # (n_loops, 3)
+    else:
+        bounces = np.zeros((n_loops, 3), dtype=np.float32)
+    bounce_vbo.attr_fill("bounceColor", bounces)
+
+    # ── Batch: static is the primary VBO; bounce is added as an extra attr stream
+    batch = gpu.types.GPUBatch(type='TRIS', buf=static_vbo)
+    batch.vertbuf_add(bounce_vbo)
+    return batch, bounce_vbo
+
+
+def _update_bounce_vbo(bounce_vbo, cached, gi_per_vert):
+    """Hot path: overwrite bounceColor in the existing VBO.
+    No batch rebuild, no static data re-upload."""
+    if gi_per_vert is None: return False
+    n_v = cached['n_verts']
+    if len(gi_per_vert) != n_v: return False
+    vi_map_np = cached.get('vi_map_np')
+    if vi_map_np is None:
+        vi_map_np = np.asarray(cached['vi_map'], dtype=np.int32)
+        cached['vi_map_np'] = vi_map_np
+    if isinstance(gi_per_vert, np.ndarray):
+        gi_np = gi_per_vert.astype(np.float32, copy=False)
+    else:
+        gi_np = np.asarray(gi_per_vert, dtype=np.float32)
+    bounces = gi_np[vi_map_np]  # (n_loops, 3) float32
+    try:
+        bounce_vbo.attr_fill("bounceColor", bounces)
+        return True
+    except Exception as e:
+        print(f"[VertexLit] bounce attr_fill failed: {e}")
+        return False
 
 
 def _build_raw_bvh_data(mesh_cache, objects):
@@ -467,7 +531,8 @@ class VertexLitEngine(bpy.types.RenderEngine):
             data = _extract_mesh_data(obj, vp_dg)
             if data:
                 new_mesh[obj.name]   = data
-                new_batch[obj.name]  = (_build_batch_from_cache(data), data['texture'])
+                batch, bounce_vbo    = _build_vbos_and_batch(data)
+                new_batch[obj.name]  = (batch, bounce_vbo, data['texture'])
 
         # Atomic replacement.
         self._mesh_cache  = new_mesh
@@ -509,13 +574,17 @@ class VertexLitEngine(bpy.types.RenderEngine):
     # ── Apply GI ──────────────────────────────────────────────────────────
 
     def _apply_gi_update(self, gi_data):
+        """Fast path: only re-upload bounceColor for each mesh.
+        Static VBO (pos/norm/color/uv) stays in place — no Python-side batch rebuild,
+        no re-upload of unchanged data. This is what removes the per-GI-pass ripple."""
         self._gi_has_data = True
-        new_batch = dict(self._batch_dict)
         for name, cached in self._mesh_cache.items():
             gv = gi_data.get(name)
             if gv is None: continue
-            new_batch[name] = (_build_batch_from_cache(cached, gv), cached['texture'])
-        self._batch_dict = new_batch
+            entry = self._batch_dict.get(name)
+            if entry is None: continue
+            _batch, bounce_vbo, _tex = entry
+            _update_bounce_vbo(bounce_vbo, cached, gv)
 
     # ── Lightweight GI restart after transform ──────────────────────────────────────────────
 
@@ -568,12 +637,10 @@ class VertexLitEngine(bpy.types.RenderEngine):
                     old_gi = _global_gi._accum.get(name)
                     cnt    = max(_global_gi._count, 1)
                     if old_gi is not None and len(old_gi) == new_data["n_verts"]:
-                        gi_for_obj = [(min(float(old_gi[i,0]/cnt),20.),
-                                       min(float(old_gi[i,1]/cnt),20.),
-                                       min(float(old_gi[i,2]/cnt),20.))
-                                      for i in range(len(old_gi))]
-            batch = _build_batch_from_cache(new_data, gi_for_obj)
-            self._batch_dict[name] = (batch, new_data["texture"])
+                        # Vectorized: avg + cap in one numpy expression, no Python loop
+                        gi_for_obj = np.minimum(old_gi / cnt, 20.0).astype(np.float32)
+            batch, bounce_vbo = _build_vbos_and_batch(new_data, gi_for_obj)
+            self._batch_dict[name] = (batch, bounce_vbo, new_data["texture"])
             changed = True
 
         if changed:
@@ -665,7 +732,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
                 continue
             entry=self._batch_dict.get(obj.name)
             if entry is None: continue
-            batch,tex=entry
+            batch,_bounce_vbo,tex=entry
             shader.uniform_float('uModel',inst.matrix_world)
             try:   normal_mat=inst.matrix_world.to_3x3().inverted().transposed()
             except Exception: normal_mat=inst.matrix_world.to_3x3()

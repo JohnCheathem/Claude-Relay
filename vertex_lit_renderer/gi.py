@@ -332,18 +332,25 @@ class ProgressiveGI:
         return self._thread is not None and self._thread.is_alive()
 
     def get_update(self):
+        # Snapshot arrays under lock (numpy .copy() is ~microseconds per object
+        # and a plain memcpy — orders of magnitude less lock contention than
+        # doing the /count and per-vertex Python conversion in-lock).
         with self._lock:
             self._updated = False
             if self._count == 0: return {}, 0
-            result = {}
-            for name, arr in self._accum.items():
-                avg = arr / self._count
-                result[name] = [
-                    (min(float(avg[i,0]),20.0),
-                     min(float(avg[i,1]),20.0),
-                     min(float(avg[i,2]),20.0))
-                    for i in range(len(avg))]
-            return result, self._count
+            count    = self._count
+            snapshot = {name: arr.copy() for name, arr in self._accum.items()}
+
+        # Expensive work OUTSIDE the lock — GI thread no longer stalls here.
+        # Returns numpy arrays; the caller (engine._apply_gi_update) writes them
+        # straight into the bounce VBO via attr_fill with no Python loop.
+        result = {}
+        inv = 1.0 / count
+        for name, arr in snapshot.items():
+            avg = arr * inv
+            np.minimum(avg, 20.0, out=avg)  # preserve old upper cap
+            result[name] = avg.astype(np.float32, copy=False)
+        return result, count
 
     def _run(self, scene_data, target_samples, stop_event, generation):
         raw    = scene_data.get('raw_bvh')
