@@ -1,6 +1,7 @@
 # vertex_lit_renderer/engine.py
 
 import time
+import numpy as np
 import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -183,11 +184,18 @@ def _extract_mesh_data(obj, depsgraph):
             try: attr=mesh.color_attributes.active_color
             except Exception: pass
             if attr is None and len(mesh.color_attributes): attr=mesh.color_attributes[0]
-            if attr:
+            # Only FLOAT_COLOR and BYTE_COLOR have a .color accessor.
+            # GeoNodes can produce attributes of other types (FLOAT_VECTOR etc.)
+            # that will throw AttributeError on d.color and kill extraction.
+            if attr and getattr(attr, 'data_type', '') in ('FLOAT_COLOR','BYTE_COLOR',''):
                 for idx,d in enumerate(attr.data):
-                    c=d.color; rgba=[c[0],c[1],c[2],c[3] if len(c)>3 else 1.0]
-                    if attr.domain=='POINT': vcol_point[idx]=rgba
-                    elif attr.domain=='CORNER': vcol_corner[idx]=rgba
+                    try:
+                        c=d.color
+                        rgba=[float(c[0]),float(c[1]),float(c[2]),float(c[3]) if len(c)>3 else 1.0]
+                        if attr.domain=='POINT':  vcol_point[idx]=rgba
+                        elif attr.domain=='CORNER': vcol_corner[idx]=rgba
+                    except Exception:
+                        pass  # skip malformed elements, keep going
 
         uv_layer=mesh.uv_layers.active
         n_verts=len(mesh.vertices)
@@ -202,18 +210,44 @@ def _extract_mesh_data(obj, depsgraph):
             c=mat_slot.diffuse_color
             mat_diffuse=(float(c[0]),float(c[1]),float(c[2]))
 
-        positions=[]; normals=[]; colors=[]; uvs=[]; vi_map=[]
-        for tri in mesh.loop_triangles:
-            for corner in range(3):
-                vi=tri.vertices[corner]; li=tri.loops[corner]
-                v=mesh.vertices[vi]
-                positions.append((v.co.x,v.co.y,v.co.z))
-                normals.append((corner_normals[li].vector.x,
-                                corner_normals[li].vector.y,
-                                corner_normals[li].vector.z))
-                colors.append(vcol_corner.get(li,vcol_point.get(vi,default)))
-                uvs.append(tuple(uv_layer.data[li].uv) if uv_layer else (0.0,0.0))
-                vi_map.append(vi)
+        # Numpy bulk reads — ~4x faster than Python loops for large meshes
+        n_tris = len(mesh.loop_triangles)
+        n_flat = n_tris * 3
+
+        tv = np.empty(n_tris * 3, dtype=np.int32)
+        mesh.loop_triangles.foreach_get('vertices', tv)
+        tv = tv.reshape(n_tris, 3)
+
+        tl = np.empty(n_tris * 3, dtype=np.int32)
+        mesh.loop_triangles.foreach_get('loops', tl)
+        tl = tl.reshape(n_tris, 3)
+
+        vi_flat = tv.ravel()
+        li_flat = tl.ravel()
+
+        vc = np.empty(n_verts * 3, dtype=np.float32)
+        mesh.vertices.foreach_get('co', vc)
+        positions = vc.reshape(n_verts, 3)[vi_flat]
+
+        vn = np.empty(n_verts * 3, dtype=np.float32)
+        mesh.vertices.foreach_get('normal', vn)
+        normals = vn.reshape(n_verts, 3)[vi_flat]
+
+        if uv_layer:
+            uv_raw = np.empty(len(mesh.loops) * 2, dtype=np.float32)
+            uv_layer.data.foreach_get('uv', uv_raw)
+            uvs = uv_raw.reshape(len(mesh.loops), 2)[li_flat]
+        else:
+            uvs = np.zeros((n_flat, 2), dtype=np.float32)
+
+        if vcol_point or vcol_corner:
+            colors = np.array(
+                [vcol_corner.get(int(li_flat[i]), vcol_point.get(int(vi_flat[i]), default))
+                 for i in range(n_flat)], dtype=np.float32)
+        else:
+            colors = np.tile(np.array(default, dtype=np.float32), (n_flat, 1))
+
+        vi_map = vi_flat.tolist()
 
         bpy.data.meshes.remove(mesh)
         return dict(
@@ -350,6 +384,18 @@ class VertexLitEngine(bpy.types.RenderEngine):
             if isinstance(id_data,bpy.types.Material):
                 self._dirty=True; self._shadow_dirty=True
                 _gi_active=True; return
+            if update.is_updated_transform:
+                if isinstance(id_data, bpy.types.Object):
+                    if id_data.type == 'LIGHT':
+                        # Light moved — GI positions are stale, full rebuild needed
+                        self._dirty = True
+                        self._shadow_dirty = True
+                        _gi_active = True; return
+                    elif id_data.type == 'MESH':
+                        # Mesh moved — only shadow needs re-render, geometry batch is fine
+                        # (shader reads obj.matrix_world at draw time)
+                        self._shadow_dirty = True
+                        _gi_active = True  # wake timer so shadow redraws immediately
             if isinstance(id_data,bpy.types.Image):
                 _invalidate_tex(id_data.name)
 
@@ -378,7 +424,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
         for inst in depsgraph.object_instances:
             obj=inst.object
             if obj.type!='MESH': continue
-            if not inst.is_instance and obj.hide_get(): continue  # source objects for instances are often hidden
+            if obj.name in seen: continue
             seen.add(obj.name)
 
             data=_extract_mesh_data(obj,depsgraph)  # ONE new_from_object per object
@@ -475,7 +521,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
         # is more direct and reliable in Blender 4.x.
         # The module-level timer is a third-layer fallback.
         global _gi_active
-        _gi_active=self._gi.is_running
+        _gi_active=self._gi.is_running or self._shadow_dirty
         if _gi_active:
             self.tag_redraw()
             try: context.region.tag_redraw()
@@ -537,7 +583,6 @@ class VertexLitEngine(bpy.types.RenderEngine):
         for inst in depsgraph.object_instances:
             obj=inst.object
             if obj.type!='MESH': continue
-            if not inst.is_instance and obj.hide_get(): continue
             entry=self._batch_dict.get(obj.name)
             if entry is None: continue
             batch,tex=entry
