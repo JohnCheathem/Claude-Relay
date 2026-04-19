@@ -378,10 +378,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
         for inst in depsgraph.object_instances:
             obj=inst.object
             if obj.type!='MESH': continue
-            # Instances have a hidden source object by design — skip hide check.
-            # Blender only includes truly invisible instances from the depsgraph.
-            if not inst.is_instance and obj.hide_get(): continue
-            if obj.name in seen: continue
+            if not inst.is_instance and obj.hide_get(): continue  # source objects for instances are often hidden
             seen.add(obj.name)
 
             data=_extract_mesh_data(obj,depsgraph)  # ONE new_from_object per object
