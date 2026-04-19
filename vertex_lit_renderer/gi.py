@@ -126,15 +126,20 @@ def _hemisphere_batch(origins, normals, n_samples):
     orig_r = np.repeat(origins, n_samples, axis=0)
     norm_r = np.repeat(normals, n_samples, axis=0)
 
-    # Sample indices: each vertex gets n_samples consecutive Halton points,
-    # offset by the per-vertex index so adjacent vertices don't share samples.
-    # Wrap around the table with modulo.
-    base_offset = _halton_pass % _HALTON_SIZE
-    idx = (np.arange(N, dtype=np.int32) + base_offset) % _HALTON_SIZE
-    u1  = _halton_u1[idx].astype(np.float64)   # ∈ (0,1) — maps to cos_theta
-    u2  = _halton_u2[idx].astype(np.float64)   # ∈ (0,1) — maps to phi
+    # Scrambled Halton: each vertex gets a RANDOM starting position in the
+    # sequence so adjacent vertices are decorrelated (no structured splotching).
+    # Within each vertex's n_samples, samples are consecutive Halton points
+    # (low-discrepancy). Per-pass offset shifts all vertices forward together
+    # so passes don't repeat the same directions.
+    pass_offset = _halton_pass % _HALTON_SIZE
+    vert_offsets = (np.random.randint(0, _HALTON_SIZE, n) + pass_offset) % _HALTON_SIZE
+    vert_offsets_rep = np.repeat(vert_offsets, n_samples)           # (N,)
+    sample_steps     = np.tile(np.arange(n_samples, dtype=np.int32), n)  # (N,)
+    idx = (vert_offsets_rep + sample_steps) % _HALTON_SIZE
+    u1  = _halton_u1[idx].astype(np.float64)
+    u2  = _halton_u2[idx].astype(np.float64)
 
-    # Advance pass counter by n_samples so next call uses fresh Halton points
+    # Advance pass counter so consecutive passes step through the sequence
     _halton_pass = (_halton_pass + n_samples) % _HALTON_SIZE
 
     # Cosine-weighted sampling: cos_theta = sqrt(u1), phi = 2π·u2
