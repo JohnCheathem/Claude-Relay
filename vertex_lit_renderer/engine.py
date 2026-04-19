@@ -305,6 +305,8 @@ class VertexLitEngine(bpy.types.RenderEngine):
         self._gi_has_data      = False
         self._transform_dirty  = False
         self._transform_time   = 0.0
+        self._light_dirty      = False
+        self._light_dirty_time = 0.0
         self._state_ready      = True
 
     def _ensure_resources(self):
@@ -359,7 +361,8 @@ class VertexLitEngine(bpy.types.RenderEngine):
                 self.tag_redraw(); return
             if update.is_updated_transform and isinstance(id_data, bpy.types.Object):
                 if id_data.type == 'LIGHT':
-                    self._dirty = True
+                    self._light_dirty      = True
+                    self._light_dirty_time = time.time()
                     self.tag_redraw(); return
                 elif id_data.type == 'MESH':
                     self._transform_dirty = True
@@ -497,6 +500,12 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
         scene=depsgraph.scene
         vls=getattr(scene,'vertex_lit',None)
+
+        if self._light_dirty and (time.time() - self._light_dirty_time) > 0.3:
+            self._light_dirty = False
+            en_scale = vls.energy_scale if vls else 1.0
+            self._lights_cache = _collect_lights(depsgraph, en_scale)
+            self._restart_gi_for_transforms(vls)
 
         if self._transform_dirty and (time.time() - self._transform_time) > 0.3:
             self._transform_dirty = False
