@@ -17,6 +17,15 @@ MAX_BVH_TRIS = 50_000  # cap BVH tris so ray casts stay fast (< 1ms each)
                        # from stopping within the join timeout — causing accumulation.
                        # GI only needs approximate geometry; subsampling is fine.
 
+# Object types we don't extract mesh data from. Anything NOT in this set may
+# produce cachable geometry via the depsgraph evaluator (MESH directly, or
+# CURVE/SURFACE/META/FONT converted to mesh by their evaluator). Empties have
+# no geometry and are excluded to avoid scene-diff churn re-queueing them.
+# Must stay in sync between scene-diff (view_update), view_draw's per-instance
+# loop, and _rebuild_inner's extract loop.
+_NON_GEOMETRY_OBJ_TYPES = ('LIGHT', 'CAMERA', 'ARMATURE', 'LATTICE',
+                           'SPEAKER', 'LIGHT_PROBE', 'EMPTY')
+
 # ── Shader singletons ─────────────────────────────────────────────────────────
 
 _main_shader   = None
@@ -544,7 +553,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
         # only the deletion case fired.
         if self._mesh_cache:
             current = {inst.object.name for inst in depsgraph.object_instances
-                       if inst.object.type == 'MESH'}
+                       if inst.object.type not in _NON_GEOMETRY_OBJ_TYPES}
             cache_keys = set(self._mesh_cache.keys())
             deleted = cache_keys - current
             added   = current - cache_keys
@@ -652,7 +661,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
         for inst in vp_dg.object_instances:
             obj = inst.object
-            if obj.type in ('LIGHT','CAMERA','ARMATURE','LATTICE','SPEAKER','LIGHT_PROBE'):
+            if obj.type in _NON_GEOMETRY_OBJ_TYPES:
                 continue
             if obj.name in seen: continue
             seen.add(obj.name)
@@ -892,7 +901,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
         for inst in depsgraph.object_instances:
             obj=inst.object
-            if obj.type in ('LIGHT','CAMERA','ARMATURE','LATTICE','SPEAKER','LIGHT_PROBE'):
+            if obj.type in _NON_GEOMETRY_OBJ_TYPES:
                 continue
             entry=self._batch_dict.get(obj.name)
             if entry is None: continue
