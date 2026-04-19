@@ -600,7 +600,18 @@ class VertexLitEngine(bpy.types.RenderEngine):
                         _edit_dirty_time = time.time()
                         self.tag_redraw(); return
                 if isinstance(id_data, bpy.types.Object) and id_data.type == 'LIGHT':
-                    self._dirty = True
+                    # Light energy/color/type changed on the object. No mesh
+                    # re-extraction needed — just re-collect lights and restart
+                    # GI. (Was previously _dirty=True which full-rebuilt
+                    # everything for no reason.)
+                    self._light_dirty      = True
+                    self._light_dirty_time = time.time()
+                    self.tag_redraw(); return
+                if isinstance(id_data, bpy.types.Light):
+                    # Light datablock change (color/energy/type via the data
+                    # tab). Same handling — re-collect + GI restart.
+                    self._light_dirty      = True
+                    self._light_dirty_time = time.time()
                     self.tag_redraw(); return
             if isinstance(id_data, bpy.types.Material):
                 self._dirty = True
@@ -834,7 +845,12 @@ class VertexLitEngine(bpy.types.RenderEngine):
             self._light_dirty = False
             en_scale = vls.energy_scale if vls else 1.0
             self._lights_cache = _collect_lights(depsgraph, en_scale)
-            self._restart_gi_for_transforms(vls)
+            # decay=0: discard old accumulation — it was computed against the
+            # old light direction/color/energy and would otherwise bias the
+            # new result for hundreds of passes. Bounce VBOs retain their old
+            # values during the brief window before first new pass publishes,
+            # so no grey flash; lighting snaps to new state once it does.
+            self._restart_gi_for_transforms(vls, decay=0.0)
 
         # Edit-mode geometry changes — debounced 0.2s
         global _edit_dirty, _edit_dirty_time
