@@ -84,71 +84,72 @@ def _build_bvh_fallback(raw_bvh):
 # ── Vectorized hemisphere batch ───────────────────────────────────────────────
 
 # ── Halton low-discrepancy sequence ──────────────────────────────────────────
-# Pre-generate a large Halton table once. Each pass steps through it at an
-# offset so consecutive passes are maximally spread apart — no repeated samples,
-# no clumping. Converges ~2-4x faster than pure random for the same ray count.
+# Tables are built once. A fixed per-vertex scramble is pre-generated so
+# adjacent vertices are always decorrelated — no per-pass random generation,
+# no sluggishness. Each pass shifts all indices by n_samples so directions
+# never repeat across passes.
 
-_HALTON_SIZE = 8192          # table length — wraps when exhausted
-_halton_u1   = None          # base-2  (cos_theta)
-_halton_u2   = None          # base-3  (phi)
-_halton_pass = 0             # incremented each call so passes don't overlap
+_HALTON_SIZE  = 8192
+_halton_u1    = None   # base-2 Van der Corput (cos_theta)
+_halton_u2    = None   # base-3 Van der Corput (phi)
+_halton_scram = None   # fixed per-slot scramble — generated ONCE, not per pass
+_halton_pass  = 0
+
+# Cached index base for (n, n_samples) so repeat/tile only runs when shape changes
+_h_cache_key  = None
+_h_cache_base = None   # (scramble_rep + sample_steps) array, reused each pass
 
 def _halton_seq(n: int, base: int) -> np.ndarray:
-    """Van der Corput sequence in given base, length n."""
-    seq = np.zeros(n)
-    denom = 1.0
-    num = np.arange(1, n + 1, dtype=np.float64)
-    remaining = num.copy()
+    seq = np.zeros(n, dtype=np.float64)
+    f = 1.0
+    remaining = np.arange(1, n + 1, dtype=np.int64)
     while np.any(remaining > 0):
-        denom *= base
-        digit    = (remaining % base).astype(np.float64)
-        seq     += digit / denom
-        remaining = (remaining // base).astype(np.int64)
+        f /= base
+        seq += (remaining % base).astype(np.float64) * f
+        remaining //= base
     return seq
 
 def _ensure_halton():
-    global _halton_u1, _halton_u2
+    global _halton_u1, _halton_u2, _halton_scram
     if _halton_u1 is None:
-        _halton_u1 = _halton_seq(_HALTON_SIZE, 2).astype(np.float32)
-        _halton_u2 = _halton_seq(_HALTON_SIZE, 3).astype(np.float32)
+        _halton_u1    = _halton_seq(_HALTON_SIZE, 2).astype(np.float32)
+        _halton_u2    = _halton_seq(_HALTON_SIZE, 3).astype(np.float32)
+        # Fixed scramble — one random offset per table slot, never changes.
+        # Decorrelates vertices without touching RNG during rendering.
+        _halton_scram = np.random.randint(0, _HALTON_SIZE,
+                                          _HALTON_SIZE, dtype=np.int32)
 
 def _hemisphere_batch(origins, normals, n_samples):
-    """Cosine-weighted hemisphere rays using Halton low-discrepancy sampling.
-
-    Each call advances the global offset by n_samples so consecutive passes
-    step through the sequence rather than restarting — no repeated directions,
-    no clumping. Converges significantly faster than uniform random.
-    """
-    global _halton_pass
+    """Cosine-weighted hemisphere via scrambled Halton — no per-pass RNG."""
+    global _halton_pass, _h_cache_key, _h_cache_base
     _ensure_halton()
 
     n, N, BIAS = len(origins), len(origins) * n_samples, 0.01
     orig_r = np.repeat(origins, n_samples, axis=0)
     norm_r = np.repeat(normals, n_samples, axis=0)
 
-    # Scrambled Halton: each vertex gets a RANDOM starting position in the
-    # sequence so adjacent vertices are decorrelated (no structured splotching).
-    # Within each vertex's n_samples, samples are consecutive Halton points
-    # (low-discrepancy). Per-pass offset shifts all vertices forward together
-    # so passes don't repeat the same directions.
-    pass_offset = _halton_pass % _HALTON_SIZE
-    vert_offsets = (np.random.randint(0, _HALTON_SIZE, n) + pass_offset) % _HALTON_SIZE
-    vert_offsets_rep = np.repeat(vert_offsets, n_samples)           # (N,)
-    sample_steps     = np.tile(np.arange(n_samples, dtype=np.int32), n)  # (N,)
-    idx = (vert_offsets_rep + sample_steps) % _HALTON_SIZE
+    # Build or reuse index base — only recomputed when (n, n_samples) changes.
+    # Within a session shape is fixed, so this runs once then is cached.
+    key = (n, n_samples)
+    if key != _h_cache_key:
+        vert_slots   = np.arange(n, dtype=np.int32) % _HALTON_SIZE
+        scramble_rep = np.repeat(_halton_scram[vert_slots], n_samples)
+        sample_steps = np.tile(np.arange(n_samples, dtype=np.int32), n)
+        _h_cache_base = (scramble_rep + sample_steps) % _HALTON_SIZE
+        _h_cache_key  = key
+
+    # Shift cached base by pass offset — one modulo op on N ints, very cheap
+    idx = (_h_cache_base + _halton_pass) % _HALTON_SIZE
+    _halton_pass = (_halton_pass + n_samples) % _HALTON_SIZE
+
     u1  = _halton_u1[idx].astype(np.float64)
     u2  = _halton_u2[idx].astype(np.float64)
 
-    # Advance pass counter so consecutive passes step through the sequence
-    _halton_pass = (_halton_pass + n_samples) % _HALTON_SIZE
-
-    # Cosine-weighted sampling: cos_theta = sqrt(u1), phi = 2π·u2
     cos_t = np.sqrt(u1)
     phi   = 2.0 * np.pi * u2
     sin_t = np.sqrt(np.maximum(0.0, 1.0 - cos_t ** 2))
     local = np.stack([sin_t * np.cos(phi), sin_t * np.sin(phi), cos_t], axis=1)
 
-    # Build orthonormal frame per ray (Gram-Schmidt)
     up      = np.where(np.abs(norm_r[:, 0:1]) < 0.9,
                        np.tile([1., 0., 0.], (N, 1)),
                        np.tile([0., 1., 0.], (N, 1)))
