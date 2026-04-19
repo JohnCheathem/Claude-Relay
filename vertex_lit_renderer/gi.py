@@ -355,7 +355,9 @@ class ProgressiveGI:
         if all_v is None: return
         print(f"[VertexLit] GI (embreex): {len(all_v)} verts, {target_samples} samples")
 
-        while not stop_event.is_set() and self._count < target_samples:
+        while not stop_event.is_set():
+            if self._count >= target_samples:
+                time.sleep(0.05); continue
             cf = _gi_pass_embree(all_v, all_n, lights, intersector,
                                  face_albedo_arr, face_normals_arr,
                                  n_samp, stop_event)
@@ -373,7 +375,9 @@ class ProgressiveGI:
     def _run_bvhtree(self, scene_data, target_samples, stop_event, generation,
                      lights, bvh, face_albedo, n_samp):
         SLEEP = float(scene_data.get('thread_pause', 0.001))
-        while not stop_event.is_set() and self._count < target_samples:
+        while not stop_event.is_set():
+            if self._count >= target_samples:
+                time.sleep(0.05); continue
             pass_data = {}
             for name, world_verts in scene_data['verts'].items():
                 if stop_event.is_set(): break
