@@ -112,7 +112,6 @@ def _collect_lights(depsgraph, energy_scale):
             'energy': energy, 'type': ltype.get(ld.type,0),
             'radius': radius, 'is_sun': ld.type=='SUN',
             'matrix_world': mat.copy(),
-            '_raw_energy': float(ld.energy),  # pre-scale, for defensive poll
         })
         if len(lights)>=MAX_LIGHTS: break
     return lights
@@ -494,6 +493,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
         self._light_dirty      = False
         self._light_dirty_time = 0.0
         self._last_light_poll_time = 0.0
+        self._light_fp_cache   = None
         self._state_ready      = True
 
     def _ensure_resources(self):
@@ -527,35 +527,45 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
     # ── Defensive light-change detection ──────────────────────────────────
 
-    def _lights_differ(self, depsgraph):
-        """Compare current light state against _lights_cache. Returns True
-        if any light's matrix, energy, color, or object count has changed.
-        Cheap — a handful of float comparisons per light per frame."""
-        current = []
+    def _lights_cmp_fingerprint(self, depsgraph):
+        """Stable fingerprint of all lights for change detection.
+        Uses base-object transform (obj.location / obj.rotation_euler) —
+        NOT inst.matrix_world, which can drift slightly between depsgraph
+        queries even when nothing changed, causing false positives that
+        early-returned view_update and masked mesh transforms.
+        Values are rounded so minor FP noise doesn't count as a change."""
+        fp = {}
         for inst in depsgraph.object_instances:
             obj = inst.object
             if obj.type != 'LIGHT': continue
-            if len(current) >= MAX_LIGHTS: break
+            if len(fp) >= MAX_LIGHTS: break
             ld = obj.data
-            current.append((inst.matrix_world.copy(),
-                            float(ld.energy),
-                            (float(ld.color.r), float(ld.color.g), float(ld.color.b))))
-        if len(current) != len(self._lights_cache): return True
-        for (cur_mat, cur_e, cur_c), cached in zip(current, self._lights_cache):
-            old_mat = cached.get('matrix_world')
-            if old_mat is None: return True
-            # Matrix comparison: flatten both and compare element-wise
-            for r in range(4):
-                for c in range(4):
-                    if abs(cur_mat[r][c] - old_mat[r][c]) > 1e-5:
-                        return True
-            # The cached 'energy' field has energy_scale baked in, but we only
-            # care that ld.energy itself changed. Compare to a raw cached copy.
-            if abs(cur_e - cached.get('_raw_energy', cur_e)) > 1e-6:
-                return True
-            cached_col = cached.get('color', cur_c)
-            if any(abs(a-b) > 1e-6 for a,b in zip(cur_c, cached_col)):
-                return True
+            fp[obj.name] = (
+                tuple(round(x, 5) for x in obj.location),
+                tuple(round(x, 5) for x in obj.rotation_euler),
+                round(float(ld.energy), 6),
+                (round(float(ld.color.r), 6),
+                 round(float(ld.color.g), 6),
+                 round(float(ld.color.b), 6)),
+            )
+        return fp
+
+    def _lights_differ(self, depsgraph):
+        """True if lights changed since the last call. First call populates
+        the cache and returns False (so we don't spuriously fire _light_dirty
+        immediately after a rebuild)."""
+        try:
+            fp = self._lights_cmp_fingerprint(depsgraph)
+        except Exception as e:
+            print(f"[VertexLit] lights_differ error: {e}")
+            return False
+        old = getattr(self, '_light_fp_cache', None)
+        if old is None:
+            self._light_fp_cache = fp
+            return False
+        if fp != old:
+            self._light_fp_cache = fp
+            return True
         return False
 
     # ── view_update ───────────────────────────────────────────────────────
