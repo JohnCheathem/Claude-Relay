@@ -44,16 +44,6 @@ class VERTEX_LIT_PT_settings(bpy.types.Panel):
         box.label(text="Lights", icon='LIGHT')
         box.prop(s, 'energy_scale')
 
-        box = layout.box()
-        row = box.row()
-        row.label(text="Shadows", icon='SHADING_RENDERED')
-        row.prop(s, 'use_shadows', text="")
-        if s.use_shadows:
-            col = box.column(align=True)
-            col.prop(s, 'shadow_resolution')
-            col.prop(s, 'shadow_bias')
-            col.prop(s, 'shadow_darkness')
-
 
 
 class VERTEX_LIT_PT_object(bpy.types.Panel):

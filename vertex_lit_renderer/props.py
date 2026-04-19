@@ -33,19 +33,7 @@ class VertexLitSettings(bpy.types.PropertyGroup):
     energy_scale: bpy.props.FloatProperty(
         name="Light Energy Scale", default=0.01, min=0.0001, max=10.0)
 
-    # Shadows
-    use_shadows: bpy.props.BoolProperty(name="Shadows", default=True)
-    shadow_resolution: bpy.props.EnumProperty(
-        name="Shadow Resolution",
-        items=[('512','512',''),('1024','1024',''),('2048','2048','')],
-        default='1024')
-    shadow_bias: bpy.props.FloatProperty(name="Bias", default=0.005, min=0.0, max=0.1)
-    shadow_darkness: bpy.props.FloatProperty(
-        name="Darkness", default=0.25, min=0.0, max=1.0)
 
-def register():
-    bpy.utils.register_class(VertexLitSettings)
-    bpy.types.Scene.vertex_lit = bpy.props.PointerProperty(type=VertexLitSettings)
     # Per-object shadow casting toggle (mirrors Cycles' visible_shadow)
     bpy.types.Object.vertex_lit_cast_shadow = bpy.props.BoolProperty(
         name="Cast Shadow",

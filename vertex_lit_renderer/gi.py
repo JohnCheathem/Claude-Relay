@@ -106,71 +106,110 @@ def _hemisphere_batch(origins, normals, n_samples):
 
 def _gi_pass_embree(origins, normals, lights, intersector,
                     face_albedo_arr, face_normals_arr, n_samp, stop_event):
+    """One GI pass — fires three batches of rays:
+      1. Hemisphere bounce rays from all source vertices
+      2. Shadow rays from bounce hit points → indirect colour
+      3. Shadow rays from source vertices → ray-traced direct lighting
+
+    Returns per-vertex (direct_shadowed + indirect_bounce) — raw sum,
+    averaged by ProgressiveGI._count in get_update(). Direct is
+    deterministic so averaging it is a no-op; bounce converges over passes.
+    """
     BIAS    = 0.003
     n_verts = len(origins)
     contrib = np.zeros((n_verts, 3))
 
     if stop_event.is_set(): return contrib
 
+    # ── 1. Hemisphere bounce rays ─────────────────────────────────────────
     ray_o, ray_d = _hemisphere_batch(origins, normals, n_samp)
-
     if stop_event.is_set(): return contrib
 
     try:
         hit_locs, hit_ray_idx, hit_tri_idx = intersector.intersects_location(
             ray_o, ray_d, multiple_hits=False)
     except Exception as e:
-        print(f"[VertexLit] Embree cast error: {e}")
+        print(f"[VertexLit] Embree bounce error: {e}")
         return contrib
 
-    if len(hit_locs) == 0 or stop_event.is_set():
-        return contrib
+    # ── 2. Shadow + direct at bounce hit points (indirect GI) ────────────
+    if len(hit_locs) > 0 and not stop_event.is_set():
+        hit_albedo    = face_albedo_arr[hit_tri_idx]
+        hit_face_norm = face_normals_arr[hit_tri_idx]
+        bounce_color  = np.zeros((len(hit_locs), 3))
 
-    hit_albedo    = face_albedo_arr[hit_tri_idx]
-    hit_face_norm = face_normals_arr[hit_tri_idx]
-    bounce_color  = np.zeros((len(hit_locs), 3))
+        for light in lights:
+            if stop_event.is_set(): break
+            lcolor, ltype, to_ln_h, atten_h, dist_h = _light_vectors(
+                light, hit_locs, len(hit_locs))
+            if to_ln_h is None: continue
+            ndotl_h = np.maximum(0.0, np.einsum('ij,ij->i', hit_face_norm, to_ln_h))
+            sh_o = hit_locs + to_ln_h * BIAS
+            occ  = _shadow_test(intersector, sh_o, to_ln_h, dist_h)
+            lit  = (~occ).astype(np.float64) * ndotl_h * atten_h
+            bounce_color += lcolor * lit[:,None]
+
+        np.add.at(contrib, hit_ray_idx // n_samp, hit_albedo * bounce_color)
+
+    if stop_event.is_set(): return contrib
+
+    # ── 3. Ray-traced direct lighting at source vertices ─────────────────
+    # Shadow rays from every vertex → replaces the old shadow map entirely.
+    # Direct is deterministic; averaging over passes = same value each time.
+    sh_bias_o = origins + normals * BIAS
+    direct    = np.zeros((n_verts, 3))
 
     for light in lights:
         if stop_event.is_set(): break
-        lcolor = np.array(light['color']) * float(light['energy'])
-        ltype  = int(light['type'])
+        lcolor, ltype, to_ln_v, atten_v, dist_v = _light_vectors(
+            light, origins, n_verts)
+        if to_ln_v is None: continue
+        ndotl_v = np.maximum(0.0, np.einsum('ij,ij->i', normals, to_ln_v))
+        occ     = _shadow_test(intersector, sh_bias_o, to_ln_v, dist_v)
+        lit     = (~occ).astype(np.float64) * ndotl_v * atten_v
+        direct += lcolor * lit[:,None]
 
-        if ltype == 0:   # point/spot
-            to_l   = np.array(light['pos']) - hit_locs
-            dist2  = np.einsum('ij,ij->i', to_l, to_l)
-            dist   = np.sqrt(dist2) + 1e-8
-            to_ln  = to_l / dist[:,None]
-            atten  = 1.0 / (dist2 + 1e-4)
-        elif ltype == 1: # sun
-            d = -np.array(light['dir'])
-            d /= np.linalg.norm(d) + 1e-8
-            to_ln  = np.tile(d, (len(hit_locs),1))
-            atten  = np.ones(len(hit_locs))
-            dist   = np.full(len(hit_locs), 1e6)
-        else:
-            continue
+    # Repeat direct n_samp times so averaging (_count += n_samp) gives
+    # the correct value: avg(direct×n_samp) = direct ✓
+    contrib += direct * n_samp
 
-        ndotl = np.maximum(0.0, np.einsum('ij,ij->i', hit_face_norm, to_ln))
-        sh_o  = hit_locs + to_ln * BIAS
-
-        try:
-            sh_locs, sh_ray_idx, _ = intersector.intersects_location(
-                sh_o, to_ln, multiple_hits=False)
-        except Exception:
-            sh_ray_idx = np.array([], dtype=np.int64)
-            sh_locs    = np.zeros((0,3))
-
-        occluded = np.zeros(len(hit_locs), dtype=bool)
-        if len(sh_locs) > 0:
-            sh_dist = np.linalg.norm(sh_locs - sh_o[sh_ray_idx], axis=1)
-            blocked = sh_ray_idx[sh_dist < dist[sh_ray_idx]]
-            occluded[blocked] = True
-
-        lit = (~occluded).astype(np.float64) * ndotl * atten
-        bounce_color += lcolor * lit[:,None]
-
-    np.add.at(contrib, hit_ray_idx // n_samp, hit_albedo * bounce_color)
     return contrib  # raw sum — get_update() divides by _count
+
+
+def _light_vectors(light, points, n):
+    """Return (color, type, to_light_normalized, attenuation, distance) arrays."""
+    lcolor = np.array(light['color']) * float(light['energy'])
+    ltype  = int(light['type'])
+    if ltype == 0:
+        to_l  = np.array(light['pos']) - points
+        dist2 = np.einsum('ij,ij->i', to_l, to_l)
+        dist  = np.sqrt(dist2) + 1e-8
+        to_ln = to_l / dist[:,None]
+        atten = 1.0 / (dist2 + 1e-4)
+    elif ltype == 1:
+        d     = -np.array(light['dir']); d /= np.linalg.norm(d) + 1e-8
+        to_ln = np.tile(d, (n, 1))
+        atten = np.ones(n)
+        dist  = np.full(n, 1e6)
+    else:
+        return lcolor, ltype, None, None, None
+    return lcolor, ltype, to_ln, atten, dist
+
+
+def _shadow_test(intersector, origins, directions, max_dist):
+    """Returns bool array (n,): True = occluded."""
+    n        = len(origins)
+    occluded = np.zeros(n, dtype=bool)
+    try:
+        sh_locs, sh_ray_idx, _ = intersector.intersects_location(
+            origins, directions, multiple_hits=False)
+    except Exception:
+        return occluded
+    if len(sh_locs) > 0:
+        sh_dist = np.linalg.norm(sh_locs - origins[sh_ray_idx], axis=1)
+        blocked = sh_ray_idx[sh_dist < max_dist[sh_ray_idx]]
+        occluded[blocked] = True
+    return occluded
 
 
 # ── BVHTree fallback helpers ──────────────────────────────────────────────────
