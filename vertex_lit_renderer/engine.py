@@ -474,7 +474,8 @@ class VertexLitEngine(bpy.types.RenderEngine):
                      thread_pause=thread_pause/1000.0,
 ),
                 target_samples=gi_samp,
-                preserve_existing=self._gi_preserve)
+                preserve_existing=self._gi_preserve,
+                decay=0.1 if self._gi_preserve else 1.0)
             self._gi_preserve=False
             print(f"[VertexLit] GI started ({gi_samp} samples)")
 
@@ -512,7 +513,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
             dict(raw_bvh=raw_bvh, lights=self._lights_cache,
                  verts=gi_verts, normals=gi_norms,
                  rays_per_pass=rpp, thread_pause=pause),
-            target_samples=gi_samp, preserve_existing=True)
+            target_samples=gi_samp, preserve_existing=True, decay=0.1)
 
 
     # ── Incremental rebuild (edit mode) ──────────────────────────────────

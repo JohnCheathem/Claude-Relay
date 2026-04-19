@@ -285,7 +285,12 @@ class ProgressiveGI:
         self._thread     = None
         self._scene_data = None
 
-    def start(self, scene_data, target_samples=64, preserve_existing=False):
+    def start(self, scene_data, target_samples=64, preserve_existing=False, decay=1.0):
+        """
+        decay: fraction of old accumulation to keep (1.0=all, 0.1=10%).
+        Lower decay = old shadows/GI wash out faster after scene changes.
+        Only applied when preserve_existing=True.
+        """
         self._stop.set()
         new_stop = threading.Event()
         self._stop = new_stop
@@ -293,15 +298,17 @@ class ProgressiveGI:
             self._gen += 1
             gen        = self._gen
             old_accum  = self._accum if preserve_existing else {}
-            old_count  = self._count if preserve_existing else 0
+            old_count  = int(self._count * decay) if preserve_existing else 0
             new_accum  = {}
             for name, verts in scene_data['verts'].items():
                 n   = len(verts)
                 old = old_accum.get(name)
-                new_accum[name] = (old.copy() if old is not None and len(old)==n
-                                   else np.zeros((n,3), dtype=np.float64))
+                if old is not None and len(old) == n:
+                    new_accum[name] = old * decay   # decay old data
+                else:
+                    new_accum[name] = np.zeros((n,3), dtype=np.float64)
             self._accum      = new_accum
-            self._count      = old_count
+            self._count      = max(old_count, 0)
             self._updated    = False
             self._scene_data = scene_data
         self._thread = threading.Thread(
