@@ -22,11 +22,14 @@ MAX_BVH_TRIS = 50_000  # cap BVH tris so ray casts stay fast (< 1ms each)
 _main_shader   = None
 
 # ── Global GI singleton ───────────────────────────────────────────────────────
-# One ProgressiveGI shared across all engine instances. This prevents
-# the multiple-instance accumulation that occurred when each render-view
-# session created its own ProgressiveGI. The gen counter inside ProgressiveGI
-# safely discards stale data when a new session starts via cancel()+start().
 _global_gi: 'ProgressiveGI' = None
+
+# ── Edit-mode dirty tracking ──────────────────────────────────────────────────
+# depsgraph_update_post fires during edit mode (view_update does not).
+# We collect dirty object names here; view_draw picks them up and does
+# an incremental rebuild of just those objects.
+_edit_dirty:      set   = set()
+_edit_dirty_time: float = 0.0
 
 def _get_main_shader():
     global _main_shader
@@ -512,6 +515,33 @@ class VertexLitEngine(bpy.types.RenderEngine):
             target_samples=gi_samp, preserve_existing=True)
 
 
+    # ── Incremental rebuild (edit mode) ──────────────────────────────────
+
+    def _incremental_rebuild(self, dirty_names, context, depsgraph, vls):
+        """Re-extract only the edited objects — main thread stays fast.
+        GPU batch updates immediately; GI restarts in background thread."""
+        try:
+            vp_dg = context.evaluated_depsgraph_get()
+        except Exception:
+            vp_dg = depsgraph
+
+        changed = False
+        for name in dirty_names:
+            obj = bpy.data.objects.get(name)
+            if obj is None: continue
+            new_data = _extract_mesh_data(obj, vp_dg)
+            if new_data is None: continue
+            self._mesh_cache[name] = new_data
+            # Rebuild GPU batch for this object — no GI yet, looks flat briefly
+            batch = _build_batch_from_cache(new_data)
+            self._batch_dict[name] = (batch, new_data['texture'])
+            changed = True
+
+        if changed:
+            # GI thread rebuilds BVH from updated _mesh_cache and converges
+            self._restart_gi_for_transforms(vls)
+            self.tag_redraw()
+
     # ── Main draw ─────────────────────────────────────────────────────────
 
     def view_draw(self, context, depsgraph):
@@ -526,6 +556,13 @@ class VertexLitEngine(bpy.types.RenderEngine):
             en_scale = vls.energy_scale if vls else 1.0
             self._lights_cache = _collect_lights(depsgraph, en_scale)
             self._restart_gi_for_transforms(vls)
+
+        # Edit-mode geometry changes — debounced 0.2s
+        global _edit_dirty, _edit_dirty_time
+        if _edit_dirty and (time.time() - _edit_dirty_time) > 0.2:
+            dirty = _edit_dirty.copy()
+            _edit_dirty.clear()
+            self._incremental_rebuild(dirty, context, depsgraph, vls)
 
         if self._transform_dirty and (time.time() - self._transform_time) > 0.3:
             self._transform_dirty = False
@@ -603,14 +640,40 @@ class VertexLitEngine(bpy.types.RenderEngine):
         gpu.state.depth_mask_set(False)
 
 
+# ── Edit-mode depsgraph handler ───────────────────────────────────────────────
+
+@bpy.app.handlers.persistent
+def _edit_depsgraph_post(scene, depsgraph):
+    """Fires during edit mode. Collects objects with changed geometry."""
+    global _edit_dirty, _edit_dirty_time
+    for update in depsgraph.updates:
+        if not update.is_updated_geometry: continue
+        id_data = update.id
+        # Object-level update (most common in edit mode)
+        if isinstance(id_data, bpy.types.Object) and id_data.type == 'MESH':
+            if id_data.mode == 'EDIT':
+                _edit_dirty.add(id_data.name)
+                _edit_dirty_time = time.time()
+        # Mesh data-block update fallback
+        elif isinstance(id_data, bpy.types.Mesh):
+            obj = getattr(bpy.context, 'active_object', None)
+            if obj and obj.mode == 'EDIT' and obj.data == id_data:
+                _edit_dirty.add(obj.name)
+                _edit_dirty_time = time.time()
+
+
 def register():
     global _global_gi
     bpy.utils.register_class(VertexLitEngine)
     _global_gi = ProgressiveGI()
+    if _edit_depsgraph_post not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_edit_depsgraph_post)
 
 def unregister():
     global _global_gi
     if _global_gi is not None:
-        _global_gi.stop()   # blocking OK here — called at addon unload, not render exit
+        _global_gi.stop()
         _global_gi = None
+    if _edit_depsgraph_post in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_edit_depsgraph_post)
     bpy.utils.unregister_class(VertexLitEngine)
