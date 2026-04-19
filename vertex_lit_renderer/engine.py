@@ -200,17 +200,9 @@ def _extract_mesh_data(obj, vp_dg):
         uv_layer = mesh.uv_layers.active
         n_verts  = len(mesh.vertices)
 
-        # foreach_get is safe and fast for simple per-vertex arrays
-        _co_flat = np.empty(n_verts * 3, dtype=np.float32)
-        mesh.vertices.foreach_get('co', _co_flat)
-        _co = _co_flat.reshape(n_verts, 3)
-
-        _no_flat = np.empty(n_verts * 3, dtype=np.float32)
-        mesh.vertices.foreach_get('normal', _no_flat)
-        _no = _no_flat.reshape(n_verts, 3)
-
-        vert_co_local = _co.tolist()
-        vert_no_local = _no.tolist()
+        # Per-vertex local-space arrays for GI world transform.
+        vert_co_local = [(v.co.x,v.co.y,v.co.z) for v in mesh.vertices]
+        vert_no_local = [(v.normal.x,v.normal.y,v.normal.z) for v in mesh.vertices]
 
         _m0 = mat_list[0] if mat_list else None
         mat_diffuse = (float(_m0.diffuse_color[0]),float(_m0.diffuse_color[1]),
@@ -239,15 +231,16 @@ def _extract_mesh_data(obj, vp_dg):
 
             for corner in range(3):
                 vi=tri.vertices[corner]; li=tri.loops[corner]
-                positions.append((float(_co[vi,0]),float(_co[vi,1]),float(_co[vi,2])))
+                v=mesh.vertices[vi]
+                positions.append((v.co.x,v.co.y,v.co.z))
                 if has_corner_normals:
                     try:
                         cn=corner_normals[li]
                         normals.append((cn.vector.x,cn.vector.y,cn.vector.z))
                     except Exception:
-                        normals.append((float(_no[vi,0]),float(_no[vi,1]),float(_no[vi,2])))
+                        normals.append((v.normal.x,v.normal.y,v.normal.z))
                 else:
-                    normals.append((float(_no[vi,0]),float(_no[vi,1]),float(_no[vi,2])))
+                    normals.append((v.normal.x,v.normal.y,v.normal.z))
                 colors.append(vcol_corner.get(li,vcol_point.get(vi,face_default)))
                 uvs.append(tuple(uv_layer.data[li].uv) if uv_layer else (0.0,0.0))
                 vi_map.append(vi)
