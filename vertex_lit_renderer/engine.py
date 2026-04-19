@@ -36,10 +36,25 @@ def _get_main_shader():
 
 # ── GPU texture cache ─────────────────────────────────────────────────────────
 
-_tex_cache: dict = {}
+_tex_cache:   dict = {}
+_pixel_cache: dict = {}   # image.name → (np_array h×w×4, w, h) for GI sampling
 
 def _invalidate_tex(name):
     _tex_cache.pop(name, None)
+
+def _get_pixel_array(image):
+    """Return (np_array, w, h) for CPU-side texture sampling in GI. Cached per image."""
+    if image is None or not image.has_data: return None
+    name = image.name
+    if name not in _pixel_cache:
+        w, h = image.size
+        if w > 0 and h > 0:
+            import numpy as _np
+            arr = _np.array(image.pixels, dtype=_np.float32).reshape(h, w, 4)
+            _pixel_cache[name] = (arr, w, h)
+        else:
+            _pixel_cache[name] = None
+    return _pixel_cache.get(name)
 
 def _get_gpu_tex(image):
     if image is None: return None
@@ -180,9 +195,26 @@ def _extract_mesh_data(obj, vp_dg):
                        float(_m0.diffuse_color[2])) if _m0 else (0.8,0.8,0.8)
 
         positions=[]; normals=[]; colors=[]; uvs=[]; vi_map=[]
+        gi_face_albedo=[]
         for tri in mesh.loop_triangles:
             mi = tri.material_index
             face_default = mat_colors[mi] if mi < len(mat_colors) else default
+
+            # Sample texture at UV centroid for accurate GI albedo
+            _fmat = mat_list[mi] if mi < len(mat_list) else None
+            _fimg = _find_base_texture(_fmat) if _fmat else None
+            _pd   = _get_pixel_array(_fimg) if (_fimg and uv_layer) else None
+            if _pd:
+                _arr,_w,_h = _pd
+                _u = sum(uv_layer.data[tri.loops[_c]].uv[0] for _c in range(3))/3.0
+                _v = sum(uv_layer.data[tri.loops[_c]].uv[1] for _c in range(3))/3.0
+                _u %= 1.0; _v %= 1.0
+                _px=min(int(_u*_w),_w-1); _py=min(int(_v*_h),_h-1)
+                _mc=face_default
+                gi_face_albedo.append((_arr[_py,_px,0]*_mc[0],_arr[_py,_px,1]*_mc[1],_arr[_py,_px,2]*_mc[2]))
+            else:
+                gi_face_albedo.append(tuple(face_default[:3]))
+
             for corner in range(3):
                 vi=tri.vertices[corner]; li=tri.loops[corner]
                 v=mesh.vertices[vi]
@@ -205,6 +237,7 @@ def _extract_mesh_data(obj, vp_dg):
             uvs=uvs, vi_map=vi_map, texture=tex, n_verts=n_verts,
             vert_co_local=vert_co_local, vert_no_local=vert_no_local,
             mat_diffuse=mat_diffuse,
+            gi_face_albedo=gi_face_albedo,
         )
 
     except Exception as e:
@@ -236,10 +269,11 @@ def _build_raw_bvh_data(mesh_cache, objects):
         for co in data['vert_co_local']:
             wv=inst_mat@Vector(co)
             all_verts.append((wv.x,wv.y,wv.z))
-        vi_map=data['vi_map']; alb=data['mat_diffuse']
-        for i in range(0,len(vi_map),3):
+        vi_map=data['vi_map']
+        gfa=data.get('gi_face_albedo') or [data['mat_diffuse']]*(len(vi_map)//3)
+        for fi,i in enumerate(range(0,len(vi_map),3)):
             all_polys.append([vi_map[i]+v_offset,vi_map[i+1]+v_offset,vi_map[i+2]+v_offset])
-            face_albedo.append(alb)
+            face_albedo.append(gfa[fi] if fi<len(gfa) else data['mat_diffuse'])
         v_offset+=len(data['vert_co_local'])
     if not all_verts: return None,[]
 
@@ -343,7 +377,8 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
     def _rebuild_inner(self, context, depsgraph, vls):
         t0 = time.time()
-        global _global_gi
+        global _global_gi, _pixel_cache
+        _pixel_cache = {}   # drop pixel arrays from previous state
         _global_gi.cancel()
 
         use_gi       = vls.use_gi          if vls else True
