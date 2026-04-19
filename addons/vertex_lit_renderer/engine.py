@@ -347,17 +347,33 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
     def view_update(self, context, depsgraph):
         self._ensure_state()
+        # _rebuilding guard: new_from_object/remove fire Mesh geo-updates that
+        # Blender queues and delivers in the *next* view_update (after view_draw
+        # completes), so checking _rebuilding here is not enough by itself.
+        # We also only watch bpy.types.Object for geometry — never bpy.types.Mesh.
+        # Mesh datablock updates are exclusively from our own new_from_object calls.
         if getattr(self, '_rebuilding', False):
             return
         for update in depsgraph.updates:
             id_data = update.id
-            if update.is_updated_geometry:
-                if isinstance(id_data, (bpy.types.Object, bpy.types.Mesh)):
-                    self._dirty = True
-                    return
+            if update.is_updated_geometry and isinstance(id_data, bpy.types.Object):
+                if id_data.type != 'MESH':
+                    continue
+                # Use bounding-box fingerprint to skip spurious per-frame geo-node
+                # re-evaluations (addons, time-dep modifiers) that didn't change output.
+                bb  = id_data.bound_box
+                fp  = (round(bb[0][0],4), round(bb[0][1],4), round(bb[0][2],4),
+                       round(bb[6][0],4), round(bb[6][1],4), round(bb[6][2],4))
+                fps = getattr(self, '_geo_fps', {})
+                if fps.get(id_data.name) == fp:
+                    continue   # bounding box unchanged — skip
+                fps[id_data.name] = fp
+                self._geo_fps = fps
+                self._dirty = True
+                return
             if update.is_updated_transform:
                 if isinstance(id_data, bpy.types.Object) and id_data.type == 'MESH':
-                    self._shadow_dirty = True  # caster moved → re-render shadow
+                    self._shadow_dirty = True
             if isinstance(id_data, bpy.types.Light):
                 self._lights_dirty = True
             if isinstance(id_data, bpy.types.Material):
@@ -419,7 +435,18 @@ class VertexLitEngine(bpy.types.RenderEngine):
             self._mesh_cache  = new_mesh
             self._shadow_dict = new_shadow
             self._dirty       = False
-            self._shadow_dirty = True   # geometry changed → shadow map needs re-render
+            self._shadow_dirty = True
+
+            # Snapshot bounding boxes so the first post-rebuild view_update
+            # sees the current fingerprints and doesn't immediately re-dirty.
+            fps = {}
+            for obj_name in new_mesh:
+                obj = bpy.data.objects.get(obj_name)
+                if obj:
+                    bb = obj.bound_box
+                    fps[obj_name] = (round(bb[0][0],4), round(bb[0][1],4), round(bb[0][2],4),
+                                     round(bb[6][0],4), round(bb[6][1],4), round(bb[6][2],4))
+            self._geo_fps = fps
 
             print(f"[VertexLit] rebuilt: {len(new_mesh)} meshes  lights: {len(self._lights)}", end="")
             for l in self._lights:
