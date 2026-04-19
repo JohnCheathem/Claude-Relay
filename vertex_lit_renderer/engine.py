@@ -776,35 +776,35 @@ class VertexLitEngine(bpy.types.RenderEngine):
 def _edit_depsgraph_post(scene, depsgraph):
     """Fires during edit mode and on edit-mode commit/exit.
 
-    Edit-mode pause: while an object is in EDIT mode, geometry changes
-    are NOT queued — no incremental rebuild happens. For large meshes
-    the rebuild (Python loop over every vertex + triangle corner) is
-    the dominant edit-time hitch; skipping it entirely keeps editing
-    smooth. Blender's own edit-cage overlay provides live visual
-    feedback on the mesh being edited; the vertex-lit shading stays
-    at its pre-edit state until tab-out.
+    Global edit-mode pause: while the ACTIVE object is in any non-OBJECT
+    mode (EDIT, SCULPT, POSE, PAINT_*, etc.), skip all queuing — including
+    updates on other objects that re-evaluated as a side effect of the
+    active object's state. This catches cases like:
+      - Scatter / GeoNodes objects that reference a curve or mesh being edited
+      - Meshes deformed by an armature being posed
+      - Modifier chains where the upstream object is being sculpted
 
-    On mode exit, Blender commits edit-mode changes to the datablock
-    and fires another update with mode != 'EDIT'. That's when we queue
-    — triggering exactly one incremental rebuild (via view_draw's
-    debounce) to catch the lighting up. view_update's in-cache branch
-    also catches this path; either trigger is fine (set dedup'd)."""
+    Without the global check, dependents keep queueing while the user edits
+    and produce hitches even though the active object's rebuild is correctly
+    paused. On mode exit (active back to OBJECT), one catch-up rebuild fires
+    for everything that's changed."""
     global _edit_dirty, _edit_dirty_time
+
+    active = getattr(bpy.context, 'active_object', None)
+    if active is not None and active.mode != 'OBJECT':
+        return   # paused — anyone's dependents too
+
     for update in depsgraph.updates:
         if not update.is_updated_geometry: continue
         id_data = update.id
         # Object-level update
         if isinstance(id_data, bpy.types.Object) and id_data.type == 'MESH':
-            if id_data.mode == 'EDIT':
-                continue   # paused — skip queuing while editing
             _edit_dirty.add(id_data.name)
             _edit_dirty_time = time.time()
         # Mesh data-block update fallback
         elif isinstance(id_data, bpy.types.Mesh):
             obj = getattr(bpy.context, 'active_object', None)
             if obj is None or obj.data != id_data: continue
-            if obj.mode == 'EDIT':
-                continue   # paused
             _edit_dirty.add(obj.name)
             _edit_dirty_time = time.time()
 
