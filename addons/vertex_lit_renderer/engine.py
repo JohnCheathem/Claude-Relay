@@ -293,6 +293,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
         if getattr(self,'_state_ready',False): return
         self._dirty        = True
         self._lights_dirty = False
+        self._shadow_dirty = True    # re-render shadow map on first draw
         self._rebuilding   = False   # Bug 2: guard against self-triggered rebuilds
         self._mesh_cache   = {}
         self._batch_dict   = {}
@@ -333,21 +334,19 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
     def view_update(self, context, depsgraph):
         self._ensure_state()
-        # Bug 2 fix: new_from_object/remove fire a bpy.types.Mesh update with
-        # is_updated_geometry=True. Without this guard we'd dirty→rebuild→dirty→...
         if getattr(self, '_rebuilding', False):
             return
         for update in depsgraph.updates:
             id_data = update.id
             if update.is_updated_geometry:
-                # Only Object/Mesh user edits trigger rebuild.
-                # bpy.types.Mesh updates from new_from_object are now blocked
-                # by the _rebuilding guard above, so this is safe.
                 if isinstance(id_data, (bpy.types.Object, bpy.types.Mesh)):
                     self._dirty = True
                     return
+            if update.is_updated_transform:
+                if isinstance(id_data, bpy.types.Object) and id_data.type == 'MESH':
+                    self._shadow_dirty = True  # caster moved → re-render shadow
             if isinstance(id_data, bpy.types.Light):
-                self._lights_dirty = True   # lights moved — recache without full rebuild
+                self._lights_dirty = True
             if isinstance(id_data, bpy.types.Material):
                 self._dirty = True
                 return
@@ -365,7 +364,8 @@ class VertexLitEngine(bpy.types.RenderEngine):
             self._ls_matrix = _build_light_space(self._sun, *_scene_bounds(depsgraph))
         else:
             self._ls_matrix = Matrix.Identity(4)
-        self._lights_dirty = False
+        self._lights_dirty  = False
+        self._shadow_dirty  = True   # light moved → shadow map needs re-render
 
     def _rebuild(self, depsgraph, vls):
         t0 = time.time()
@@ -406,6 +406,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
             self._mesh_cache  = new_mesh
             self._shadow_dict = new_shadow
             self._dirty       = False
+            self._shadow_dirty = True   # geometry changed → shadow map needs re-render
 
             print(f"[VertexLit] rebuilt: {len(new_mesh)} meshes  lights: {len(self._lights)}", end="")
             for l in self._lights:
@@ -475,21 +476,30 @@ class VertexLitEngine(bpy.types.RenderEngine):
     # ── Shadow pass ───────────────────────────────────────────────────────
 
     def _shadow_pass(self, ls_mat, shad_res, depsgraph):
-        smap=_get_shadow_map(shad_res); shader=_get_shadow_shader()
+        """Re-render shadow map only when geometry or lights changed."""
+        if not self._shadow_dirty:
+            # Return cached texture — nothing that affects shadows changed
+            return getattr(self, '_shadow_tex_cache', self._dummy_depth)
+
+        smap   = _get_shadow_map(shad_res)
+        shader = _get_shadow_shader()
         with smap.fb.bind():
             smap.fb.clear(depth=1.0)
             gpu.state.depth_test_set('LESS_EQUAL')
             gpu.state.depth_mask_set(True)
-            gpu.state.viewport_set(0,0,shad_res,shad_res)
+            gpu.state.viewport_set(0, 0, shad_res, shad_res)
             shader.bind()
-            shader.uniform_float('uLightSpace',ls_mat)
+            shader.uniform_float('uLightSpace', ls_mat)
             for inst in depsgraph.object_instances:
-                obj=inst.object
-                if obj.type!='MESH' or obj.hide_get(): continue
-                batch=self._shadow_dict.get(obj.name)
+                obj = inst.object
+                if obj.type != 'MESH' or obj.hide_get(): continue
+                batch = self._shadow_dict.get(obj.name)
                 if batch is None: continue
-                shader.uniform_float('uModel',inst.matrix_world)
+                shader.uniform_float('uModel', inst.matrix_world)
                 batch.draw(shader)
+
+        self._shadow_tex_cache = smap.tex
+        self._shadow_dirty     = False
         return smap.tex
 
     # ── Main draw ─────────────────────────────────────────────────────────
