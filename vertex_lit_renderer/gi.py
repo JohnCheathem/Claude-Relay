@@ -194,6 +194,7 @@ class ProgressiveGI:
         self._gen     = 0       # incremented on each start(); old writes discarded
         self._stop    = threading.Event()   # current thread's stop flag
         self._thread  = None
+        self._scene_data = None
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -237,25 +238,35 @@ class ProgressiveGI:
             self._thread.join(timeout=2.0)
         self._thread = None
 
-    def start(self, scene_data: dict, target_samples: int = 64):
-        # Signal the old thread (if any) via its own stop event
+    def start(self, scene_data: dict, target_samples: int = 64,
+              preserve_existing: bool = False):
+        """
+        preserve_existing=True keeps accumulated GI for objects already in
+        _accum (same vertex count). Used when objects are added/moved so
+        lighting on unchanged geometry doesn't reset to zero.
+        BVH is built inside the thread so the main thread never hitches.
+        """
         self._stop.set()
-
-        # New stop event for the new thread — old thread keeps its reference
         new_stop = threading.Event()
         self._stop = new_stop
 
-        # Bump generation so any stale late-write from old thread is discarded
         with self._lock:
-            self._gen   += 1
-            gen          = self._gen
-            self._accum  = {
-                name: np.zeros((len(verts), 3), dtype=np.float64)
-                for name, verts in scene_data['verts'].items()
-            }
-            self._count   = 0
+            self._gen += 1
+            gen        = self._gen
+            old_accum  = self._accum if preserve_existing else {}
+            old_count  = self._count if preserve_existing else 0
+            new_accum  = {}
+            for name, verts in scene_data['verts'].items():
+                n   = len(verts)
+                old = old_accum.get(name)
+                # Reuse existing data only if vertex count matches exactly
+                new_accum[name] = (old.copy() if old is not None and len(old)==n
+                                   else np.zeros((n,3), dtype=np.float64))
+            self._accum   = new_accum
+            self._count   = old_count
             self._updated = False
 
+        self._scene_data = scene_data  # stored so get_update() can read gi_steps
         self._thread = threading.Thread(
             target=self._run,
             args=(scene_data, target_samples, new_stop, gen),
@@ -267,9 +278,16 @@ class ProgressiveGI:
     # ── Background thread ─────────────────────────────────────────────────
 
     def _run(self, scene_data, target_samples, stop_event, generation):
-        bvh         = scene_data['bvh']
-        face_albedo = scene_data['face_albedo']
-        lights      = scene_data['lights']
+        # Build BVH here in the background thread so the main thread never
+        # stalls on BVHTree.FromPolygons() for high-poly GeoNodes scenes.
+        raw = scene_data.get('raw_bvh')
+        if raw is not None:
+            bvh = BVHTree.FromPolygons(raw['verts'], raw['polys'], epsilon=1e-6)
+            face_albedo = raw['albedo']
+        else:
+            bvh         = scene_data.get('bvh')       # fallback for old callers
+            face_albedo = scene_data.get('face_albedo', [])
+        lights = scene_data['lights']
 
         SAMPLES_PER_ITER = int(scene_data.get('rays_per_pass', 4))
         SLEEP_SECS       = float(scene_data.get('thread_pause', 0.001))
@@ -298,9 +316,9 @@ class ProgressiveGI:
                     contrib[vi, 0] = r
                     contrib[vi, 1] = g
                     contrib[vi, 2] = b
-                    # Sleep every 64 vertices (= 256 ray casts at 4 samples).
-                    # Keeps Blender responsive without wasting time on sleep.
-                    if vi & 63 == 63:
+                    # Sleep every 256 vertices. With stop_event checks inside
+                    # _one_sample, responsiveness no longer depends on this.
+                    if vi & 255 == 255:
                         time.sleep(SLEEP_SECS)
 
                 pass_data[name] = contrib

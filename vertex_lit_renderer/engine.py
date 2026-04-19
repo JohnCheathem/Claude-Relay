@@ -261,8 +261,7 @@ def _extract_mesh_data(obj, vp_dg):
 def _build_batch_from_cache(cached, gi_per_vert=None):
     shader=_get_main_shader()
     vi_map=cached['vi_map']; n_v=cached['n_verts']
-    bounces=[gi_per_vert[vi] for vi in vi_map] if (gi_per_vert and len(gi_per_vert)==n_v) \
-            else [(0.0,0.0,0.0)]*len(vi_map)
+    bounces=[gi_per_vert[vi] for vi in vi_map] if (gi_per_vert and len(gi_per_vert)==n_v)             else [(0.0,0.0,0.0)]*len(vi_map)
     return batch_for_shader(shader,'TRIS',{
         'position':    cached['positions'],
         'normal':      cached['normals'],
@@ -281,11 +280,13 @@ def _build_shadow_batch_from_cache(cached):
     return batch_for_shader(shader,'TRIS',{'position':positions},indices=indices)
 
 
-def _build_bvh_from_cache(mesh_cache, objects):
+def _build_raw_bvh_data(mesh_cache, objects):
+    """Returns raw vert/poly data for GI thread to build BVH — no main-thread hitch."""
     all_verts=[]; all_polys=[]; face_albedo=[]; v_offset=0
     for name,data in mesh_cache.items():
         obj=objects.get(name)
         if obj is None: continue
+        if not getattr(obj,'vertex_lit_cast_shadow',True): continue
         inst_mat=obj.matrix_world
         for co in data['vert_co_local']:
             wv=inst_mat@Vector(co)
@@ -305,7 +306,7 @@ def _build_bvh_from_cache(mesh_cache, objects):
         face_albedo = face_albedo[::step]
         print(f"[VertexLit] BVH subsampled to {len(all_polys)} tris (step={step})")
 
-    return BVHTree.FromPolygons(all_verts,all_polys,epsilon=1e-6), face_albedo
+    return {'verts': all_verts, 'polys': all_polys, 'albedo': face_albedo}
 
 # ── Render Engine ─────────────────────────────────────────────────────────────
 
@@ -325,6 +326,9 @@ class VertexLitEngine(bpy.types.RenderEngine):
         self._bounds_cache     = (Vector((0,0,0)),10.0)
         self._shadow_dirty     = True
         self._shadow_tex_cache = None
+        self._gi_preserve      = False
+        self._transform_dirty  = False
+        self._transform_time   = 0.0
         self._state_ready      = True
 
     def _ensure_resources(self):
@@ -374,6 +378,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
                 if isinstance(id_data, bpy.types.Object) and id_data.type == 'MESH':
                     if id_data.name not in self._mesh_cache:
                         self._dirty = True; self._shadow_dirty = True
+                        self._gi_preserve = True
                         self.tag_redraw(); return
                 if isinstance(id_data, bpy.types.Object) and id_data.type == 'LIGHT':
                     self._dirty = True; self._shadow_dirty = True
@@ -386,7 +391,8 @@ class VertexLitEngine(bpy.types.RenderEngine):
                     self._dirty = True; self._shadow_dirty = True
                     self.tag_redraw(); return
                 elif id_data.type == 'MESH':
-                    self._shadow_dirty = True
+                    self._transform_dirty = True
+                    self._transform_time  = time.time()
                     self.tag_redraw(); return
             if isinstance(id_data, bpy.types.Image):
                 _invalidate_tex(id_data.name)
@@ -451,8 +457,8 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
         if use_gi:
             bpy_objects = {name: bpy.data.objects.get(name) for name in new_mesh}
-            bvh, face_albedo = _build_bvh_from_cache(new_mesh, bpy_objects)
-            if bvh is None: return
+            raw_bvh = _build_raw_bvh_data(new_mesh, bpy_objects)
+            if raw_bvh is None: return
 
             plain_lights = [{
                 'pos':tuple(l['pos']),'dir':tuple(l['dir']),
@@ -469,22 +475,49 @@ class VertexLitEngine(bpy.types.RenderEngine):
                 gi_norms[name]=[tuple(m3@Vector(no)) for no in data['vert_no_local']]
 
             _global_gi.start(
-                dict(bvh=bvh,face_albedo=face_albedo,lights=plain_lights,
+                dict(raw_bvh=raw_bvh,lights=plain_lights,
                      verts=gi_verts,normals=gi_norms,
                      rays_per_pass=rays_per_pass,
                      thread_pause=thread_pause/1000.0),
-                target_samples=gi_samp)
+                target_samples=gi_samp,
+                preserve_existing=self._gi_preserve)
+            self._gi_preserve=False
             print(f"[VertexLit] GI started ({gi_samp} samples)")
 
     # ── Apply GI ──────────────────────────────────────────────────────────
 
     def _apply_gi_update(self, gi_data):
-        new_batch = dict(self._batch_dict)  # shallow copy
+        new_batch = dict(self._batch_dict)
         for name, cached in self._mesh_cache.items():
             gv = gi_data.get(name)
             if gv is None: continue
             new_batch[name] = (_build_batch_from_cache(cached, gv), cached['texture'])
-        self._batch_dict = new_batch  # atomic replacement
+        self._batch_dict = new_batch
+
+    # ── Lightweight GI restart after transform ──────────────────────────────────────────────
+
+    def _restart_gi_for_transforms(self, vls):
+        """Restart GI from cached geometry after an object is moved.
+        No bpy calls, no mesh extraction — just retransforms cached verts."""
+        if not self._mesh_cache: return
+        bpy_objects = {name: bpy.data.objects.get(name) for name in self._mesh_cache}
+        raw_bvh = _build_raw_bvh_data(self._mesh_cache, bpy_objects)
+        if raw_bvh is None: return
+        gi_verts={}; gi_norms={}
+        for name, data in self._mesh_cache.items():
+            obj = bpy_objects.get(name)
+            if obj is None: continue
+            m=obj.matrix_world; m3=m.to_3x3()
+            gi_verts[name]=[tuple(m@Vector(co)) for co in data['vert_co_local']]
+            gi_norms[name]=[tuple(m3@Vector(no)) for no in data['vert_no_local']]
+        gi_samp = vls.gi_samples      if vls else 128
+        rpp     = vls.gi_rays_per_pass if vls else 4
+        pause   = (vls.gi_thread_pause if vls else 0.1) / 1000.0
+        _global_gi.start(
+            dict(raw_bvh=raw_bvh, lights=self._lights_cache,
+                 verts=gi_verts, normals=gi_norms,
+                 rays_per_pass=rpp, thread_pause=pause),
+            target_samples=gi_samp, preserve_existing=True)
 
     # ── Shadow pass ───────────────────────────────────────────────────────
 
@@ -502,6 +535,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
             for name,batch in self._shadow_dict.items():
                 obj=bpy.data.objects.get(name)
                 if obj is None: continue
+                if not getattr(obj,'vertex_lit_cast_shadow',True): continue
                 shader.uniform_float('uModel',obj.matrix_world)
                 batch.draw(shader)
         self._shadow_tex_cache=smap.tex
@@ -516,6 +550,11 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
         scene=depsgraph.scene
         vls=getattr(scene,'vertex_lit',None)
+
+        if self._transform_dirty and (time.time() - self._transform_time) > 0.3:
+            self._transform_dirty = False
+            self._shadow_dirty    = True
+            self._restart_gi_for_transforms(vls)
 
         if self._dirty:
             self._rebuild(context, depsgraph, vls)

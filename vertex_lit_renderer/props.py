@@ -22,7 +22,7 @@ class VertexLitSettings(bpy.types.PropertyGroup):
         description="Samples accumulated per vertex per GI pass. Higher = faster convergence per pass")
 
     gi_thread_pause: bpy.props.FloatProperty(
-        name="Thread Pause (ms)", default=1.0, min=0.0, max=20.0, precision=1,
+        name="Thread Pause (ms)", default=0.1, min=0.0, max=20.0, precision=2,
         description="Milliseconds the GI thread sleeps every 64 vertices. "
                     "Lower = faster GI, higher = more Blender responsiveness")
 
@@ -46,7 +46,13 @@ class VertexLitSettings(bpy.types.PropertyGroup):
 def register():
     bpy.utils.register_class(VertexLitSettings)
     bpy.types.Scene.vertex_lit = bpy.props.PointerProperty(type=VertexLitSettings)
+    # Per-object shadow casting toggle (mirrors Cycles' visible_shadow)
+    bpy.types.Object.vertex_lit_cast_shadow = bpy.props.BoolProperty(
+        name="Cast Shadow",
+        default=True,
+        description="Object casts shadows in the Vertex Lit renderer")
 
 def unregister():
     del bpy.types.Scene.vertex_lit
+    del bpy.types.Object.vertex_lit_cast_shadow
     bpy.utils.unregister_class(VertexLitSettings)

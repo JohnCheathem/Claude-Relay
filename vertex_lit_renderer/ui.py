@@ -44,8 +44,26 @@ class VERTEX_LIT_PT_settings(bpy.types.Panel):
             col.prop(s, 'shadow_bias')
             col.prop(s, 'shadow_darkness')
 
+
+
+class VERTEX_LIT_PT_object(bpy.types.Panel):
+    bl_label       = 'Vertex Lit'
+    bl_idname      = 'VERTEX_LIT_PT_object'
+    bl_space_type  = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context     = 'object'
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.render.engine == 'VERTEX_LIT' and context.object is not None
+
+    def draw(self, context):
+        self.layout.prop(context.object, 'vertex_lit_cast_shadow', icon='SHADING_RENDERED')
+
 def register():
     bpy.utils.register_class(VERTEX_LIT_PT_settings)
+    bpy.utils.register_class(VERTEX_LIT_PT_object)
 
 def unregister():
+    bpy.utils.unregister_class(VERTEX_LIT_PT_object)
     bpy.utils.unregister_class(VERTEX_LIT_PT_settings)
