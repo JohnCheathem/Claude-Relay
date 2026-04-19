@@ -112,6 +112,7 @@ def _collect_lights(depsgraph, energy_scale):
             'energy': energy, 'type': ltype.get(ld.type,0),
             'radius': radius, 'is_sun': ld.type=='SUN',
             'matrix_world': mat.copy(),
+            '_raw_energy': float(ld.energy),  # pre-scale, for defensive poll
         })
         if len(lights)>=MAX_LIGHTS: break
     return lights
@@ -523,6 +524,39 @@ class VertexLitEngine(bpy.types.RenderEngine):
         self._white_tex        = None
         self._state_ready      = False  # force re-init on next use
 
+    # ── Defensive light-change detection ──────────────────────────────────
+
+    def _lights_differ(self, depsgraph):
+        """Compare current light state against _lights_cache. Returns True
+        if any light's matrix, energy, color, or object count has changed.
+        Cheap — a handful of float comparisons per light per frame."""
+        current = []
+        for inst in depsgraph.object_instances:
+            obj = inst.object
+            if obj.type != 'LIGHT': continue
+            if len(current) >= MAX_LIGHTS: break
+            ld = obj.data
+            current.append((inst.matrix_world.copy(),
+                            float(ld.energy),
+                            (float(ld.color.r), float(ld.color.g), float(ld.color.b))))
+        if len(current) != len(self._lights_cache): return True
+        for (cur_mat, cur_e, cur_c), cached in zip(current, self._lights_cache):
+            old_mat = cached.get('matrix_world')
+            if old_mat is None: return True
+            # Matrix comparison: flatten both and compare element-wise
+            for r in range(4):
+                for c in range(4):
+                    if abs(cur_mat[r][c] - old_mat[r][c]) > 1e-5:
+                        return True
+            # The cached 'energy' field has energy_scale baked in, but we only
+            # care that ld.energy itself changed. Compare to a raw cached copy.
+            if abs(cur_e - cached.get('_raw_energy', cur_e)) > 1e-6:
+                return True
+            cached_col = cached.get('color', cur_c)
+            if any(abs(a-b) > 1e-6 for a,b in zip(cur_c, cached_col)):
+                return True
+        return False
+
     # ── view_update ───────────────────────────────────────────────────────
 
     def view_update(self, context, depsgraph):
@@ -577,6 +611,20 @@ class VertexLitEngine(bpy.types.RenderEngine):
 
                 self.tag_redraw()
                 return
+
+        # ── Defensive light-state poll ────────────────────────────────────
+        # Blender's depsgraph update flags for light transform/data changes
+        # are inconsistent across versions and operator paths. Rather than
+        # relying solely on is_updated_transform / is_updated_geometry in
+        # the loop below (which the user has observed to miss sun rotations),
+        # compare current light fingerprints against the cache. If anything
+        # differs, set _light_dirty. The normal per-update loop continues
+        # and may also set the same flag; set dedup makes that harmless.
+        if self._lights_cache and self._lights_differ(depsgraph):
+            self._light_dirty      = True
+            self._light_dirty_time = time.time()
+            self.tag_redraw()
+            return
 
         for update in depsgraph.updates:
             id_data = update.id
@@ -850,6 +898,7 @@ class VertexLitEngine(bpy.types.RenderEngine):
             # new result for hundreds of passes. Bounce VBOs retain their old
             # values during the brief window before first new pass publishes,
             # so no grey flash; lighting snaps to new state once it does.
+            print(f"[VertexLit] light change -> GI restart (decay=0, {len(self._lights_cache)} lights)")
             self._restart_gi_for_transforms(vls, decay=0.0)
 
         # Edit-mode geometry changes — debounced 0.2s

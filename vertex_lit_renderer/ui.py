@@ -1,12 +1,50 @@
 import bpy
 
+ENGINE_ID = 'VERTEX_LIT'
+
+# Modules whose panels gate visibility on COMPAT_ENGINES. We extend each
+# panel's COMPAT_ENGINES to include ours so Cycles/EEVEE-hidden settings
+# (like the light power slider, sun angle, light color, soft size, etc.)
+# show when our engine is active.
+_COMPAT_MODULES = (
+    'properties_data_light',
+    'properties_data_mesh',
+    'properties_material',
+    'properties_world',
+)
+
+
+def _compat_engines_add(register=True):
+    """Iterate bl_ui properties modules and add/remove our engine id to each
+    panel's COMPAT_ENGINES. Panels that only compat with EEVEE/Cycles become
+    visible (or hidden, on unregister) under our engine."""
+    import importlib
+    for mod_name in _COMPAT_MODULES:
+        try:
+            mod = importlib.import_module(f'bl_ui.{mod_name}')
+        except Exception:
+            continue
+        for attr in dir(mod):
+            cls = getattr(mod, attr, None)
+            compat = getattr(cls, 'COMPAT_ENGINES', None)
+            if compat is None: continue
+            # Only touch panels that compat with at least one known
+            # render engine — avoids accidentally exposing unrelated UI.
+            if not (compat & {'BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT', 'CYCLES'}):
+                continue
+            if register:
+                compat.add(ENGINE_ID)
+            else:
+                compat.discard(ENGINE_ID)
+
+
 class VERTEX_LIT_PT_settings(bpy.types.Panel):
     bl_label='Vertex Lit Settings'; bl_idname='VERTEX_LIT_PT_settings'
     bl_space_type='PROPERTIES'; bl_region_type='WINDOW'; bl_context='render'
 
     @classmethod
     def poll(cls, context):
-        return context.scene.render.engine == 'VERTEX_LIT'
+        return context.scene.render.engine == ENGINE_ID
 
     def draw(self, context):
         layout = self.layout
@@ -55,7 +93,7 @@ class VERTEX_LIT_PT_object(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return context.scene.render.engine == 'VERTEX_LIT' and context.object is not None
+        return context.scene.render.engine == ENGINE_ID and context.object is not None
 
     def draw(self, context):
         self.layout.prop(context.object, 'vertex_lit_cast_shadow', icon='SHADING_RENDERED')
@@ -63,7 +101,9 @@ class VERTEX_LIT_PT_object(bpy.types.Panel):
 def register():
     bpy.utils.register_class(VERTEX_LIT_PT_settings)
     bpy.utils.register_class(VERTEX_LIT_PT_object)
+    _compat_engines_add(register=True)
 
 def unregister():
+    _compat_engines_add(register=False)
     bpy.utils.unregister_class(VERTEX_LIT_PT_object)
     bpy.utils.unregister_class(VERTEX_LIT_PT_settings)
