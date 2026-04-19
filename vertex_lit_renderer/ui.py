@@ -79,12 +79,14 @@ class VERTEX_LIT_PT_settings(bpy.types.Panel):
         row.prop(s, 'ground_color', text="Ground")
 
         box = layout.box()
-        row = box.row()
-        row.label(text="Denoise", icon='BRUSH_SOFTEN')
-        row.prop(s, 'use_denoise', text="")
+        header = box.row()
+        header.label(text="Denoise", icon='MOD_SMOOTH')
+        header.prop(s, 'use_denoise', text="")
+        sub = box.column()
+        sub.enabled = bool(s.use_denoise)
+        sub.prop(s, 'denoise_strength', slider=True)
         if s.use_denoise:
-            box.prop(s, 'denoise_strength', slider=True)
-            box.label(text="Fades to zero at full convergence", icon='INFO')
+            box.label(text="Fades out as scene converges", icon='INFO')
 
         box = layout.box()
         box.label(text="Lights", icon='LIGHT')
