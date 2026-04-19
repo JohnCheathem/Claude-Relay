@@ -363,18 +363,34 @@ class VertexLitEngine(bpy.types.RenderEngine):
     def view_update(self, context, depsgraph):
         self._ensure_state()
 
+        # ── Deletion detection ────────────────────────────────────────────
+        # Check if any cached object no longer exists in the scene.
+        # Without this, deleted objects leave stale batches, and re-adding
+        # an object with the same name would show the old GI data.
+        if self._mesh_cache:
+            current = {inst.object.name for inst in depsgraph.object_instances
+                       if inst.object.type == 'MESH'}
+            if not current.issuperset(self._mesh_cache.keys()):
+                self._dirty = True
+                self._gi_preserve = False  # full reset — scene changed significantly
+                self.tag_redraw(); return
+
         for update in depsgraph.updates:
             id_data = update.id
             if update.is_updated_geometry:
                 if isinstance(id_data, bpy.types.Mesh):
-                    # users==0 → temp mesh, ignore. Real meshes have ≥1 user.
                     if getattr(id_data,'users',0) > 0:
                         self._dirty = True
                         self.tag_redraw(); return
                 if isinstance(id_data, bpy.types.Object) and id_data.type == 'MESH':
-                    if id_data.name not in self._mesh_cache:
+                    if id_data.mode == 'EDIT':
+                        pass  # handled by depsgraph_update_post → _incremental_rebuild
+                    else:
+                        # Always rebuild on geometry update — catches both new objects
+                        # AND name-recycled objects (delete Cube, add new Cube).
+                        already_cached = id_data.name in self._mesh_cache
                         self._dirty = True
-                        self._gi_preserve = True
+                        self._gi_preserve = already_cached  # preserve GI for truly new objs
                         self.tag_redraw(); return
                 if isinstance(id_data, bpy.types.Object) and id_data.type == 'LIGHT':
                     self._dirty = True
