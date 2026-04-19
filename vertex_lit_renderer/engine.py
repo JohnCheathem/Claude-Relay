@@ -40,6 +40,15 @@ _global_gi: 'ProgressiveGI' = None
 _edit_dirty:      set   = set()
 _edit_dirty_time: float = 0.0
 
+# Light changes detected in depsgraph_update_post (more reliable than
+# view_update, which in some sessions isn't called for light operations
+# at all). view_draw picks this up with priority over _transform_dirty,
+# since Blender tends to also fire transform updates on mesh dependents
+# when lights change, and the transform path would otherwise win with
+# the wrong decay value.
+_lights_dirty:      bool  = False
+_lights_dirty_time: float = 0.0
+
 def _get_main_shader():
     global _main_shader
     if _main_shader is None:
@@ -900,17 +909,31 @@ class VertexLitEngine(bpy.types.RenderEngine):
         scene=depsgraph.scene
         vls=getattr(scene,'vertex_lit',None)
 
+        # Priority: merge module-level _lights_dirty (from the depsgraph
+        # handler) into the instance flag. The handler fires reliably for
+        # all light changes; view_update's per-entry loop does not always.
+        # Clearing _transform_dirty here prevents Blender's dependent-mesh
+        # transform updates (which fire on light changes) from winning the
+        # restart with the wrong decay value — the light path owns decay=0.
+        global _lights_dirty, _lights_dirty_time
+        if _lights_dirty:
+            self._light_dirty      = True
+            self._light_dirty_time = _lights_dirty_time
+            _lights_dirty          = False
+            # Drop any transform-dirty flag set by the same event's mesh
+            # dependents — we're going to restart with decay=0 anyway.
+            self._transform_dirty  = False
+
         # Defensive light-state poll runs every view_draw (throttled to 0.2s).
-        # view_update may not fire for all light operations in all Blender
-        # versions/operator paths — moving a point light or rotating a sun
-        # while hovering over the 3D viewport has been observed to produce
-        # redraws without a view_update call. Polling here is unconditional.
+        # Backup for the depsgraph handler in case something exotic bypasses
+        # it (collection instance lights, etc.).
         now = time.time()
         if (not self._light_dirty and self._lights_cache
                 and (now - self._last_light_poll_time) > 0.2
                 and self._lights_differ(depsgraph)):
             self._light_dirty      = True
             self._light_dirty_time = now
+            print("[VertexLit] defensive poll: lights changed")
         self._last_light_poll_time = now
 
         if self._light_dirty and (time.time() - self._light_dirty_time) > 0.3:
@@ -930,10 +953,12 @@ class VertexLitEngine(bpy.types.RenderEngine):
         if _edit_dirty and (time.time() - _edit_dirty_time) > 0.2:
             dirty = _edit_dirty.copy()
             _edit_dirty.clear()
+            print(f"[VertexLit] edit-dirty pickup: {len(dirty)} objects -> incremental rebuild")
             self._incremental_rebuild(dirty, context, depsgraph, vls)
 
         if self._transform_dirty and (time.time() - self._transform_time) > 0.3:
             self._transform_dirty = False
+            print("[VertexLit] transform-dirty pickup -> GI restart (decay=0.1)")
             self._restart_gi_for_transforms(vls)
 
         if self._dirty:
@@ -1026,15 +1051,31 @@ def _edit_depsgraph_post(scene, depsgraph):
     and produce hitches even though the active object's rebuild is correctly
     paused. On mode exit (active back to OBJECT), one catch-up rebuild fires
     for everything that's changed."""
-    global _edit_dirty, _edit_dirty_time
+    global _edit_dirty, _edit_dirty_time, _lights_dirty, _lights_dirty_time
 
     active = getattr(bpy.context, 'active_object', None)
     if active is not None and active.mode != 'OBJECT':
         return   # paused — anyone's dependents too
 
     for update in depsgraph.updates:
-        if not update.is_updated_geometry: continue
         id_data = update.id
+
+        # ── Light detection (any update on a Light or LIGHT Object) ──────
+        # Catches the case where view_update isn't being called for light
+        # operations — the depsgraph_update_post handler fires reliably
+        # for any scene change regardless of render engine callbacks.
+        if isinstance(id_data, bpy.types.Light):
+            _lights_dirty      = True
+            _lights_dirty_time = time.time()
+            continue
+        if isinstance(id_data, bpy.types.Object) and id_data.type == 'LIGHT':
+            if update.is_updated_transform or update.is_updated_geometry:
+                _lights_dirty      = True
+                _lights_dirty_time = time.time()
+                continue
+
+        # ── Edit-mode geometry (existing behavior) ───────────────────────
+        if not update.is_updated_geometry: continue
         # Object-level update
         if isinstance(id_data, bpy.types.Object) and id_data.type == 'MESH':
             _edit_dirty.add(id_data.name)
