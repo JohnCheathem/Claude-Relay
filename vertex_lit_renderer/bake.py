@@ -28,6 +28,19 @@ class VERTEX_LIT_OT_bake_to_vertex_colors(bpy.types.Operator):
         description="Bake only the selected mesh objects. Off = every mesh "
                     "in the scene that has current GI data.",
     )
+    overbright_scale: bpy.props.BoolProperty(
+        name="Overbright Scale (Jak/PS2)",
+        default=True,
+        description="Multiply baked values by 0.5 so target engines that "
+                    "apply a ×2 overbright multiplier at render time (Jak 1, "
+                    "many PS2-era engines) produce output that matches our "
+                    "render view. Jak's shader does 'stored × 2 × texture' "
+                    "— if we bake the raw [0,1] lit value, Jak renders it "
+                    "at 2× (everything blown out). Scaling by 0.5 first "
+                    "means Jak's ×2 brings it back to parity. Disable only "
+                    "when your target engine uses stored values directly "
+                    "(generic GLTF viewer, Three.js, Unity w/ no overbright).",
+    )
     clamp_to_01: bpy.props.BoolProperty(
         name="Clamp to [0, 1]",
         default=True,
@@ -103,6 +116,15 @@ class VERTEX_LIT_OT_bake_to_vertex_colors(bpy.types.Operator):
 
             # Per-vertex lit value
             lit = (accum / max(count, 1)) * bounce_str   # (n_verts, 3)
+
+            # Overbright scale: halve values so a target engine that applies
+            # its own ×2 multiplier at render time (Jak 1's TFRAG shader does
+            # exactly this: fragment_color = stored * 2) ends up displaying
+            # the same values our render view shows. Must happen BEFORE the
+            # clamp so the full [0, 2] effective range is representable in
+            # the stored 8-bit channel.
+            if self.overbright_scale:
+                lit *= 0.5
 
             # Clamp to [0, 1] for 8-bit-per-channel export safety. Without
             # this, HDR values >1.0 wrap around in exporters that truncate
