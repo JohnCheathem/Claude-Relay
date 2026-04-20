@@ -393,14 +393,24 @@ def _one_sample_bvh(pos_t,norm_t,lights,bvh,face_albedo,stop_event,bias=0.003):
 
 class ProgressiveGI:
     def __init__(self):
-        self._lock       = threading.Lock()
-        self._gen        = 0
-        self._accum      = {}
-        self._count      = 0
-        self._updated    = False
-        self._stop       = threading.Event()
-        self._thread     = None
-        self._scene_data = None
+        self._lock        = threading.Lock()
+        self._gen         = 0
+        self._accum       = {}
+        self._count       = 0
+        self._updated     = False
+        self._stop        = threading.Event()
+        self._thread      = None
+        self._scene_data  = None
+        # Wall-clock timestamp of the most recent view_draw call. The GI
+        # thread checks this at pass boundaries — if view_draw hasn't been
+        # called for a few seconds, the user has left render view and we
+        # pause sampling until they come back. Initialized to now so the
+        # first GI thread doesn't immediately pause before view_draw runs.
+        self._last_viewed = time.time()
+
+    def touch(self):
+        """Called from view_draw to signal 'viewport is active'."""
+        self._last_viewed = time.time()
 
     def start(self, scene_data, target_samples=64, preserve_existing=False, decay=1.0):
         """
@@ -521,7 +531,30 @@ class ProgressiveGI:
         CHECK_EVERY  = 3    # re-evaluate convergence every N passes
         REL_THRESH   = 0.01 # per-pass variance < 1% of brightness² → converged
 
+        # Idle-pause threshold: if view_draw hasn't been called in this long,
+        # the user has left render view. Pause until they come back (fresh
+        # touch()) or the thread is cancelled.
+        IDLE_THRESHOLD = 2.0  # seconds
+
         while not stop_event.is_set():
+            # If viewport is idle, pause the pass loop entirely. We don't
+            # return — the user may re-enter render view, in which case we
+            # resume with the same accumulator. Cancellation (engine free,
+            # scene change) still exits via stop_event.
+            if time.time() - self._last_viewed > IDLE_THRESHOLD:
+                # Wait for either a fresh view_draw or cancellation
+                printed_idle = False
+                while not stop_event.is_set():
+                    if time.time() - self._last_viewed <= IDLE_THRESHOLD:
+                        if printed_idle:
+                            print("[VertexLit] viewport active, resuming GI")
+                        break
+                    if not printed_idle:
+                        print("[VertexLit] viewport idle, GI paused")
+                        printed_idle = True
+                    time.sleep(0.25)
+                continue   # re-check stop_event at top of outer loop
+
             pass_t0 = time.perf_counter()
             cf = np.zeros((n_total, 3), dtype=np.float64)
             any_active = False

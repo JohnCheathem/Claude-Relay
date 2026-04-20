@@ -1058,6 +1058,9 @@ class VertexLitEngine(bpy.types.RenderEngine):
         if self._dirty:
             self._rebuild(context, depsgraph, vls)
 
+        if _global_gi is not None:
+            _global_gi.touch()   # signal viewport is active
+
         if _global_gi is not None and _global_gi.has_update():
             gi_data,n=_global_gi.get_update()
             target = int(vls.gi_samples) if vls else 128
