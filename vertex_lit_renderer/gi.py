@@ -588,20 +588,29 @@ class ProgressiveGI:
             # ── Convergence check (only for currently-active verts) ────────
             # Already-converged verts stay converged — we don't re-check them,
             # so their frozen M2 won't spuriously drive them back to active.
+            #
+            # Criterion: variance of the MEAN (how uncertain our accumulated
+            # estimate is), not variance of per-pass samples. The mean-
+            # variance shrinks as 1/N so every vertex eventually converges
+            # given enough passes. Previous code compared per-sample variance,
+            # which is irreducible for noisy Monte Carlo estimators and made
+            # penumbra / corner verts stall at ~30% converged indefinitely.
+            #
+            # Welford: M2 = (n-1)·sample_variance, so var_of_mean = M2/(n·(n-1)).
             if pass_num >= MIN_PASSES and pass_num % CHECK_EVERY == 0:
                 check_idx = np.where(~converged)[0]
                 if len(check_idx) > 0:
-                    denom    = np.maximum(vert_samples[check_idx], 1)[:, None]
-                    means    = local_accum[check_idx] / (denom * n_samp)
-                    variance = M2[check_idx] / denom
-                    mean_sq  = np.maximum(means ** 2, 1e-4)
-                    rel_var  = np.max(variance / mean_sq, axis=1)
+                    nv        = vert_samples[check_idx]
+                    denom     = np.maximum(nv * np.maximum(nv - 1, 1), 1)[:, None]
+                    means     = local_accum[check_idx] / (np.maximum(nv, 1) * n_samp)[:, None]
+                    variance  = M2[check_idx] / denom
+                    mean_sq   = np.maximum(means ** 2, 1e-4)
+                    rel_var   = np.max(variance / mean_sq, axis=1)
                     newly_conv = rel_var < REL_THRESH
                     if np.any(newly_conv):
                         converged[check_idx[newly_conv]] = True
                     n_conv = int(np.sum(converged))
                     if n_conv > 0 and pass_num % (CHECK_EVERY * 4) == 0:
-                        # Total active this pass = what we actually traced
                         traced = n_total - n_conv if pass_num > MIN_PASSES else n_total
                         pass_ms = (time.perf_counter() - pass_t0) * 1000.0
                         print(f"[VertexLit] GI pass {pass_num}: "
