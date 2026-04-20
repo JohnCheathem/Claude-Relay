@@ -506,65 +506,118 @@ class ProgressiveGI:
         print(f"[VertexLit] GI (embreex): {n_total} verts")
 
         # ── Adaptive sample budget state (thread-local, no lock needed) ──────
-        # Welford online variance tracks how stable each vertex's lighting is.
-        # Once variance drops below threshold, the chunk is skipped entirely.
-        # This means zero embreex calls for converged regions — the savings
-        # grow as the scene converges, CPU usage asymptotes toward 0 at rest.
+        # Per-vertex Welford: each vertex tracks its own sample count and
+        # variance. Converged vertices are skipped for ray tracing, but we
+        # still synthesize a "replay" contribution into the shared accumulator
+        # each pass so the global count accounting stays consistent — without
+        # the replay, converged verts' accum stops growing while count keeps
+        # climbing, and their averages drift to zero.
         local_accum  = np.zeros((n_total, 3), dtype=np.float64)
         M2           = np.zeros((n_total, 3), dtype=np.float64)
         converged    = np.zeros(n_total, dtype=bool)
+        vert_samples = np.zeros(n_total, dtype=np.int64)   # per-vert pass count
         pass_num     = 0
         MIN_PASSES   = 6    # variance meaningless below this
         CHECK_EVERY  = 3    # re-evaluate convergence every N passes
-        # Converged when per-pass variance < 1% of brightness squared.
-        # The max(…, 1e-4) floor catches dark/shadowed vertices.
-        REL_THRESH   = 0.01
+        REL_THRESH   = 0.01 # per-pass variance < 1% of brightness² → converged
 
         while not stop_event.is_set():
             cf = np.zeros((n_total, 3), dtype=np.float64)
             any_active = False
 
+            # Per-vertex active mask. Below MIN_PASSES we trace everyone —
+            # not enough variance data yet to trust convergence decisions.
+            if pass_num >= MIN_PASSES:
+                active_mask = ~converged
+            else:
+                active_mask = np.ones(n_total, dtype=bool)
+
             for chunk_start in range(0, n_total, self.GI_CHUNK_VERTS):
                 if stop_event.is_set(): break
-                chunk_end = min(chunk_start + self.GI_CHUNK_VERTS, n_total)
+                chunk_end    = min(chunk_start + self.GI_CHUNK_VERTS, n_total)
+                chunk_active = active_mask[chunk_start:chunk_end]
+                n_active_chunk = int(np.sum(chunk_active))
 
-                # Skip chunk entirely if every vertex in it has converged
-                if pass_num >= MIN_PASSES and np.all(converged[chunk_start:chunk_end]):
-                    continue
+                if n_active_chunk == 0:
+                    continue   # whole chunk converged — skip traversal entirely
 
+                if n_active_chunk == chunk_active.size:
+                    # Every vert in this chunk active — direct trace, no gather
+                    chunk_cf = _gi_pass_embree(
+                        all_v[chunk_start:chunk_end],
+                        all_n[chunk_start:chunk_end],
+                        lights, intersector, face_albedo_arr, face_normals_arr,
+                        n_samp, stop_event)
+                    cf[chunk_start:chunk_end] = chunk_cf
+                else:
+                    # Partial chunk — gather only active verts, trace, scatter.
+                    # Fancy-index creates a copy for the trace call; the scatter
+                    # writes back through the cf view into the global array.
+                    active_idx = np.where(chunk_active)[0]
+                    active_v = all_v[chunk_start:chunk_end][active_idx]
+                    active_n = all_n[chunk_start:chunk_end][active_idx]
+                    part_cf = _gi_pass_embree(
+                        active_v, active_n,
+                        lights, intersector, face_albedo_arr, face_normals_arr,
+                        n_samp, stop_event)
+                    cf[chunk_start:chunk_end][active_idx] = part_cf
                 any_active = True
-                chunk_cf = _gi_pass_embree(
-                    all_v[chunk_start:chunk_end],
-                    all_n[chunk_start:chunk_end],
-                    lights, intersector, face_albedo_arr, face_normals_arr,
-                    n_samp, stop_event)
-                cf[chunk_start:chunk_end] = chunk_cf
 
             if stop_event.is_set(): break
 
-            # ── Welford update (only for active vertices) ─────────────────────
-            # pass_estimate = what this pass said per sample
-            pass_est  = cf / max(n_samp, 1)
-            old_mean  = local_accum / max(pass_num * n_samp, 1)
-            local_accum += cf
-            pass_num    += 1
-            new_mean  = local_accum / (pass_num * n_samp)
-            # M2 += (x - old_mean) * (x - new_mean)  — standard Welford step
-            M2 += (pass_est - old_mean) * (pass_est - new_mean)
+            # ── Welford update (only for active vertices) ─────────────────
+            # Converged verts don't get a new sample, so their accum / M2 /
+            # vert_samples stay frozen. This also fixes a latent bug in the
+            # old chunk-skip code: previously M2 += (0-mean)² was applied to
+            # converged chunks, inflating variance until they de-converged.
+            active_idx_global = np.where(active_mask)[0]
+            if len(active_idx_global) > 0:
+                pe         = cf[active_idx_global] / max(n_samp, 1)
+                prev_count = vert_samples[active_idx_global]
+                denom_old  = np.maximum(prev_count * n_samp, 1)[:, None]
+                old_mean   = local_accum[active_idx_global] / denom_old
+                local_accum[active_idx_global] += cf[active_idx_global]
+                vert_samples[active_idx_global] += 1
+                new_count  = vert_samples[active_idx_global]
+                new_mean   = local_accum[active_idx_global] / (new_count * n_samp)[:, None]
+                M2[active_idx_global] += (pe - old_mean) * (pe - new_mean)
 
-            # ── Convergence check ─────────────────────────────────────────────
+            pass_num += 1
+
+            # ── Convergence check (only for currently-active verts) ────────
+            # Already-converged verts stay converged — we don't re-check them,
+            # so their frozen M2 won't spuriously drive them back to active.
             if pass_num >= MIN_PASSES and pass_num % CHECK_EVERY == 0:
-                variance  = M2 / pass_num                          # (n_total, 3)
-                mean_sq   = np.maximum(new_mean ** 2, 1e-4)       # floor for dark areas
-                rel_var   = np.max(variance / mean_sq, axis=1)    # (n_total,) worst channel
-                converged = rel_var < REL_THRESH
-                n_conv = int(np.sum(converged))
-                if n_conv > 0 and pass_num % (CHECK_EVERY * 4) == 0:
-                    print(f"[VertexLit] GI pass {pass_num}: "
-                          f"{n_conv}/{n_total} verts converged "
-                          f"({100*n_conv//n_total}%)")
+                check_idx = np.where(~converged)[0]
+                if len(check_idx) > 0:
+                    denom    = np.maximum(vert_samples[check_idx], 1)[:, None]
+                    means    = local_accum[check_idx] / (denom * n_samp)
+                    variance = M2[check_idx] / denom
+                    mean_sq  = np.maximum(means ** 2, 1e-4)
+                    rel_var  = np.max(variance / mean_sq, axis=1)
+                    newly_conv = rel_var < REL_THRESH
+                    if np.any(newly_conv):
+                        converged[check_idx[newly_conv]] = True
+                    n_conv = int(np.sum(converged))
+                    if n_conv > 0 and pass_num % (CHECK_EVERY * 4) == 0:
+                        print(f"[VertexLit] GI pass {pass_num}: "
+                              f"{n_conv}/{n_total} verts converged "
+                              f"({100*n_conv//n_total}%)")
 
-            # ── Commit to shared accum (only when something changed) ──────────
+            # ── Replay for converged verts ───────────────────────────────────
+            # Their contribution this pass is their current running average
+            # scaled by n_samp, so accum + count stay in lockstep and their
+            # mean is preserved when the shared accumulator is divided by
+            # the global count.
+            if pass_num > MIN_PASSES:
+                conv_idx = np.where(converged)[0]
+                if len(conv_idx) > 0:
+                    denom = (vert_samples[conv_idx] * n_samp)[:, None]
+                    # vert_samples is always ≥ 1 here (converged => sampled)
+                    conv_avg = local_accum[conv_idx] / denom
+                    cf[conv_idx] = conv_avg * n_samp
+
+            # ── Commit to shared accum ──────────────────────────────────
             if any_active:
                 pass_data = {name: cf[s:e] for name,(s,e) in obj_ranges.items()}
                 with self._lock:
