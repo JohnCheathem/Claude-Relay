@@ -94,9 +94,18 @@ class VERTEX_LIT_PT_settings(bpy.types.Panel):
 
         box = layout.box()
         box.label(text="Bake", icon='RENDER_STILL')
-        box.operator('vertex_lit.bake_to_vertex_colors', icon='VPAINT_HLT')
-        box.label(text="Writes current GI to 'VertexLit_Baked' color attribute",
-                  icon='INFO')
+        col = box.column(align=True)
+        row = col.row(align=True)
+        row.operator('vertex_lit.bake_to_vertex_colors',
+                     text="Bake All", icon='VPAINT_HLT').selected_only = False
+        row.operator('vertex_lit.bake_to_vertex_colors',
+                     text="Bake Selected", icon='VPAINT_HLT').selected_only = True
+        row = col.row(align=True)
+        row.operator('vertex_lit.clear_baked_vertex_colors',
+                     text="Clear All", icon='X').selected_only = False
+        row.operator('vertex_lit.clear_baked_vertex_colors',
+                     text="Clear Selected", icon='X').selected_only = True
+        box.label(text="Writes 'VertexLit_Baked' color attribute", icon='INFO')
 
 
 

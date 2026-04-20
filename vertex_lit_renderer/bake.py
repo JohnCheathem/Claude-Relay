@@ -118,15 +118,79 @@ class VERTEX_LIT_OT_bake_to_vertex_colors(bpy.types.Operator):
             self.report({'ERROR'}, f"No objects baked (skipped {n_skipped}).")
             return {'CANCELLED'}
 
-        msg = f"Baked {n_baked} mesh{'es' if n_baked != 1 else ''} to '{self.attribute_name}'"
+        scope = "selected" if self.selected_only else "all"
+        msg = f"Baked {n_baked} mesh{'es' if n_baked != 1 else ''} ({scope}) to '{self.attribute_name}'"
         if n_skipped:
             msg += f" (skipped {n_skipped} with no GI data or mismatched topology)"
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
+class VERTEX_LIT_OT_clear_baked_vertex_colors(bpy.types.Operator):
+    """Remove the 'VertexLit_Baked' color attribute from meshes. Does NOT
+    remove other color attributes — targets only the one written by the
+    bake operator. Linked mesh data is handled once per unique mesh
+    (removing the attribute affects all instances sharing that mesh)"""
+
+    bl_idname = "vertex_lit.clear_baked_vertex_colors"
+    bl_label  = "Clear Baked Vertex Colors"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    attribute_name: bpy.props.StringProperty(
+        name="Attribute Name",
+        default="VertexLit_Baked",
+        description="Name of the color attribute to remove.",
+    )
+    selected_only: bpy.props.BoolProperty(
+        name="Selected Only",
+        default=False,
+        description="Clear only the selected mesh objects. Off = every mesh "
+                    "in the scene that has the attribute.",
+    )
+
+    def execute(self, context):
+        scene = context.scene
+        if self.selected_only:
+            targets = [o for o in context.selected_objects if o.type == 'MESH']
+            if not targets:
+                self.report({'ERROR'}, "No mesh objects selected.")
+                return {'CANCELLED'}
+        else:
+            targets = [o for o in scene.objects if o.type == 'MESH']
+
+        # Dedup by mesh data — removing the attribute on one instance is
+        # already shared across all instances that reference it.
+        seen_meshes = set()
+        n_cleared = 0
+        for obj in targets:
+            mesh = obj.data
+            if mesh.name in seen_meshes:
+                continue
+            seen_meshes.add(mesh.name)
+            attr = mesh.color_attributes.get(self.attribute_name)
+            if attr is None:
+                continue
+            mesh.color_attributes.remove(attr)
+            mesh.update()
+            n_cleared += 1
+
+        if n_cleared == 0:
+            scope = "selected" if self.selected_only else "scene"
+            self.report({'INFO'},
+                        f"No meshes had '{self.attribute_name}' to clear ({scope})")
+            return {'CANCELLED'}
+
+        scope = "selected" if self.selected_only else "all"
+        self.report({'INFO'},
+                    f"Cleared '{self.attribute_name}' from {n_cleared} mesh"
+                    f"{'es' if n_cleared != 1 else ''} ({scope})")
+        return {'FINISHED'}
+
+
 def register():
     bpy.utils.register_class(VERTEX_LIT_OT_bake_to_vertex_colors)
+    bpy.utils.register_class(VERTEX_LIT_OT_clear_baked_vertex_colors)
 
 def unregister():
+    bpy.utils.unregister_class(VERTEX_LIT_OT_clear_baked_vertex_colors)
     bpy.utils.unregister_class(VERTEX_LIT_OT_bake_to_vertex_colors)
