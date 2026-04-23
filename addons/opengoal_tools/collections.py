@@ -327,6 +327,70 @@ def _set_death_plane(self, value):
         col["og_bottom_height"] = max(-500.0, min(-1.0, value))
 
 
+# --- Proxies for live-edit of active-level properties in the Settings subpanel ---
+
+def _get_level_name_live(self):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        return str(col.get("og_level_name", col.name))
+    return ""
+
+def _set_level_name_live(self, value):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is None:
+        return
+    clean = str(value).strip().lower().replace(" ", "-")
+    if not clean:
+        return  # Refuse to blank the name
+    # Cap at 10 chars silently; subpanel shows a warning if truncated/over
+    clean = clean[:10]
+    col["og_level_name"] = clean
+    # Rename collection — Blender may auto-suffix on duplicate; that's acceptable
+    col.name = clean
+    # Keep active_level enum reference in sync
+    try:
+        bpy.context.scene.og_props.active_level = col.name
+    except Exception:
+        pass
+
+
+def _get_base_id_live(self):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        return int(col.get("og_base_id", 10000))
+    return 10000
+
+def _set_base_id_live(self, value):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        col["og_base_id"] = max(1000, min(60000, int(value)))
+
+
+def _get_level_index_live(self):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        return int(col.get("og_level_index", 100))
+    return 100
+
+def _set_level_index_live(self, value):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        col["og_level_index"] = max(1, min(10000, int(value)))
+
+
+def _get_vis_nick_live(self):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        return str(col.get("og_vis_nick_override", "") or "")
+    return ""
+
+def _set_vis_nick_live(self, value):
+    col = _active_level_col(bpy.context.scene) if bpy.context else None
+    if col is not None:
+        clean = str(value).strip().lower()[:3]
+        col["og_vis_nick_override"] = clean
+
+
 def _on_active_level_changed(self, context):
     """Called when active_level enum changes — sync Blender's active collection."""
     col = _active_level_col(context.scene)
